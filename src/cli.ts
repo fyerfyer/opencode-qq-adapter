@@ -7,7 +7,7 @@ import { ConfigError, type LoadedConfig, loadConfig } from "./config/loader.js";
 import type { AppConfig } from "./config/schema.js";
 import { buildLogger } from "./observability/logger.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
-import { OpenCodeAgent } from "./opencode/adapter.js";
+import { OpenCodeAgent } from "./opencode/agent.js";
 import { SqliteStore } from "./store/sqlite.js";
 import { VERSION } from "./version.js";
 

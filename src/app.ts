@@ -8,7 +8,7 @@ import { buildLogger } from "./observability/logger.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { isMessageEvent, type OneBotEvent } from "./onebot/protocol.js";
 import { toIncomingMessage } from "./onebot/segments.js";
-import { OpenCodeAgent } from "./opencode/adapter.js";
+import { OpenCodeAgent } from "./opencode/agent.js";
 import { PolicyEngine } from "./policy/engine.js";
 import type { AgentPort } from "./ports/agent.js";
 import type { OneBotPort } from "./ports/onebot.js";

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../../src/config/schema.js";
 import { buildLogger } from "../../src/observability/logger.js";
-import { OpenCodeAgent } from "../../src/opencode/adapter.js";
+import { OpenCodeAgent } from "../../src/opencode/agent.js";
 
 const enabled = process.env.OPENCODE_INTEGRATION === "1";
 const model = process.env.OPENCODE_TEST_MODEL ?? "opencode-go/deepseek-v4.1-flash";
