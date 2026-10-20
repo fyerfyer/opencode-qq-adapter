@@ -1,0 +1,72 @@
+{
+  "name": "opencode-qq-adapter",
+  "version": "0.1.0",
+  "description": "Bridge OpenCode to QQ through NapCat / OneBot 11",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.11"
+  },
+  "packageManager": "pnpm@10.26.1",
+  "bin": {
+    "opencode-qq": "./dist/main.js"
+  },
+  "keywords": [
+    "opencode",
+    "qq",
+    "napcat",
+    "onebot",
+    "coding-agent"
+  ],
+  "scripts": {
+    "predev": "node scripts/ensure-config.mjs",
+    "dev": "tsx watch src/main.ts start --config config/config.yaml",
+    "prestart": "node scripts/ensure-config.mjs",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js start --config config/config.yaml",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:contract": "vitest run tests/contract",
+    "test:integration": "vitest run tests/integration",
+    "test:qq": "tsx scripts/e2e-qq.ts",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "doctor": "tsx src/main.ts doctor --config config/config.yaml",
+    "config:validate": "tsx src/main.ts config validate --config config/config.yaml"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.6",
+    "@opencode/client": "2.0.32",
+    "better-sqlite3": "^12.4.1",
+    "commander": "^14.0.2",
+    "hono": "^4.10.4",
+    "node-napcat-ts": "0.4.25",
+    "pino": "^10.1.0",
+    "pino-pretty": "^13.1.2",
+    "semver": "^7.7.3",
+    "ulid": "^3.0.1",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.12"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.18.12",
+    "@types/semver": "^7.7.1",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "4.1.12",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.4",
+    "ws": "^8.18.3"
+  }
+}

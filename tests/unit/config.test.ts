@@ -1,0 +1,192 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { ConfigError, loadConfig } from "../../src/config/loader.js";
+
+async function workspace(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "qq-config-"));
+  await mkdir(join(root, "project"), { recursive: true });
+  return root;
+}
+
+async function writeConfig(root: string, contents: string): Promise<string> {
+  const path = join(root, "config.yaml");
+  await writeFile(path, contents, "utf8");
+  return path;
+}
+
+describe("config loader", () => {
+  it("loads defaults and resolves relative project paths", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: test-token
+users:
+  "10001":
+    role: owner
+projects:
+  demo:
+    path: ./project
+default_project: demo
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: true });
+    expect(loaded.config.projects.demo?.path).toBe(join(root, "project"));
+    expect(loaded.config.onebot.url).toBe("ws://127.0.0.1:3001");
+    expect(loaded.config.onebot.reconnect.enabled).toBe(true);
+    expect(loaded.config.security.max_queued_prompts).toBe(3);
+    expect(loaded.config.opencode.service.mode).toBe("external");
+    expect(loaded.warnings.some((warning) => warning.includes("self_id"))).toBe(false);
+  });
+
+  it("reports missing environment variables", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: \${MISSING_ONEBOT_TOKEN}
+users: {}
+projects: {}
+`,
+    );
+    await expect(loadConfig(path, { env: {} })).rejects.toMatchObject({
+      name: "ConfigError",
+      code: "env",
+    });
+    try {
+      await loadConfig(path, { env: {} });
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).details).toContain(`$${"{MISSING_ONEBOT_TOKEN}"}`);
+    }
+  });
+
+  it("rejects unknown fields", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+  typo_field: true
+`,
+    );
+    await expect(loadConfig(path, { env: {} })).rejects.toMatchObject({ code: "schema" });
+  });
+
+  it("treats empty commented YAML sections as empty objects", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+users:
+groups:
+projects:
+policies:
+workspaces:
+logging:
+features:
+`,
+    );
+    const loaded = await loadConfig(path, { env: {} });
+    expect(loaded.config.users).toEqual({});
+    expect(loaded.config.projects).toEqual({});
+  });
+
+  it("rejects a default project that does not exist", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+default_project: nope
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: false })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+
+  it("rejects missing project directories when checking paths", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./does-not-exist
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: true })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+
+  it("rejects an invalid OpenCode version range", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+opencode:
+  service:
+    version: not-a-range
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: true })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+
+  it("rejects projects outside security.allowed_roots", async () => {
+    const root = await workspace();
+    const outside = await mkdtemp(join(tmpdir(), "qq-outside-"));
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+security:
+  allowed_roots: [./project]
+projects:
+  demo:
+    path: ${outside}
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: false })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+});
