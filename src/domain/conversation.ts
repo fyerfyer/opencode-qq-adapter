@@ -2,6 +2,8 @@ export interface ConversationRecord {
   chatKey: string;
   projectId: string;
   sessionId: string | null;
+  /** QQ user that most recently used this conversation. */
+  actorQq: number | null;
   agent: string | null;
   model: string | null;
   createdAt: number;
@@ -23,6 +25,8 @@ export interface RunRecord {
   chatKey: string;
   projectId: string;
   sessionId: string | null;
+  /** QQ user that submitted this run. */
+  actorQq: number | null;
   status: RunStatus;
   startedAt: number;
   finishedAt: number | null;

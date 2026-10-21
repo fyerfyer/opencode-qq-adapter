@@ -4,6 +4,11 @@ import type { ChatRef, OutgoingSegment } from "../../src/domain/chat.js";
 import type { ConversationRecord, RunRecord } from "../../src/domain/conversation.js";
 import type { IncomingMessage } from "../../src/domain/message.js";
 import type {
+  AgentPermissionRequest,
+  ApprovalDecision,
+  PermissionRuleset,
+} from "../../src/domain/permission.js";
+import type {
   AgentEvent,
   AgentEventStatus,
   AgentHealth,
@@ -21,9 +26,18 @@ let messageSequence = 0;
 
 export class FakeAgent implements AgentPort {
   readonly sessions = new Map<string, AgentSession>();
+  readonly sessionInputs: AgentSessionInput[] = [];
   readonly messages = new Map<string, AgentMessage[]>();
   readonly prompts: AgentPromptInput[] = [];
   readonly interrupts: string[] = [];
+  readonly permissionUpdates: Array<{ sessionId: string; permissions: PermissionRuleset }> = [];
+  readonly permissionReplies: Array<{
+    sessionId: string;
+    requestId: string;
+    decision: ApprovalDecision;
+    message?: string;
+  }> = [];
+  readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
   readonly listeners = new Set<(event: AgentEvent) => void>();
   readonly waiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 
@@ -47,6 +61,7 @@ export class FakeAgent implements AgentPort {
   }
 
   async createSession(input: AgentSessionInput): Promise<AgentSession> {
+    this.sessionInputs.push(input);
     const session: AgentSession = {
       id: `ses_fake_${++sessionSequence}`,
       title: input.title ?? null,
@@ -128,6 +143,48 @@ export class FakeAgent implements AgentPort {
     });
     waiter?.resolve();
     return true;
+  }
+
+  async updatePermissions(sessionId: string, permissions: PermissionRuleset): Promise<void> {
+    this.permissionUpdates.push({ sessionId, permissions });
+  }
+
+  async listPermissions(sessionId: string): Promise<AgentPermissionRequest[]> {
+    return [...this.pendingPermissions.values()].filter(
+      (request) => request.sessionId === sessionId,
+    );
+  }
+
+  async replyPermission(
+    sessionId: string,
+    requestId: string,
+    decision: ApprovalDecision,
+    message?: string,
+  ): Promise<void> {
+    this.permissionReplies.push({
+      sessionId,
+      requestId,
+      decision,
+      ...(message ? { message } : {}),
+    });
+    this.pendingPermissions.delete(requestId);
+  }
+
+  askPermission(request: AgentPermissionRequest): void {
+    this.pendingPermissions.set(request.id, request);
+    this.emit({
+      type: "permission.asked",
+      sessionId: request.sessionId,
+      data: {
+        id: request.id,
+        sessionID: request.sessionId,
+        action: request.action,
+        resources: request.resources,
+        save: request.save,
+        message: request.message ?? undefined,
+      },
+      receivedAt: Date.now(),
+    });
   }
 
   async listMessages(sessionId: string): Promise<AgentMessage[]> {

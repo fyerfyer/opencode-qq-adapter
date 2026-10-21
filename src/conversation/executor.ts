@@ -3,16 +3,19 @@ import { projectModels } from "../config/loader.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
+import type { PermissionRuleset } from "../domain/permission.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
 import { friendlyError, isSessionMissing } from "./errors.js";
 import { collectResponse, toPromptFiles } from "./response.js";
-import { type ActiveRun, RunStoppedError } from "./types.js";
+import { type ActiveRun, RunStoppedError, type RunUsage } from "./types.js";
 
 export interface RunHooks {
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
+  onStarted?(active: ActiveRun): void;
+  onFinished?(active: ActiveRun, status: RunStatus, usage: RunUsage | null): void;
 }
 
 /** Executes one queued run: session resolution, prompt, wait, response, errors. */
@@ -45,6 +48,7 @@ export class RunExecutor {
     const started = Date.now();
     let timeoutController: AbortController | null = null;
     this.#store.runs.setStatus(record.id, "running");
+    this.#hooks.onStarted?.(active);
 
     try {
       const project = this.#config.projects[record.projectId];
@@ -52,7 +56,7 @@ export class RunExecutor {
         throw new Error(`Project '${record.projectId}' no longer exists in configuration`);
       }
 
-      const conversation = this.#ensureConversation(chatKey, record.projectId);
+      const conversation = this.#ensureConversation(chatKey, record.projectId, message.userId);
       const ensured = await this.#ensureSession(conversation, project.path, message, active);
       const session = ensured.session;
       const updated = ensured.conversation;
@@ -60,6 +64,9 @@ export class RunExecutor {
       this.#store.runs.setSession(record.id, session.id);
       this.#hooks.bindSession(session.id, active);
 
+      if (active.permissions.length > 0) {
+        await this.#agent.updatePermissions(session.id, active.permissions);
+      }
       if (active.stopRequested) throw new RunStoppedError();
 
       let receipt: { messageId: string; created: number };
@@ -75,7 +82,12 @@ export class RunExecutor {
           { err: error, sessionId: session.id },
           "Session vanished before prompt; recreating",
         );
-        const recreated = await this.#createSession(updated, project.path, message);
+        const recreated = await this.#createSession(
+          updated,
+          project.path,
+          message,
+          active.permissions,
+        );
         this.#hooks.unbindSession(session.id);
         record.sessionId = recreated.id;
         this.#store.runs.setSession(record.id, recreated.id);
@@ -83,6 +95,7 @@ export class RunExecutor {
         receipt = await this.#agent.prompt({
           sessionId: recreated.id,
           text: message.text,
+          ...(message.images.length > 0 ? { files: message.images.flatMap(toPromptFiles) } : {}),
         });
       }
       if (active.stopRequested) throw new RunStoppedError();
@@ -137,6 +150,7 @@ export class RunExecutor {
       this.#finish(record.id, "completed", {
         usageJson: usage ? JSON.stringify(usage) : undefined,
       });
+      this.#hooks.onFinished?.(active, "completed", usage);
       this.#store.conversations.setSession(chatKey, record.sessionId, session.agent, session.model);
       this.#logger.info(
         {
@@ -151,11 +165,13 @@ export class RunExecutor {
     } catch (error) {
       if (active.stopRequested || error instanceof RunStoppedError) {
         this.#finish(record.id, "interrupted", { stopReason: "user" });
+        this.#hooks.onFinished?.(active, "interrupted", active.usage);
         this.#logger.info({ runId: record.id, chatKey }, "Run interrupted by user");
         return;
       }
       const friendly = friendlyError(error);
       this.#finish(record.id, "failed", { error: friendly });
+      this.#hooks.onFinished?.(active, "failed", active.usage);
       this.#logger.error({ err: error, runId: record.id, chatKey }, "Run failed");
       try {
         await this.#sender.reply(message.chat, message.id, `处理失败：${friendly}`);
@@ -172,16 +188,20 @@ export class RunExecutor {
     }
   }
 
-  #ensureConversation(chatKey: string, projectId: string): ConversationRecord {
+  #ensureConversation(chatKey: string, projectId: string, actorQq: number): ConversationRecord {
     const existing = this.#store.conversations.get(chatKey);
     const now = Date.now();
     if (existing !== null && existing.projectId === projectId) {
-      return existing;
+      if (existing.actorQq !== actorQq) {
+        this.#store.conversations.upsert({ ...existing, actorQq, lastActiveAt: now });
+      }
+      return { ...existing, actorQq, lastActiveAt: now };
     }
     const record: ConversationRecord = {
       chatKey,
       projectId,
       sessionId: null,
+      actorQq,
       agent: null,
       model: null,
       createdAt: existing?.createdAt ?? now,
@@ -217,7 +237,7 @@ export class RunExecutor {
         );
       }
     }
-    const session = await this.#createSession(conversation, directory, message);
+    const session = await this.#createSession(conversation, directory, message, active.permissions);
     return { session, conversation: { ...conversation, sessionId: session.id } };
   }
 
@@ -225,6 +245,7 @@ export class RunExecutor {
     conversation: ConversationRecord,
     directory: string,
     message: IncomingMessage,
+    permissions: PermissionRuleset,
   ): Promise<Awaited<ReturnType<AgentPort["createSession"]>>> {
     const project = this.#config.projects[conversation.projectId];
     if (project === undefined) {
@@ -236,6 +257,7 @@ export class RunExecutor {
       title: `${conversation.projectId} · QQ ${message.userId}`,
       agent: resolved.agent,
       model: resolved.model,
+      ...(permissions.length > 0 ? { permissions } : {}),
     });
     this.#store.conversations.setSession(
       conversation.chatKey,

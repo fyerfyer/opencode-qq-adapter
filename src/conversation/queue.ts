@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
+import type { PermissionRuleset } from "../domain/permission.js";
 import type { AgentEvent } from "../ports/agent.js";
 import { applyAgentEvent } from "./events.js";
 import { type ActiveRun, type ChatState, type PendingRun, RunStoppedError } from "./types.js";
@@ -32,10 +33,14 @@ export class ChatRunQueue {
   }
 
   /** Returns true when the run had to wait behind an active run. */
-  enqueue(record: RunRecord, message: IncomingMessage): boolean {
+  enqueue(
+    record: RunRecord,
+    message: IncomingMessage,
+    permissions: PermissionRuleset = [],
+  ): boolean {
     const state = this.#state(record.chatKey);
     const queued = state.active !== null;
-    state.pending.push({ record, message });
+    state.pending.push({ record, message, permissions });
     this.#drain(record.chatKey);
     return queued;
   }
@@ -150,6 +155,7 @@ export class ChatRunQueue {
     const active: ActiveRun = {
       record: { ...next.record, status: "running" },
       message: next.message,
+      permissions: next.permissions,
       abort: new AbortController(),
       stopRequested: false,
       interrupted: false,

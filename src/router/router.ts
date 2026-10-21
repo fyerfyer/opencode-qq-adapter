@@ -17,12 +17,25 @@ export class MessageRouter {
   async handle(message: IncomingMessage): Promise<void> {
     const decision = this.#deps.policy.authorize(message);
     if (!decision.allowed || decision.actor === null) {
+      this.#deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: null,
+        workspaceId: null,
+        action: "access.denied",
+        detail: { reason: decision.reason, textLength: message.text.length },
+      });
       this.#deps.logger.debug(
         { qq: message.userId, chatKey: message.chat.chatKey, reason: decision.reason },
         "Ignoring message from unauthorized actor",
       );
       return;
     }
+
+    // Approval replies are allowed without an @ mention in groups when they
+    // quote the approval prompt; otherwise group mention rules still apply.
+    if (await this.#deps.approvals.handleTextReply(message)) return;
 
     const command = parseCommand(message.text);
     if (message.chat.type === "group") {
@@ -126,10 +139,49 @@ export class MessageRouter {
       );
     }
 
+    const permissions = policy.permissionsFor(message, projectId);
+    if (permissions === null) {
+      await sender.reply(message.chat, message.id, "项目配置已失效，请联系管理员。");
+      return;
+    }
+
+    const quota = this.#deps.quota.check(message.userId, projectId);
+    if (!quota.allowed) {
+      this.#deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "prompt.rejected",
+        detail: { reason: quota.reason, textLength: message.text.length },
+      });
+      await sender.reply(message.chat, message.id, quota.message ?? "请求被限流，请稍后再试。");
+      return;
+    }
+
     if (autoSelected) {
       await sender.reply(message.chat, message.id, `已自动选择项目：${projectId}`);
     }
 
-    await conversations.submit(message, projectId);
+    const submitted = await conversations.submit(message, projectId, permissions.ruleset);
+    if (submitted.accepted) {
+      this.#deps.quota.recordPrompt(message.userId, projectId);
+      this.#deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "prompt.accepted",
+        detail: {
+          runId: submitted.runId,
+          queued: submitted.queued,
+          textLength: message.text.length,
+          images: message.images.length,
+          policyNames: permissions.policyNames,
+        },
+      });
+    }
   }
 }

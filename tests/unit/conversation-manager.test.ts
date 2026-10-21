@@ -91,6 +91,24 @@ describe("ConversationManager", () => {
     await manager.stop("private:20000");
   });
 
+  it("passes the permission ruleset to new sessions and refreshes it before each prompt", async () => {
+    const { store, agent, manager } = await setup();
+    const permissions = [
+      { action: "shell" as const, resource: "*" as const, effect: "ask" as const },
+      { action: "external_directory" as const, resource: "*" as const, effect: "deny" as const },
+    ];
+
+    await manager.submit(makeIncomingMessage({ id: "perm-1", text: "first" }), "demo", permissions);
+    await waitFor(() => agent.prompts.length === 1, 3000, "first prompt");
+    await waitFor(() => agent.permissionUpdates.length === 1, 3000, "permission update");
+
+    expect(agent.sessionInputs[0]?.permissions).toEqual(permissions);
+    expect(agent.permissionUpdates[0]).toEqual({
+      sessionId: store.conversations.get("private:20000")?.sessionId,
+      permissions,
+    });
+  });
+
   it("reports a failed run to QQ", async () => {
     const { agent, onebot, manager } = await setup();
     agent.failWith = "model exploded";

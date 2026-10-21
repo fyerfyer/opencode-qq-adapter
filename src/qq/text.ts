@@ -46,7 +46,7 @@ function formatLine(line: string): string {
   value = value.replace(/~~([^~]+)~~/g, "$1");
   value = value.replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?]|$)/g, "$1$2");
   value = value.replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, "$1$2");
-  value = value.replace(/<[^>]+>/g, "");
+  value = value.replace(/<\/?[A-Za-z][^>]*>/g, "");
   return value.replace(/[ \t]+$/g, "");
 }
 

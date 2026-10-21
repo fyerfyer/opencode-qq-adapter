@@ -3,6 +3,9 @@ import { ulid } from "ulid";
 import type { AppConfig } from "../config/schema.js";
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
+import type { PermissionRuleset } from "../domain/permission.js";
+import type { AuditTrail } from "../observability/audit.js";
+import type { QuotaService } from "../policy/quota.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
@@ -23,6 +26,8 @@ export class ConversationManager {
   readonly #queue: ChatRunQueue;
   readonly #executor: RunExecutor;
   readonly #unsubscribe: () => void;
+  readonly #quota: QuotaService | undefined;
+  readonly #audit: AuditTrail | undefined;
 
   constructor(
     config: AppConfig,
@@ -30,12 +35,15 @@ export class ConversationManager {
     agent: AgentPort,
     sender: MessageSender,
     logger: Logger,
+    options: { quota?: QuotaService; audit?: AuditTrail } = {},
   ) {
     this.#config = config;
     this.#store = store;
     this.#agent = agent;
     this.#sender = sender;
     this.#logger = logger;
+    this.#quota = options.quota;
+    this.#audit = options.audit;
     this.#queue = new ChatRunQueue({
       maxQueued: config.security.max_queued_prompts,
       logger,
@@ -44,11 +52,56 @@ export class ConversationManager {
     this.#executor = new RunExecutor(config, store, agent, sender, logger, {
       bindSession: (sessionId, active) => this.#queue.bindSession(sessionId, active),
       unbindSession: (sessionId) => this.#queue.unbindSession(sessionId),
+      onStarted: (active) => {
+        this.#audit?.record({
+          ts: Date.now(),
+          actorQq: active.record.actorQq,
+          chatKey: active.record.chatKey,
+          projectId: active.record.projectId,
+          workspaceId: null,
+          action: "run.started",
+          detail: { runId: active.record.id, sessionId: active.record.sessionId },
+        });
+      },
+      onFinished: (active, status, usage) => {
+        if (usage !== null && active.record.actorQq !== null) {
+          this.#quota?.recordRunUsage(active.record.actorQq, active.record.projectId, {
+            inputTokens: usage.tokens.input,
+            outputTokens: usage.tokens.output,
+            costUsd: usage.cost,
+          });
+        }
+        this.#audit?.record({
+          ts: Date.now(),
+          actorQq: active.record.actorQq,
+          chatKey: active.record.chatKey,
+          projectId: active.record.projectId,
+          workspaceId: null,
+          action: "run.finished",
+          detail: {
+            runId: active.record.id,
+            status,
+            costUsd: usage?.cost ?? 0,
+            inputTokens: usage?.tokens.input ?? 0,
+            outputTokens: usage?.tokens.output ?? 0,
+            durationMs: Date.now() - active.record.startedAt,
+          },
+        });
+      },
     });
     this.#unsubscribe = agent.subscribe((event) => this.#queue.applyAgentEvent(event));
     const recovered = store.runs.recoverActive(Date.now());
     if (recovered > 0) {
       this.#logger.warn({ recovered }, "Marked stale runs as interrupted after restart");
+      this.#audit?.record({
+        ts: Date.now(),
+        actorQq: null,
+        chatKey: null,
+        projectId: null,
+        workspaceId: null,
+        action: "runs.recovered",
+        detail: { count: recovered },
+      });
     }
   }
 
@@ -56,13 +109,18 @@ export class ConversationManager {
     return this.#store.conversations.get(chatKey);
   }
 
-  async submit(message: IncomingMessage, projectId: string): Promise<SubmitResult> {
+  async submit(
+    message: IncomingMessage,
+    projectId: string,
+    permissions: PermissionRuleset = [],
+  ): Promise<SubmitResult> {
     const now = Date.now();
     const run: RunRecord = {
       id: ulid(now),
       chatKey: message.chat.chatKey,
       projectId,
       sessionId: null,
+      actorQq: message.userId,
       status: "queued",
       startedAt: now,
       finishedAt: null,
@@ -73,6 +131,15 @@ export class ConversationManager {
 
     if (!this.#queue.canAccept(message.chat.chatKey)) {
       this.#store.runs.create({ ...run, status: "rejected", finishedAt: now });
+      this.#audit?.record({
+        ts: now,
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "run.rejected",
+        detail: { runId: run.id, reason: "queue_full" },
+      });
       await this.#sender.reply(
         message.chat,
         message.id,
@@ -82,7 +149,7 @@ export class ConversationManager {
     }
 
     this.#store.runs.create(run);
-    const queued = this.#queue.enqueue(run, message);
+    const queued = this.#queue.enqueue(run, message, permissions);
     return { accepted: true, runId: run.id, queued };
   }
 
@@ -132,6 +199,7 @@ export class ConversationManager {
       chatKey,
       projectId,
       sessionId: null,
+      actorQq: userId,
       agent: null,
       model: null,
       createdAt: existing?.createdAt ?? now,

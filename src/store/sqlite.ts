@@ -1,18 +1,22 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
+import type { ApprovalRecord, ApprovalStatus, ApprovalUpdate } from "../domain/approval.js";
+import type { AuditEntry, AuditRecord, DailyUsage } from "../domain/audit.js";
 import type {
   ConversationRecord,
   RunFinish,
   RunRecord,
   RunStatus,
 } from "../domain/conversation.js";
-import type { StorePort } from "../ports/store.js";
+import type { ApprovalDecision } from "../domain/permission.js";
+import type { StorePort, UsageDelta } from "../ports/store.js";
 
 interface ConversationRow {
   chat_key: string;
   project_id: string;
   session_id: string | null;
+  actor_qq: number | null;
   agent: string | null;
   model: string | null;
   created_at: number;
@@ -24,12 +28,55 @@ interface RunRow {
   chat_key: string;
   project_id: string;
   session_id: string | null;
+  actor_qq: number | null;
   status: RunStatus;
   started_at: number;
   finished_at: number | null;
   stop_reason: string | null;
   error: string | null;
   usage_json: string | null;
+}
+
+interface ApprovalRow {
+  id: string;
+  short_id: string;
+  run_id: string | null;
+  chat_key: string;
+  actor_qq: number;
+  project_id: string;
+  session_id: string;
+  permission_id: string;
+  action: string;
+  resources_json: string;
+  message: string | null;
+  status: ApprovalStatus;
+  requested_at: number;
+  expires_at: number;
+  replied_at: number | null;
+  replied_by: number | null;
+  decision: ApprovalDecision | null;
+  qq_message_id: string | null;
+}
+
+interface AuditRow {
+  id: number;
+  ts: number;
+  actor_qq: number | null;
+  chat_key: string | null;
+  project_id: string | null;
+  workspace_id: string | null;
+  action: string;
+  detail_json: string;
+}
+
+interface UsageRow {
+  day: string;
+  actor_qq: number;
+  project_id: string;
+  prompts: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
 }
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
@@ -66,6 +113,74 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
         seen_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS seen_messages_seen_at ON seen_messages(seen_at);
+    `,
+  },
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN actor_qq INTEGER;
+      ALTER TABLE runs ADD COLUMN actor_qq INTEGER;
+
+      CREATE TABLE IF NOT EXISTS approvals (
+        id TEXT PRIMARY KEY,
+        short_id TEXT NOT NULL,
+        run_id TEXT,
+        chat_key TEXT NOT NULL,
+        actor_qq INTEGER NOT NULL,
+        project_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        permission_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        resources_json TEXT NOT NULL,
+        message TEXT,
+        status TEXT NOT NULL,
+        requested_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        replied_at INTEGER,
+        replied_by INTEGER,
+        decision TEXT,
+        qq_message_id TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS approvals_session_permission
+        ON approvals(session_id, permission_id);
+      CREATE INDEX IF NOT EXISTS approvals_chat_status ON approvals(chat_key, status, requested_at DESC);
+      CREATE INDEX IF NOT EXISTS approvals_session_status ON approvals(session_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS approvals_chat_short_id
+        ON approvals(chat_key, short_id);
+
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        actor_qq INTEGER,
+        chat_key TEXT,
+        project_id TEXT,
+        workspace_id TEXT,
+        action TEXT NOT NULL,
+        detail_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS audit_log_ts ON audit_log(ts DESC);
+      CREATE INDEX IF NOT EXISTS audit_log_actor_ts ON audit_log(actor_qq, ts DESC);
+
+      CREATE TABLE IF NOT EXISTS usage_daily (
+        day TEXT NOT NULL,
+        actor_qq INTEGER NOT NULL,
+        project_id TEXT NOT NULL,
+        prompts INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, actor_qq, project_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS usage_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        actor_qq INTEGER NOT NULL,
+        project_id TEXT NOT NULL,
+        kind TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS usage_events_lookup ON usage_events(actor_qq, kind, ts);
+      CREATE INDEX IF NOT EXISTS usage_events_ts ON usage_events(ts);
     `,
   },
 ];
@@ -120,15 +235,22 @@ export class SqliteStore implements StorePort {
         | undefined;
       return row ? mapConversation(row) : null;
     },
+    findBySession: (sessionId: string): ConversationRecord | null => {
+      const row = this.#db
+        .prepare("SELECT * FROM conversations WHERE session_id = ? LIMIT 1")
+        .get(sessionId) as ConversationRow | undefined;
+      return row ? mapConversation(row) : null;
+    },
     upsert: (record: ConversationRecord): void => {
       this.#db
         .prepare(
           `INSERT INTO conversations
-             (chat_key, project_id, session_id, agent, model, created_at, last_active_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+             (chat_key, project_id, session_id, actor_qq, agent, model, created_at, last_active_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(chat_key) DO UPDATE SET
              project_id = excluded.project_id,
              session_id = excluded.session_id,
+             actor_qq = excluded.actor_qq,
              agent = excluded.agent,
              model = excluded.model,
              last_active_at = excluded.last_active_at`,
@@ -137,6 +259,7 @@ export class SqliteStore implements StorePort {
           record.chatKey,
           record.projectId,
           record.sessionId,
+          record.actorQq,
           record.agent,
           record.model,
           record.createdAt,
@@ -170,14 +293,15 @@ export class SqliteStore implements StorePort {
       this.#db
         .prepare(
           `INSERT INTO runs
-             (id, chat_key, project_id, session_id, status, started_at, finished_at, stop_reason, error, usage_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (id, chat_key, project_id, session_id, actor_qq, status, started_at, finished_at, stop_reason, error, usage_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.id,
           record.chatKey,
           record.projectId,
           record.sessionId,
+          record.actorQq,
           record.status,
           record.startedAt,
           record.finishedAt,
@@ -222,6 +346,16 @@ export class SqliteStore implements StorePort {
         .get(chatKey) as RunRow | undefined;
       return row ? mapRun(row) : null;
     },
+    activeForSession: (sessionId: string): RunRecord | null => {
+      const row = this.#db
+        .prepare(
+          `SELECT * FROM runs
+           WHERE session_id = ? AND status IN ('running', 'waiting_permission')
+           ORDER BY started_at DESC LIMIT 1`,
+        )
+        .get(sessionId) as RunRow | undefined;
+      return row ? mapRun(row) : null;
+    },
     listRecent: (chatKey: string, limit: number): RunRecord[] => {
       const rows = this.#db
         .prepare("SELECT * FROM runs WHERE chat_key = ? ORDER BY started_at DESC LIMIT ?")
@@ -242,6 +376,223 @@ export class SqliteStore implements StorePort {
            WHERE status IN ('queued', 'running', 'waiting_permission')`,
         )
         .run(finishedAt);
+      return result.changes;
+    },
+  };
+
+  approvals = {
+    create: (record: ApprovalRecord): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO approvals
+             (id, short_id, run_id, chat_key, actor_qq, project_id, session_id, permission_id,
+              action, resources_json, message, status, requested_at, expires_at, replied_at,
+              replied_by, decision, qq_message_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          record.id,
+          record.shortId,
+          record.runId,
+          record.chatKey,
+          record.actorQq,
+          record.projectId,
+          record.sessionId,
+          record.permissionId,
+          record.action,
+          JSON.stringify(record.resources),
+          record.message,
+          record.status,
+          record.requestedAt,
+          record.expiresAt,
+          record.repliedAt,
+          record.repliedBy,
+          record.decision,
+          record.qqMessageId,
+        );
+    },
+    get: (id: string): ApprovalRecord | null => {
+      const row = this.#db.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as
+        | ApprovalRow
+        | undefined;
+      return row ? mapApproval(row) : null;
+    },
+    getByPermission: (sessionId: string, permissionId: string): ApprovalRecord | null => {
+      const row = this.#db
+        .prepare("SELECT * FROM approvals WHERE session_id = ? AND permission_id = ?")
+        .get(sessionId, permissionId) as ApprovalRow | undefined;
+      return row ? mapApproval(row) : null;
+    },
+    findPendingByChat: (chatKey: string): ApprovalRecord[] => {
+      const rows = this.#db
+        .prepare(
+          "SELECT * FROM approvals WHERE chat_key = ? AND status = 'pending' ORDER BY requested_at ASC",
+        )
+        .all(chatKey) as ApprovalRow[];
+      return rows.map(mapApproval);
+    },
+    findPendingBySession: (sessionId: string): ApprovalRecord[] => {
+      const rows = this.#db
+        .prepare(
+          "SELECT * FROM approvals WHERE session_id = ? AND status = 'pending' ORDER BY requested_at ASC",
+        )
+        .all(sessionId) as ApprovalRow[];
+      return rows.map(mapApproval);
+    },
+    findPendingByMessage: (chatKey: string, qqMessageId: string): ApprovalRecord | null => {
+      const row = this.#db
+        .prepare(
+          "SELECT * FROM approvals WHERE chat_key = ? AND qq_message_id = ? AND status = 'pending' LIMIT 1",
+        )
+        .get(chatKey, qqMessageId) as ApprovalRow | undefined;
+      return row ? mapApproval(row) : null;
+    },
+    listPending: (chatKey?: string): ApprovalRecord[] => {
+      const rows =
+        chatKey === undefined
+          ? (this.#db
+              .prepare("SELECT * FROM approvals WHERE status = 'pending' ORDER BY requested_at ASC")
+              .all() as ApprovalRow[])
+          : (this.#db
+              .prepare(
+                "SELECT * FROM approvals WHERE status = 'pending' AND chat_key = ? ORDER BY requested_at ASC",
+              )
+              .all(chatKey) as ApprovalRow[]);
+      return rows.map(mapApproval);
+    },
+    listRecent: (chatKey: string, limit: number): ApprovalRecord[] => {
+      const rows = this.#db
+        .prepare("SELECT * FROM approvals WHERE chat_key = ? ORDER BY requested_at DESC LIMIT ?")
+        .all(chatKey, limit) as ApprovalRow[];
+      return rows.map(mapApproval);
+    },
+    update: (id: string, update: ApprovalUpdate): void => {
+      const assignments: string[] = [];
+      const values: unknown[] = [];
+      if (update.status !== undefined) {
+        assignments.push("status = ?");
+        values.push(update.status);
+      }
+      if (update.repliedAt !== undefined) {
+        assignments.push("replied_at = ?");
+        values.push(update.repliedAt);
+      }
+      if (update.repliedBy !== undefined) {
+        assignments.push("replied_by = ?");
+        values.push(update.repliedBy);
+      }
+      if (update.decision !== undefined) {
+        assignments.push("decision = ?");
+        values.push(update.decision);
+      }
+      if (update.qqMessageId !== undefined) {
+        assignments.push("qq_message_id = ?");
+        values.push(update.qqMessageId);
+      }
+      if (assignments.length === 0) return;
+      values.push(id);
+      this.#db
+        .prepare(`UPDATE approvals SET ${assignments.join(", ")} WHERE id = ?`)
+        .run(...values);
+    },
+  };
+
+  audit = {
+    record: (entry: AuditEntry): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO audit_log (ts, actor_qq, chat_key, project_id, workspace_id, action, detail_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          entry.ts,
+          entry.actorQq,
+          entry.chatKey,
+          entry.projectId,
+          entry.workspaceId,
+          entry.action,
+          safeJson(entry.detail),
+        );
+    },
+    listRecent: (limit: number): AuditRecord[] => {
+      const rows = this.#db
+        .prepare("SELECT * FROM audit_log ORDER BY ts DESC, id DESC LIMIT ?")
+        .all(limit) as AuditRow[];
+      return rows.map(mapAudit);
+    },
+    prune: (before: number): number => {
+      const result = this.#db.prepare("DELETE FROM audit_log WHERE ts < ?").run(before);
+      return result.changes;
+    },
+  };
+
+  usage = {
+    recordPrompt: (day: string, actorQq: number, projectId: string): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO usage_daily (day, actor_qq, project_id, prompts, input_tokens, output_tokens, cost_usd)
+           VALUES (?, ?, ?, 1, 0, 0, 0)
+           ON CONFLICT(day, actor_qq, project_id) DO UPDATE SET prompts = prompts + 1`,
+        )
+        .run(day, actorQq, projectId);
+    },
+    addRunUsage: (day: string, actorQq: number, projectId: string, usage: UsageDelta): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO usage_daily (day, actor_qq, project_id, prompts, input_tokens, output_tokens, cost_usd)
+           VALUES (?, ?, ?, 0, ?, ?, ?)
+           ON CONFLICT(day, actor_qq, project_id) DO UPDATE SET
+             input_tokens = input_tokens + excluded.input_tokens,
+             output_tokens = output_tokens + excluded.output_tokens,
+             cost_usd = cost_usd + excluded.cost_usd`,
+        )
+        .run(day, actorQq, projectId, usage.inputTokens, usage.outputTokens, usage.costUsd);
+    },
+    getDaily: (day: string, actorQq: number, projectId: string): DailyUsage => {
+      const row = this.#db
+        .prepare("SELECT * FROM usage_daily WHERE day = ? AND actor_qq = ? AND project_id = ?")
+        .get(day, actorQq, projectId) as UsageRow | undefined;
+      return row ? mapUsage(row) : emptyUsage(day, actorQq, projectId);
+    },
+    getActorDaily: (day: string, actorQq: number): DailyUsage => {
+      const row = this.#db
+        .prepare(
+          `SELECT ?, ?, '', COALESCE(SUM(prompts), 0) AS prompts,
+                  COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                  COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                  COALESCE(SUM(cost_usd), 0) AS cost_usd
+           FROM usage_daily WHERE day = ? AND actor_qq = ?`,
+        )
+        .get(day, actorQq, day, actorQq) as UsageRow;
+      return mapUsage({ ...row, project_id: "" });
+    },
+    getProjectDaily: (day: string, projectId: string): DailyUsage => {
+      const row = this.#db
+        .prepare(
+          `SELECT ?, NULL, ?, COALESCE(SUM(prompts), 0) AS prompts,
+                  COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                  COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                  COALESCE(SUM(cost_usd), 0) AS cost_usd
+           FROM usage_daily WHERE day = ? AND project_id = ?`,
+        )
+        .get(day, projectId, day, projectId) as UsageRow;
+      return mapUsage({ ...row, actor_qq: 0 });
+    },
+    recordEvent: (ts: number, actorQq: number, projectId: string, kind: string): void => {
+      this.#db
+        .prepare("INSERT INTO usage_events (ts, actor_qq, project_id, kind) VALUES (?, ?, ?, ?)")
+        .run(ts, actorQq, projectId, kind);
+    },
+    countEvents: (actorQq: number, kind: string, since: number): number => {
+      const row = this.#db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM usage_events WHERE actor_qq = ? AND kind = ? AND ts >= ?",
+        )
+        .get(actorQq, kind, since) as { count: number };
+      return row.count;
+    },
+    pruneEvents: (before: number): number => {
+      const result = this.#db.prepare("DELETE FROM usage_events WHERE ts < ?").run(before);
       return result.changes;
     },
   };
@@ -278,6 +629,7 @@ function mapConversation(row: ConversationRow): ConversationRecord {
     chatKey: row.chat_key,
     projectId: row.project_id,
     sessionId: row.session_id,
+    actorQq: row.actor_qq,
     agent: row.agent,
     model: row.model,
     createdAt: row.created_at,
@@ -291,6 +643,7 @@ function mapRun(row: RunRow): RunRecord {
     chatKey: row.chat_key,
     projectId: row.project_id,
     sessionId: row.session_id,
+    actorQq: row.actor_qq,
     status: row.status,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
@@ -298,4 +651,83 @@ function mapRun(row: RunRow): RunRecord {
     error: row.error,
     usageJson: row.usage_json,
   };
+}
+
+function mapApproval(row: ApprovalRow): ApprovalRecord {
+  return {
+    id: row.id,
+    shortId: row.short_id,
+    runId: row.run_id,
+    chatKey: row.chat_key,
+    actorQq: row.actor_qq,
+    projectId: row.project_id,
+    sessionId: row.session_id,
+    permissionId: row.permission_id,
+    action: row.action,
+    resources: parseStringArray(row.resources_json),
+    message: row.message,
+    status: row.status,
+    requestedAt: row.requested_at,
+    expiresAt: row.expires_at,
+    repliedAt: row.replied_at,
+    repliedBy: row.replied_by,
+    decision: row.decision,
+    qqMessageId: row.qq_message_id,
+  };
+}
+
+function mapAudit(row: AuditRow): AuditRecord {
+  return {
+    id: row.id,
+    ts: row.ts,
+    actorQq: row.actor_qq,
+    chatKey: row.chat_key,
+    projectId: row.project_id,
+    workspaceId: row.workspace_id,
+    action: row.action,
+    detail: parseJson(row.detail_json),
+  };
+}
+
+function mapUsage(row: UsageRow): DailyUsage {
+  return {
+    day: row.day,
+    actorQq: row.actor_qq === 0 ? null : row.actor_qq,
+    projectId: row.project_id === "" ? null : row.project_id,
+    prompts: row.prompts,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    costUsd: row.cost_usd,
+  };
+}
+
+function emptyUsage(day: string, actorQq: number | null, projectId: string | null): DailyUsage {
+  return { day, actorQq, projectId, prompts: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJson(value: string): unknown {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return JSON.stringify({ error: "unserializable detail" });
+  }
 }

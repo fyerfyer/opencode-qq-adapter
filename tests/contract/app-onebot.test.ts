@@ -14,10 +14,14 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function startApp(agent: FakeAgent) {
+async function startApp(
+  agent: FakeAgent,
+  mutate?: (config: ReturnType<typeof makeTestConfig>) => void,
+) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-contract-"));
   const config = makeTestConfig({ projectPath });
   config.server.port = 0;
+  mutate?.(config);
   const store = new SqliteStore(":memory:");
   const onebot = new FakeOneBot();
   const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
@@ -127,11 +131,78 @@ describe("Application + OneBot port contract", () => {
     expect(app.conversations.getConversation("private:20000")?.sessionId).toBeNull();
   });
 
-  it("ignores unknown users silently", async () => {
-    const { onebot } = await startApp(new FakeAgent());
+  it("asks for approval in QQ and applies the user's decision", async () => {
+    const agent = new FakeAgent();
+    agent.autoComplete = false;
+    const { app, onebot } = await startApp(agent);
+    onebot.emit(messageEvent(11, "please run the tests"));
+    await waitFor(
+      () => typeof app.conversations.getConversation("private:20000")?.sessionId === "string",
+      3000,
+      "session",
+    );
+    const sessionId = app.conversations.getConversation("private:20000")?.sessionId ?? "";
+
+    agent.askPermission({
+      id: "per_1",
+      sessionId,
+      action: "shell",
+      resources: ["npm test"],
+      save: [],
+      message: "run tests",
+      metadata: null,
+    });
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("需要审批")),
+      3000,
+      "approval prompt",
+    );
+
+    onebot.emit(messageEvent(12, "1"));
+    await waitFor(() => agent.permissionReplies.length === 1, 3000, "permission reply");
+    expect(agent.permissionReplies[0]).toMatchObject({
+      sessionId,
+      requestId: "per_1",
+      decision: "once",
+    });
+    expect(onebot.texts().some((text) => text.includes("已批准"))).toBe(true);
+
+    agent.complete(sessionId);
+    await waitFor(
+      () => app.conversations.status("private:20000").recentRuns[0]?.status === "completed",
+      3000,
+      "completed run",
+    );
+  });
+
+  it("rate limits prompts and records the rejection in the audit log", async () => {
+    const { app, onebot } = await startApp(new FakeAgent(), (config) => {
+      config.security.rate_limit = { prompts_per_minute: 1 };
+    });
+    onebot.emit(messageEvent(13, "first prompt"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("fake answer")),
+      3000,
+      "first answer",
+    );
+    onebot.emit(messageEvent(14, "second prompt"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("请求过于频繁")),
+      3000,
+      "rate limit",
+    );
+    expect(app.audit.listRecent(10).some((event) => event.action === "prompt.rejected")).toBe(true);
+  });
+
+  it("ignores unknown users silently but audits the denial", async () => {
+    const { app, onebot } = await startApp(new FakeAgent());
     onebot.emit(messageEvent(9, "!ping", 99999));
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(onebot.sent).toHaveLength(0);
+    expect(app.audit.listRecent(10)[0]).toMatchObject({
+      actorQq: 99999,
+      action: "access.denied",
+    });
   });
 
   it("deduplicates repeated message IDs", async () => {

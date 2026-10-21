@@ -1,8 +1,10 @@
 import type { Logger } from "pino";
+import { ApprovalBroker } from "./approval/broker.js";
 import type { AppConfig } from "./config/schema.js";
 import { ConversationManager } from "./conversation/manager.js";
 import type { IncomingMessage } from "./domain/message.js";
 import { InternalHttpServer } from "./internal-http/server.js";
+import { AuditTrail } from "./observability/audit.js";
 import { HealthService } from "./observability/health.js";
 import { buildLogger } from "./observability/logger.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
@@ -10,6 +12,7 @@ import { isMessageEvent, type OneBotEvent } from "./onebot/protocol.js";
 import { toIncomingMessage } from "./onebot/segments.js";
 import { OpenCodeAgent } from "./opencode/agent.js";
 import { PolicyEngine } from "./policy/engine.js";
+import { QuotaService } from "./policy/quota.js";
 import type { AgentPort } from "./ports/agent.js";
 import type { OneBotPort } from "./ports/onebot.js";
 import type { StorePort } from "./ports/store.js";
@@ -33,7 +36,10 @@ export class App {
   readonly onebot: OneBotPort;
   readonly agent: AgentPort;
   readonly policy: PolicyEngine;
+  readonly audit: AuditTrail;
+  readonly quota: QuotaService;
   readonly conversations: ConversationManager;
+  readonly approvals: ApprovalBroker;
   readonly router: MessageRouter;
   readonly health: HealthService;
   readonly http: InternalHttpServer;
@@ -51,17 +57,32 @@ export class App {
     this.agent = dependencies.agent ?? new OpenCodeAgent(config.opencode, this.logger);
     const sender = dependencies.sender ?? new MessageSender(this.onebot, config.qq, this.logger);
     this.policy = new PolicyEngine(config);
+    this.audit = new AuditTrail(this.store, this.logger);
+    this.quota = new QuotaService({ config, store: this.store });
     this.conversations = new ConversationManager(
       config,
       this.store,
       this.agent,
       sender,
       this.logger,
+      { quota: this.quota, audit: this.audit },
     );
+    this.approvals = new ApprovalBroker({
+      config,
+      store: this.store,
+      agent: this.agent,
+      sender,
+      policy: this.policy,
+      audit: this.audit,
+      logger: this.logger,
+    });
     this.router = new MessageRouter({
       config,
       policy: this.policy,
       conversations: this.conversations,
+      approvals: this.approvals,
+      quota: this.quota,
+      audit: this.audit,
       sender,
       agent: this.agent,
       onebot: this.onebot,
@@ -86,10 +107,12 @@ export class App {
   async start(): Promise<void> {
     if (this.#started) return;
     this.#unsubscribeOneBot = this.onebot.onEvent((event) => this.#onOneBotEvent(event));
+    this.audit.prune(this.config.logging.audit_retention_days);
     try {
       await this.http.start();
-      await this.onebot.start();
       await this.agent.start();
+      this.approvals.start();
+      await this.onebot.start();
     } catch (error) {
       this.logger.error({ err: error }, "Failed to start bridge");
       await this.stop();
@@ -112,6 +135,9 @@ export class App {
     this.#stopped = true;
     this.#unsubscribeOneBot?.();
     this.#unsubscribeOneBot = null;
+    await this.approvals.stop().catch((error) => {
+      this.logger.warn({ err: error }, "Approval broker shutdown failed");
+    });
     await this.conversations.shutdown().catch((error) => {
       this.logger.warn({ err: error }, "Conversation manager shutdown failed");
     });

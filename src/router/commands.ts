@@ -1,3 +1,5 @@
+import { parseApprovalDecision } from "../approval/broker.js";
+import type { AuditRecord } from "../domain/audit.js";
 import { formatProjects, formatStatus, HELP_TEXT } from "./format.js";
 import type { CommandHandler, RouterDeps } from "./types.js";
 
@@ -62,6 +64,15 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       await deps.sender.reply(message.chat, message.id, switched.reason ?? "切换失败。");
       return;
     }
+    deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId,
+      workspaceId: null,
+      action: "project.selected",
+      detail: { path: allowed.project.path },
+    });
     await deps.sender.reply(
       message.chat,
       message.id,
@@ -73,6 +84,17 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
 
   commands.set("new", async ({ message }) => {
     const result = deps.conversations.resetSession(message.chat.chatKey);
+    if (result.ok) {
+      deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: deps.conversations.getConversation(message.chat.chatKey)?.projectId ?? null,
+        workspaceId: null,
+        action: "session.reset",
+        detail: {},
+      });
+    }
     await deps.sender.reply(
       message.chat,
       message.id,
@@ -88,14 +110,69 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
 
   commands.set("stop", async ({ message }) => {
     const result = await deps.conversations.stop(message.chat.chatKey);
-    if (!result.stopped && result.queuedCleared === 0) {
+    const rejected = await deps.approvals.rejectChat(message.chat.chatKey, "stop_command");
+    if (!result.stopped && result.queuedCleared === 0 && rejected === 0) {
       await deps.sender.reply(message.chat, message.id, "当前没有运行中的任务。");
       return;
     }
     const parts: string[] = [];
     if (result.stopped) parts.push("已请求中断当前任务。");
     if (result.queuedCleared > 0) parts.push(`已清空 ${result.queuedCleared} 条排队任务。`);
+    if (rejected > 0) parts.push(`已拒绝 ${rejected} 个待审批请求。`);
+    deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId: deps.conversations.getConversation(message.chat.chatKey)?.projectId ?? null,
+      workspaceId: null,
+      action: "run.stop_requested",
+      detail: { stopped: result.stopped, queuedCleared: result.queuedCleared, rejected },
+    });
     await deps.sender.reply(message.chat, message.id, parts.join("\n"));
+  });
+
+  commands.set("approvals", async ({ message }) => {
+    await deps.sender.reply(
+      message.chat,
+      message.id,
+      deps.approvals.pendingList(message.chat.chatKey),
+    );
+  });
+
+  commands.set("approve", async ({ message, args }) => {
+    const id = args[0] ?? "";
+    const decision = parseApprovalDecision(args[1] ?? "");
+    if (id.length === 0 || decision === null) {
+      await deps.sender.reply(
+        message.chat,
+        message.id,
+        "用法：!approve ID once|always|reject\n也可以直接引用审批消息回复 1/2/3。",
+      );
+      return;
+    }
+    await deps.approvals.resolve(message, id, decision);
+  });
+
+  commands.set("reject", async ({ message, args }) => {
+    const id = args[0] ?? "";
+    if (id.length === 0) {
+      await deps.sender.reply(message.chat, message.id, "用法：!reject ID");
+      return;
+    }
+    await deps.approvals.resolve(message, id, "reject");
+  });
+
+  commands.set("audit", async ({ message, args }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
+    if (actor.role !== "owner" && actor.role !== "admin") {
+      await deps.sender.reply(message.chat, message.id, "只有 owner/admin 可以查看审计日志。");
+      return;
+    }
+    const requested = Number(args[0] ?? "10");
+    const limit = Number.isFinite(requested) ? Math.min(Math.max(1, requested), 50) : 10;
+    const records = deps.audit.listRecent(limit);
+    await deps.sender.reply(message.chat, message.id, formatAudit(records));
   });
 
   commands.set("model", async ({ message }) => {
@@ -117,4 +194,28 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
   });
 
   return commands;
+}
+
+function formatAudit(records: AuditRecord[]): string {
+  if (records.length === 0) return "审计日志为空。";
+  return [
+    `最近 ${records.length} 条审计记录：`,
+    ...records.map((record) => {
+      const time = new Date(record.ts).toLocaleString();
+      const actor = record.actorQq ?? "-";
+      const project = record.projectId ?? "-";
+      const detail = summarizeDetail(record.detail);
+      return `${time} · ${record.action} · QQ ${actor} · ${project}${detail ? ` · ${detail}` : ""}`;
+    }),
+  ].join("\n");
+}
+
+function summarizeDetail(detail: unknown): string {
+  if (detail === null || detail === undefined) return "";
+  if (typeof detail !== "object") return String(detail).slice(0, 120);
+  const entries = Object.entries(detail as Record<string, unknown>)
+    .filter(([, value]) => value !== null && value !== undefined && typeof value !== "object")
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${String(value)}`);
+  return entries.join(", ").slice(0, 180);
 }

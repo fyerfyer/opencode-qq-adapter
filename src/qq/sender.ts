@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import { atSegment, type ChatRef, type OutgoingSegment, textSegment } from "../domain/chat.js";
-import type { OneBotPort } from "../ports/onebot.js";
+import type { OneBotPort, OneBotSendResult } from "../ports/onebot.js";
 import { markdownToPlain, splitMessage } from "./text.js";
 
 export class MessageSender {
@@ -15,28 +15,31 @@ export class MessageSender {
     this.#logger = logger;
   }
 
-  async reply(chat: ChatRef, messageId: string, text: string): Promise<void> {
+  async reply(chat: ChatRef, messageId: string, text: string): Promise<OneBotSendResult> {
     const chunks = this.#prepare(text);
-    if (chunks.length === 0) return;
-    await this.#sendChunk(chat, chunks[0] ?? "", messageId, true);
+    if (chunks.length === 0) return { messageId: "" };
+    const first = await this.#sendChunk(chat, chunks[0] ?? "", messageId, true);
     for (const chunk of chunks.slice(1)) {
       await this.#sendChunk(chat, chunk, messageId, false);
     }
+    return first;
   }
 
-  async send(chat: ChatRef, text: string): Promise<void> {
+  async send(chat: ChatRef, text: string): Promise<OneBotSendResult> {
     const chunks = this.#prepare(text);
+    let first: OneBotSendResult = { messageId: "" };
     for (const [index, chunk] of chunks.entries()) {
-      await this.#sendChunk(chat, chunk, null, index === 0);
+      const result = await this.#sendChunk(chat, chunk, null, index === 0);
+      if (index === 0) first = result;
     }
+    return first;
   }
 
-  async sendSegments(chat: ChatRef, segments: OutgoingSegment[]): Promise<void> {
+  async sendSegments(chat: ChatRef, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
     if (chat.type === "group" && chat.groupId !== undefined) {
-      await this.#onebot.sendGroup(chat.groupId, segments);
-    } else {
-      await this.#onebot.sendPrivate(chat.userId, segments);
+      return this.#onebot.sendGroup(chat.groupId, segments);
     }
+    return this.#onebot.sendPrivate(chat.userId, segments);
   }
 
   #prepare(text: string): string[] {
@@ -50,7 +53,7 @@ export class MessageSender {
     chunk: string,
     messageId: string | null,
     allowMention: boolean,
-  ): Promise<void> {
+  ): Promise<OneBotSendResult> {
     const segments = [];
     if (
       chat.type === "group" &&
@@ -65,12 +68,12 @@ export class MessageSender {
 
     try {
       if (messageId !== null && this.#config.reply_to_message) {
-        await this.#onebot.reply(chat, messageId, segments);
-      } else if (chat.type === "group" && chat.groupId !== undefined) {
-        await this.#onebot.sendGroup(chat.groupId, segments);
-      } else {
-        await this.#onebot.sendPrivate(chat.userId, segments);
+        return await this.#onebot.reply(chat, messageId, segments);
       }
+      if (chat.type === "group" && chat.groupId !== undefined) {
+        return await this.#onebot.sendGroup(chat.groupId, segments);
+      }
+      return await this.#onebot.sendPrivate(chat.userId, segments);
     } catch (error) {
       this.#logger.error(
         { err: error, chatKey: chat.chatKey, length: chunk.length },

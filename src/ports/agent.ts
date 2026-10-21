@@ -1,3 +1,9 @@
+import type {
+  AgentPermissionRequest,
+  ApprovalDecision,
+  PermissionRuleset,
+} from "../domain/permission.js";
+
 export interface AgentHealth {
   healthy: boolean;
   version: string | null;
@@ -11,6 +17,7 @@ export interface AgentSessionInput {
   title?: string;
   agent?: string | null;
   model?: string | null;
+  permissions?: PermissionRuleset;
 }
 
 export interface AgentSession {
@@ -80,6 +87,14 @@ export interface AgentPort {
   prompt(input: AgentPromptInput): Promise<AgentPromptReceipt>;
   waitForCompletion(sessionId: string, signal?: AbortSignal): Promise<void>;
   interrupt(sessionId: string): Promise<boolean>;
+  updatePermissions(sessionId: string, permissions: PermissionRuleset): Promise<void>;
+  listPermissions(sessionId: string): Promise<AgentPermissionRequest[]>;
+  replyPermission(
+    sessionId: string,
+    requestId: string,
+    decision: ApprovalDecision,
+    message?: string,
+  ): Promise<void>;
   listMessages(sessionId: string, limit?: number): Promise<AgentMessage[]>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
   eventStatus(): AgentEventStatus;

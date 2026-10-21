@@ -19,6 +19,25 @@ export function groupChat(groupId: number, userId: number, mode: GroupMode): Cha
   return { type: "group", userId, groupId, chatKey };
 }
 
+/**
+ * Reconstruct the outbound chat target from a persisted chat key.
+ * `actorQq` is used as the mention target for shared group conversations.
+ */
+export function chatFromKey(chatKey: string, actorQq: number): ChatRef | null {
+  const privateMatch = /^private:(\d+)$/.exec(chatKey);
+  if (privateMatch) {
+    const userId = Number(privateMatch[1]);
+    return { type: "private", userId, chatKey };
+  }
+  const groupMatch = /^group:(\d+)(?::(\d+))?$/.exec(chatKey);
+  if (groupMatch) {
+    const groupId = Number(groupMatch[1]);
+    const userId = groupMatch[2] ? Number(groupMatch[2]) : actorQq;
+    return { type: "group", userId, groupId, chatKey };
+  }
+  return null;
+}
+
 export interface OutgoingTextSegment {
   type: "text";
   text: string;

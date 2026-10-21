@@ -16,6 +16,7 @@
  *   QQ_PEER_ID           peer QQ number
  *   QQ_E2E_PROMPT        optional prompt (default: 请只回复：qq-opencode-ok)
  *   QQ_E2E_STOP          set to 1 to also verify !stop
+ *   QQ_E2E_APPROVAL      set to 1 to verify the QQ approval flow
  */
 
 interface HistoryMessage {
@@ -52,6 +53,25 @@ async function main(): Promise<void> {
     await send("!stop");
     const stopped = await waitForReply(started, (raw) => raw.includes("已请求中断"), 30);
     console.log(`✓ !stop -> ${stopped}`);
+  }
+
+  if (env.QQ_E2E_APPROVAL === "1") {
+    await send(
+      "请必须使用 shell 工具执行命令 `echo qq-approval-ok`，然后只回复命令输出，不要猜测结果。",
+    );
+    const asked = await waitForReply(started, (raw) => raw.includes("需要审批"), 90);
+    console.log(`✓ approval requested -> ${asked.split("\n")[0]}`);
+
+    await send("1");
+    const approved = await waitForReply(started, (raw) => raw.includes("已批准"), 30);
+    console.log(`✓ approval reply -> ${approved}`);
+
+    const approvedAnswer = await waitForReply(
+      started,
+      (raw) => raw.includes("qq-approval-ok") && !raw.includes("需要审批"),
+      120,
+    );
+    console.log(`✓ approved command -> ${approvedAnswer.slice(0, 200)}`);
   }
 
   console.log("QQ E2E passed");

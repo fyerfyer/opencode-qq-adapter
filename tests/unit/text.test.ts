@@ -19,6 +19,13 @@ describe("QQ text formatting", () => {
     expect(output).not.toContain("# Title");
   });
 
+  it("preserves command placeholders while stripping real HTML tags", () => {
+    const input = "!use <项目>，忽略 <b>标签</b>";
+    const output = markdownToPlain(input);
+    expect(output).toContain("!use <项目>");
+    expect(output).toContain("忽略 标签");
+  });
+
   it("does not split short messages", () => {
     expect(splitMessage("hello", 100)).toEqual(["hello"]);
   });

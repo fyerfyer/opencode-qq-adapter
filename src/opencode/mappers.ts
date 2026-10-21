@@ -1,3 +1,4 @@
+import type { AgentPermissionRequest } from "../domain/permission.js";
 import type { AgentMessage, AgentSession } from "../ports/agent.js";
 import { AgentError } from "./errors.js";
 
@@ -88,6 +89,26 @@ export function mapSession(session: {
           cacheWrite: session.tokens.cache.write,
         }
       : null,
+  };
+}
+
+export function mapPermissionRequest(request: {
+  id: string;
+  sessionID: string;
+  action: string;
+  resources: string[];
+  save?: string[];
+  message?: string;
+  metadata?: Record<string, unknown>;
+}): AgentPermissionRequest {
+  return {
+    id: request.id,
+    sessionId: request.sessionID,
+    action: request.action,
+    resources: [...request.resources],
+    save: [...(request.save ?? [])],
+    message: request.message ?? null,
+    metadata: request.metadata ?? null,
   };
 }
 

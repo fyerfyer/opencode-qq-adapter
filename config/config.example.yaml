@@ -64,9 +64,15 @@ users:
   "10001":
     role: owner
     projects: ["*"]
+  # Optional per-user limits can only tighten the global security limits.
   # "10002":
   #   role: member
   #   projects: ["demo"]
+  #   limits:
+  #     prompts_per_minute: 3
+  #     runs_per_hour: 10
+  #     daily_cost_usd: 1.5
+  #     daily_tokens: 500000
 
 groups:
   # "20001":
@@ -118,6 +124,8 @@ policies:
         effect: allow
       - pattern: "git diff *"
         effect: allow
+      - pattern: "git push *"
+        effect: deny
       - pattern: "rm -rf *"
         effect: deny
   trusted:

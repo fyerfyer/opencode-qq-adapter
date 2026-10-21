@@ -89,4 +89,48 @@ describe("policy engine", () => {
     const infraActor = actorFor(10003);
     expect(policy.defaultProject(infraActor, 10003)?.id).toBe("infra");
   });
+
+  it("compiles project, user and group policies into a permission ruleset", () => {
+    const restrictive = configSchema.parse({
+      ...config,
+      policies: {
+        standard: {
+          read: "allow",
+          edit: "ask",
+          shell: "ask",
+          shell_rules: [{ pattern: "git status *", effect: "allow" }],
+        },
+        readonly: { edit: "deny", shell: "deny" },
+        trusted: { edit: "allow", shell: "allow" },
+      },
+      users: {
+        "10002": { role: "member", projects: ["blog"], policy: "trusted" },
+      },
+      projects: {
+        ...config.projects,
+        blog: { ...config.projects.blog, policy: "standard" },
+      },
+      groups: {
+        "20001": {
+          ...config.groups["20001"],
+          mode: "readonly",
+          policy: "standard",
+        },
+      },
+    });
+    const engine = new PolicyEngine(restrictive);
+
+    const privateDecision = engine.permissionsFor(message(10002), "blog");
+    expect(privateDecision?.effects.edit).toBe("ask");
+    expect(privateDecision?.policyNames).toEqual(["standard", "trusted"]);
+
+    const groupDecision = engine.permissionsFor(message(10002, 20001), "blog");
+    expect(groupDecision?.effects.edit).toBe("deny");
+    expect(groupDecision?.effects.shell).toBe("deny");
+    expect(groupDecision?.ruleset.at(-1)).toMatchObject({
+      action: "external_directory",
+      resource: "*",
+      effect: "deny",
+    });
+  });
 });

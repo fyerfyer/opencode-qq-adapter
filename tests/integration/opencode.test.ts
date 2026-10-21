@@ -43,5 +43,5 @@ describe.skipIf(!enabled)("OpenCode integration", () => {
       await agent.stop();
       logger.flush?.();
     }
-  });
+  }, 120_000);
 });

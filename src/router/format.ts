@@ -11,14 +11,19 @@ export const HELP_TEXT = [
   "!status — 查看项目、会话、运行状态",
   "!stop — 中断当前任务并清空队列",
   "!projects — 列出可用项目",
-  "!use <项目> — 切换项目（别名 !cd）",
+  "!use 项目名 — 切换项目（别名 !cd）",
   "!new — 为当前项目创建新会话",
   "!model — 查看当前模型",
   "!agent — 查看当前 agent",
   "!whoami — 查看身份与可用项目",
+  "!approvals — 查看待审批请求",
+  "!approve ID once|always|reject — 处理审批",
+  "!reject ID — 拒绝审批",
+  "!audit N — 查看最近 N 条审计记录（owner/admin）",
   "!help — 显示本帮助",
   "",
-  "直接发送文字即可让 OpenCode 处理；图片输入计划在 M4 支持。",
+  "直接发送文字即可让 OpenCode 处理；危险操作会通过审批消息确认。",
+  "图片输入计划在 M4 支持。",
 ].join("\n");
 
 export async function formatStatus(
@@ -27,6 +32,13 @@ export async function formatStatus(
     conversations: ConversationManager;
     agent: AgentPort;
     onebot: OneBotPort;
+    approvals: { pending(chatKey: string): unknown[] };
+    quota: {
+      usageToday(
+        actorQq: number,
+        projectId: string,
+      ): { actor: { prompts: number; inputTokens: number; outputTokens: number; costUsd: number } };
+    };
   },
   message: IncomingMessage,
 ): Promise<string> {
@@ -49,7 +61,14 @@ export async function formatStatus(
     `模型：${conversation?.model ?? deps.config.opencode.default_model ?? "默认"}`,
     `运行：${active === null ? "空闲" : `${active.status} (${active.id})`}`,
     `队列：${status.queued}`,
+    `待审批：${deps.approvals.pending(message.chat.chatKey).length}`,
   ];
+  if (currentProjectId !== null) {
+    const usage = deps.quota.usageToday(message.userId, currentProjectId).actor;
+    lines.push(
+      `今日用量：${usage.prompts} prompts · ${usage.inputTokens + usage.outputTokens} tokens · $${usage.costUsd.toFixed(4)}`,
+    );
+  }
   if (health.error) {
     lines.push(`OpenCode 错误：${health.error}`);
   }

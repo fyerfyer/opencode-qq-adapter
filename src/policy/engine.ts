@@ -1,6 +1,14 @@
-import type { AppConfig, GroupConfig, ProjectConfig, UserConfig } from "../config/schema.js";
+import type {
+  AppConfig,
+  GroupConfig,
+  PolicyConfig,
+  ProjectConfig,
+  UserConfig,
+} from "../config/schema.js";
 import type { GroupMode } from "../domain/chat.js";
 import type { IncomingMessage } from "../domain/message.js";
+import type { PermissionEffect, PermissionRuleset } from "../domain/permission.js";
+import { compilePermissionRuleset, effectivePolicyEffects } from "./ruleset.js";
 
 export type DenyReason =
   | "unknown_user"
@@ -20,6 +28,13 @@ export interface AccessDecision {
 export interface ProjectEntry {
   id: string;
   project: ProjectConfig;
+}
+
+export interface PermissionDecision {
+  ruleset: PermissionRuleset;
+  effects: Record<string, PermissionEffect>;
+  policyNames: string[];
+  groupMode: GroupMode | null;
 }
 
 export class PolicyEngine {
@@ -115,6 +130,45 @@ export class PolicyEngine {
 
   projectPolicy(projectId: string): string {
     return this.#config.projects[projectId]?.policy ?? "standard";
+  }
+
+  policy(name: string | undefined): PolicyConfig | undefined {
+    if (name === undefined) return undefined;
+    return this.#config.policies[name];
+  }
+
+  /**
+   * Resolve the final OpenCode permission ruleset for a chat/project pair.
+   * Returns null when the project no longer exists in configuration.
+   */
+  permissionsFor(message: IncomingMessage, projectId: string): PermissionDecision | null {
+    const actor = this.actor(message.userId);
+    const project = this.#config.projects[projectId];
+    if (actor === null || project === undefined) return null;
+    const group = message.chat.type === "group" ? this.group(message.chat.groupId) : null;
+    const projectPolicy = this.policy(project.policy);
+    const groupPolicy = this.policy(group?.policy);
+    const userPolicy = this.policy(actor.policy);
+
+    const groupMode = group?.mode ?? null;
+    const sources = {
+      ...(projectPolicy ? { project: projectPolicy } : {}),
+      ...(groupPolicy ? { group: groupPolicy } : {}),
+      ...(userPolicy ? { user: userPolicy } : {}),
+      ...(groupMode ? { groupMode } : {}),
+    };
+    const policyNames = [
+      projectPolicy ? project.policy : undefined,
+      groupPolicy ? group?.policy : undefined,
+      userPolicy ? actor.policy : undefined,
+    ].filter((name): name is string => name !== undefined);
+
+    return {
+      ruleset: compilePermissionRuleset(sources),
+      effects: effectivePolicyEffects(sources),
+      policyNames,
+      groupMode,
+    };
   }
 
   #projectAllowed(

@@ -1,5 +1,6 @@
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
+import type { PermissionRuleset } from "../domain/permission.js";
 
 export interface TokenTotals {
   input: number;
@@ -17,6 +18,7 @@ export interface RunUsage {
 export interface ActiveRun {
   record: RunRecord;
   message: IncomingMessage;
+  permissions: PermissionRuleset;
   abort: AbortController;
   stopRequested: boolean;
   interrupted: boolean;
@@ -28,6 +30,7 @@ export interface ActiveRun {
 export interface PendingRun {
   record: RunRecord;
   message: IncomingMessage;
+  permissions: PermissionRuleset;
 }
 
 export interface ChatState {

@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
+import type { AgentPermissionRequest, ApprovalDecision } from "../domain/permission.js";
 import type {
   AgentEvent,
   AgentEventStatus,
@@ -13,7 +14,13 @@ import type {
 } from "../ports/agent.js";
 import { AgentUnavailableError } from "./errors.js";
 import { OpenCodeEventStream } from "./events.js";
-import { isNotFound, mapMessage, mapSession, parseModelRef } from "./mappers.js";
+import {
+  isNotFound,
+  mapMessage,
+  mapPermissionRequest,
+  mapSession,
+  parseModelRef,
+} from "./mappers.js";
 import { type Client, OpenCodeService } from "./service.js";
 
 type OpenCodeConfig = AppConfig["opencode"];
@@ -75,6 +82,9 @@ export class OpenCodeAgent implements AgentPort {
       ...(input.title ? { title: input.title } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       ...(model ? { model } : {}),
+      ...(input.permissions && input.permissions.length > 0
+        ? { permissions: input.permissions }
+        : {}),
     });
     this.#logger.info(
       {
@@ -117,6 +127,39 @@ export class OpenCodeAgent implements AgentPort {
     const client = await this.#service.getClient();
     const result = await client.session.interrupt({ sessionID: sessionId });
     return result.interrupted;
+  }
+
+  async updatePermissions(
+    sessionId: string,
+    permissions: NonNullable<AgentSessionInput["permissions"]>,
+  ): Promise<void> {
+    const client = await this.#getHealthyClient();
+    await client.session.update({ sessionID: sessionId, permissions });
+    this.#logger.debug(
+      { sessionId, rules: permissions.length },
+      "Applied session permission ruleset",
+    );
+  }
+
+  async listPermissions(sessionId: string): Promise<AgentPermissionRequest[]> {
+    const client = await this.#service.getClient();
+    const requests = await client.permission.list({ sessionID: sessionId });
+    return requests.map(mapPermissionRequest);
+  }
+
+  async replyPermission(
+    sessionId: string,
+    requestId: string,
+    decision: ApprovalDecision,
+    message?: string,
+  ): Promise<void> {
+    const client = await this.#service.getClient();
+    await client.permission.reply({
+      sessionID: sessionId,
+      requestID: requestId,
+      decision,
+      ...(message ? { message } : {}),
+    });
   }
 
   async listMessages(sessionId: string, limit = 50): Promise<AgentMessage[]> {
