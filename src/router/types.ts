@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import type { ApprovalBroker } from "../approval/broker.js";
+import type { ConfigReloadResult } from "../config/reload.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
 import type { IncomingMessage } from "../domain/message.js";
@@ -37,4 +38,5 @@ export interface RouterDeps {
   sudo: SudoService;
   notifier: OwnerNotifier;
   logger: Logger;
+  reloadConfig?: () => Promise<ConfigReloadResult>;
 }

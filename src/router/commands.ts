@@ -24,6 +24,8 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       `QQ：${message.userId}`,
       `昵称：${message.senderName}`,
       `角色：${actor.role}`,
+      ...(message.chat.type === "group" ? [`群号：${message.chat.groupId ?? "-"}`] : []),
+      `会话键：${message.chat.chatKey}`,
       `可用项目：${projects.length > 0 ? projects.join(", ") : "无"}`,
     ].join("\n");
     await deps.sender.reply(message.chat, message.id, text);
@@ -297,6 +299,41 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     await deps.approvals.resolve(message, id, "reject");
   });
 
+  commands.set("reload", async ({ message }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
+    if (actor.role !== "owner") {
+      await deps.sender.reply(message.chat, message.id, "只有 owner 可以热加载配置。");
+      return;
+    }
+    if (message.chat.type !== "private") {
+      await deps.sender.reply(message.chat, message.id, "为安全起见，!reload 只允许私聊使用。");
+      return;
+    }
+    if (deps.reloadConfig === undefined) {
+      await deps.sender.reply(message.chat, message.id, "当前运行方式不支持热加载。");
+      return;
+    }
+    const result = await deps.reloadConfig();
+    if (!result.ok) {
+      await deps.sender.reply(
+        message.chat,
+        message.id,
+        `配置热加载失败，旧配置继续生效：\n${result.error ?? "未知错误"}`,
+      );
+      return;
+    }
+    const lines = ["配置已热加载。"];
+    lines.push(`已生效：${result.applied.length > 0 ? result.applied.join(", ") : "无变化"}`);
+    if (result.restartRequired.length > 0) {
+      lines.push(`需要重启：${result.restartRequired.join(", ")}`);
+    }
+    if (result.warnings.length > 0) {
+      lines.push(`警告：${result.warnings.slice(0, 5).join("；")}`);
+    }
+    await deps.sender.reply(message.chat, message.id, lines.join("\n"));
+  });
+
   commands.set("audit", async ({ message, args }) => {
     const actor = deps.policy.actor(message.userId);
     if (actor === null) return;
@@ -310,25 +347,289 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     await deps.sender.reply(message.chat, message.id, formatAudit(records));
   });
 
-  commands.set("model", async ({ message }) => {
+  commands.set("model", async ({ message, args }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
     const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    const sub = (args[0] ?? "").toLowerCase();
+    if (sub === "list") {
+      const directory = workspaceDirectory(deps, message.chat.chatKey);
+      let models: Awaited<ReturnType<typeof deps.agent.listModels>>;
+      try {
+        models = await deps.agent.listModels(directory ?? undefined);
+      } catch (error) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          `读取模型列表失败：${errorMessage(error)}`,
+        );
+        return;
+      }
+      const provider = args[1];
+      const visible = models
+        .filter((model) => model.enabled)
+        .filter((model) => provider === undefined || model.providerID === provider)
+        .sort((a, b) => a.providerID.localeCompare(b.providerID) || a.name.localeCompare(b.name));
+      if (visible.length === 0) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          provider
+            ? `provider '${provider}' 没有可用模型。`
+            : "OpenCode 没有返回可用模型；请先配置 provider。",
+        );
+        return;
+      }
+      const current = conversation?.model ?? deps.config.opencode.default_model;
+      const lines = [`可用模型（${visible.length}）：`];
+      for (const model of visible.slice(0, 30)) {
+        const marker = model.id === current ? "*" : "-";
+        const variants =
+          model.variants.length > 0 ? ` (variants: ${model.variants.join(", ")})` : "";
+        lines.push(`${marker} ${model.id} — ${model.name}${variants}`);
+      }
+      if (visible.length > 30) lines.push(`… 其余 ${visible.length - 30} 个已省略`);
+      lines.push("使用 !model provider/model 切换。");
+      await deps.sender.reply(message.chat, message.id, lines.join("\n"));
+      return;
+    }
+
+    if (args.length > 0) {
+      if (!canManageConversation(deps, message)) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          "shared 群只有 owner/admin 可以切换模型。",
+        );
+        return;
+      }
+      const model = args[0] ?? "";
+      if (!model.includes("/")) {
+        await deps.sender.reply(message.chat, message.id, "用法：!model provider/model");
+        return;
+      }
+      const result = await deps.conversations.setModel(message.chat.chatKey, model);
+      if (!result.ok) {
+        await deps.sender.reply(message.chat, message.id, result.reason ?? "切换模型失败。");
+        return;
+      }
+      deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: conversation?.projectId ?? null,
+        workspaceId: conversation?.workspaceId ?? null,
+        action: "conversation.model_changed",
+        detail: { model },
+      });
+      await deps.sender.reply(message.chat, message.id, `已切换模型：${model}`);
+      return;
+    }
+
+    const project = conversation ? deps.config.projects[conversation.projectId] : undefined;
+    const current =
+      conversation?.model ??
+      project?.model ??
+      deps.config.opencode.default_model ??
+      "OpenCode 默认";
     await deps.sender.reply(
       message.chat,
       message.id,
-      `当前模型：${conversation?.model ?? deps.config.opencode.default_model ?? "OpenCode 默认"}`,
+      `当前模型：${current}\n使用 !model list 查看可用模型，!model provider/model 切换。`,
     );
   });
 
-  commands.set("agent", async ({ message }) => {
+  commands.set("agent", async ({ message, args }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
     const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    if ((args[0] ?? "").toLowerCase() === "list") {
+      const directory = workspaceDirectory(deps, message.chat.chatKey);
+      let agents: Awaited<ReturnType<typeof deps.agent.listAgents>>;
+      try {
+        agents = await deps.agent.listAgents(directory ?? undefined);
+      } catch (error) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          `读取 agent 列表失败：${errorMessage(error)}`,
+        );
+        return;
+      }
+      const visible = agents
+        .filter((agent) => agent.mode !== "subagent" && !agent.hidden)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      if (visible.length === 0) {
+        await deps.sender.reply(message.chat, message.id, "OpenCode 没有返回可用 agent。");
+        return;
+      }
+      const current = conversation?.agent ?? deps.config.opencode.default_agent;
+      const lines = ["可用 agent："];
+      for (const agent of visible) {
+        const marker = agent.id === current ? "*" : "-";
+        const description = agent.description ? ` — ${agent.description}` : "";
+        lines.push(`${marker} ${agent.id}${description}`);
+      }
+      lines.push("使用 !agent ID 切换。");
+      await deps.sender.reply(message.chat, message.id, lines.join("\n"));
+      return;
+    }
+
+    if (args.length > 0) {
+      if (!canManageConversation(deps, message)) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          "shared 群只有 owner/admin 可以切换 agent。",
+        );
+        return;
+      }
+      const agent = args[0] ?? "";
+      const result = await deps.conversations.setAgent(message.chat.chatKey, agent);
+      if (!result.ok) {
+        await deps.sender.reply(message.chat, message.id, result.reason ?? "切换 agent 失败。");
+        return;
+      }
+      deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: conversation?.projectId ?? null,
+        workspaceId: conversation?.workspaceId ?? null,
+        action: "conversation.agent_changed",
+        detail: { agent },
+      });
+      await deps.sender.reply(message.chat, message.id, `已切换 agent：${agent}`);
+      return;
+    }
+
+    const project = conversation ? deps.config.projects[conversation.projectId] : undefined;
+    const current =
+      conversation?.agent ??
+      project?.agent ??
+      deps.config.opencode.default_agent ??
+      "OpenCode 默认";
     await deps.sender.reply(
       message.chat,
       message.id,
-      `当前 agent：${conversation?.agent ?? deps.config.opencode.default_agent ?? "OpenCode 默认"}`,
+      `当前 agent：${current}\n使用 !agent list 查看可用 agent，!agent ID 切换。`,
+    );
+  });
+
+  commands.set("sessions", async ({ message }) => {
+    const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    if (conversation === null) {
+      await deps.sender.reply(message.chat, message.id, "还没有选择项目。请先发送 !use <项目>。");
+      return;
+    }
+    const directory = workspaceDirectory(deps, message.chat.chatKey);
+    if (directory === null) {
+      await deps.sender.reply(message.chat, message.id, "当前项目目录不可用。");
+      return;
+    }
+    let sessions: Awaited<ReturnType<typeof deps.agent.listSessions>>;
+    try {
+      sessions = await deps.agent.listSessions(directory, 20);
+    } catch (error) {
+      await deps.sender.reply(message.chat, message.id, `读取会话失败：${errorMessage(error)}`);
+      return;
+    }
+    if (sessions.length === 0) {
+      await deps.sender.reply(message.chat, message.id, "当前项目还没有 OpenCode 会话。");
+      return;
+    }
+    const lines = [`项目 ${conversation.projectId} 的最近会话：`];
+    for (const session of sessions) {
+      const marker = session.id === conversation.sessionId ? "*" : "-";
+      const title = session.title ?? "(untitled)";
+      const time = session.updated ?? session.created;
+      const when = time === null ? "-" : new Date(time).toLocaleString();
+      lines.push(`${marker} ${session.id.slice(0, 12)} … ${title} · ${when}`);
+    }
+    lines.push("使用 !switch <会话 ID 前缀> 恢复。");
+    await deps.sender.reply(message.chat, message.id, lines.join("\n"));
+  });
+
+  commands.set("switch", async ({ message, args }) => {
+    const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    if (conversation === null) {
+      await deps.sender.reply(message.chat, message.id, "还没有选择项目。请先发送 !use <项目>。");
+      return;
+    }
+    if (!canManageConversation(deps, message)) {
+      await deps.sender.reply(message.chat, message.id, "shared 群只有 owner/admin 可以切换会话。");
+      return;
+    }
+    const prefix = args[0] ?? "";
+    if (prefix.length < 4) {
+      await deps.sender.reply(message.chat, message.id, "用法：!switch <至少 4 位会话 ID 前缀>");
+      return;
+    }
+    const directory = workspaceDirectory(deps, message.chat.chatKey);
+    if (directory === null) {
+      await deps.sender.reply(message.chat, message.id, "当前项目目录不可用。");
+      return;
+    }
+    const sessions = await deps.agent.listSessions(directory, 50).catch(() => []);
+    const matches = sessions.filter((session) => session.id.startsWith(prefix));
+    if (matches.length === 0) {
+      await deps.sender.reply(message.chat, message.id, "找不到匹配的会话，请先发送 !sessions。");
+      return;
+    }
+    if (matches.length > 1) {
+      await deps.sender.reply(message.chat, message.id, "前缀匹配到多个会话，请提供更长的 ID。");
+      return;
+    }
+    const session = matches[0];
+    if (session === undefined) return;
+    const result = deps.conversations.switchSession(message.chat.chatKey, session);
+    if (!result.ok) {
+      await deps.sender.reply(message.chat, message.id, result.reason ?? "切换会话失败。");
+      return;
+    }
+    deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId: conversation.projectId,
+      workspaceId: conversation.workspaceId,
+      action: "conversation.session_switched",
+      detail: { sessionId: session.id },
+    });
+    await deps.sender.reply(
+      message.chat,
+      message.id,
+      `已切换会话：${session.id.slice(0, 12)}…\n${session.title ?? "(untitled)"}`,
     );
   });
 
   return commands;
+}
+
+function workspaceDirectory(deps: RouterDeps, chatKey: string): string | null {
+  const conversation = deps.conversations.getConversation(chatKey);
+  if (conversation === null) return null;
+  try {
+    return deps.workspaces.pathFor(conversation.projectId);
+  } catch {
+    return null;
+  }
+}
+
+function canManageConversation(
+  deps: RouterDeps,
+  message: { chat: { type: string; groupId?: number }; userId: number },
+): boolean {
+  if (message.chat.type !== "group") return true;
+  const groupId = message.chat.groupId;
+  if (groupId === undefined || deps.policy.groupMode(groupId) !== "shared") return true;
+  const actor = deps.policy.actor(message.userId);
+  return actor?.role === "owner" || actor?.role === "admin";
+}
+
+function errorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > 240 ? `${message.slice(0, 240)}…` : message;
 }
 
 function formatAudit(records: AuditRecord[]): string {

@@ -35,6 +35,21 @@ export class MessageSender {
     return first;
   }
 
+  /** Delete a transient message such as a progress ack. Best effort. */
+  async delete(chat: ChatRef, messageId: string): Promise<boolean> {
+    if (messageId.length === 0) return false;
+    try {
+      await this.#onebot.deleteMessage(messageId);
+      return true;
+    } catch (error) {
+      this.#logger.debug(
+        { err: error, chatKey: chat.chatKey, messageId },
+        "Failed to delete QQ message",
+      );
+      return false;
+    }
+  }
+
   async sendSegments(chat: ChatRef, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
     if (chat.type === "group" && chat.groupId !== undefined) {
       return this.#onebot.sendGroup(chat.groupId, segments);

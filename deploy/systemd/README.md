@@ -1,5 +1,17 @@
 # Long-running deployment (systemd user units)
 
+For an npm install, run `opencode-qq setup` first and point the unit at the
+global binary/config instead:
+
+```ini
+ExecStart=/usr/local/bin/opencode-qq start --config %h/.config/opencode-qq/config.yaml
+EnvironmentFile=%h/.config/opencode-qq/.env
+WorkingDirectory=%h
+```
+
+The checked-in units below assume a source checkout, so adjust their paths
+before installing.
+
 These units assume the repository is at `~/Projects/opencode-qq-adapter`, Node is
 installed at `~/.nvm/versions/node/v22.19.0/bin/node`, and the OpenCode binary is
 `~/.opencode/bin/opencode`. Adjust the paths before installing.

@@ -6,7 +6,7 @@ import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { QuotaService } from "../policy/quota.js";
-import type { AgentPort } from "../ports/agent.js";
+import type { AgentPort, AgentSession } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
 import type { WorkspaceDiff, WorkspaceManager, WorkspaceStatus } from "../workspace/manager.js";
@@ -235,9 +235,83 @@ export class ConversationManager {
     if (conversation === null) {
       return { ok: false, reason: "还没有会话。请先发送 !use <项目>。" };
     }
-    this.#store.conversations.setSession(chatKey, null, null, null);
+    // Clear the OpenCode session but keep model/agent preferences so `!new`
+    // does not silently undo the user's choices.
+    this.#store.conversations.setSession(chatKey, null, conversation.agent, conversation.model);
     this.#logger.info({ chatKey }, "Conversation session cleared");
     return { ok: true };
+  }
+
+  async setModel(chatKey: string, model: string): Promise<{ ok: boolean; reason?: string }> {
+    const guard = this.#preferenceGuard(chatKey);
+    if (guard !== null) return guard;
+    const conversation = this.#store.conversations.get(chatKey);
+    if (conversation === null)
+      return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
+    if (conversation.sessionId !== null) {
+      try {
+        await this.#agent.switchModel(conversation.sessionId, model);
+      } catch (error) {
+        return { ok: false, reason: `切换模型失败：${describeError(error)}` };
+      }
+    }
+    this.#store.conversations.setSession(
+      chatKey,
+      conversation.sessionId,
+      conversation.agent,
+      model,
+    );
+    this.#logger.info({ chatKey, model }, "Conversation model changed");
+    return { ok: true };
+  }
+
+  async setAgent(chatKey: string, agent: string): Promise<{ ok: boolean; reason?: string }> {
+    const guard = this.#preferenceGuard(chatKey);
+    if (guard !== null) return guard;
+    const conversation = this.#store.conversations.get(chatKey);
+    if (conversation === null)
+      return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
+    if (conversation.sessionId !== null) {
+      try {
+        await this.#agent.switchAgent(conversation.sessionId, agent);
+      } catch (error) {
+        return { ok: false, reason: `切换 agent 失败：${describeError(error)}` };
+      }
+    }
+    this.#store.conversations.setSession(
+      chatKey,
+      conversation.sessionId,
+      agent,
+      conversation.model,
+    );
+    this.#logger.info({ chatKey, agent }, "Conversation agent changed");
+    return { ok: true };
+  }
+
+  switchSession(chatKey: string, session: AgentSession): { ok: boolean; reason?: string } {
+    const guard = this.#preferenceGuard(chatKey);
+    if (guard !== null) return guard;
+    const conversation = this.#store.conversations.get(chatKey);
+    if (conversation === null)
+      return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
+    this.#store.conversations.setSession(
+      chatKey,
+      session.id,
+      session.agent ?? conversation.agent,
+      session.model ?? conversation.model,
+    );
+    this.#logger.info({ chatKey, sessionId: session.id }, "Conversation switched");
+    return { ok: true };
+  }
+
+  #preferenceGuard(chatKey: string): { ok: false; reason: string } | null {
+    if (this.#queue.active(chatKey) !== null) {
+      return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
+    }
+    if (this.#queue.pendingCount(chatKey) > 0) {
+      return { ok: false, reason: "当前还有排队任务，请先发送 !stop。" };
+    }
+    return null;
   }
 
   status(chatKey: string): ConversationStatus {
@@ -307,4 +381,9 @@ export class ConversationManager {
     this.#queue.clear();
     this.#workspaces.releaseAll();
   }
+}
+
+function describeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > 240 ? `${message.slice(0, 240)}…` : message;
 }

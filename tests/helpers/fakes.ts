@@ -14,11 +14,13 @@ import type {
   AgentEventStatus,
   AgentHealth,
   AgentMessage,
+  AgentModel,
   AgentPort,
   AgentPromptInput,
   AgentPromptReceipt,
   AgentSession,
   AgentSessionInput,
+  AgentSummary,
 } from "../../src/ports/agent.js";
 import type { OneBotPort, OneBotSendResult, OneBotStatus } from "../../src/ports/onebot.js";
 
@@ -42,6 +44,36 @@ export class FakeAgent implements AgentPort {
   readonly listeners = new Set<(event: AgentEvent) => void>();
   readonly waiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
   readonly diffs = new Map<string, WorkspaceDiffFile[]>();
+  readonly models: AgentModel[] = [
+    {
+      id: "fake/model-a",
+      providerID: "fake",
+      modelID: "model-a",
+      name: "Fake Model A",
+      enabled: true,
+      variants: [],
+    },
+    {
+      id: "fake/model-b",
+      providerID: "fake",
+      modelID: "model-b",
+      name: "Fake Model B",
+      enabled: true,
+      variants: ["fast"],
+    },
+  ];
+  readonly agents: AgentSummary[] = [
+    {
+      id: "build",
+      name: "Build",
+      description: "Fake build agent",
+      mode: "primary",
+      model: null,
+      hidden: false,
+    },
+  ];
+  readonly switchedModels: Array<{ sessionId: string; model: string }> = [];
+  readonly switchedAgents: Array<{ sessionId: string; agent: string }> = [];
 
   autoComplete = true;
   answer = "fake answer";
@@ -193,6 +225,32 @@ export class FakeAgent implements AgentPort {
     return [...(this.messages.get(sessionId) ?? [])];
   }
 
+  async listModels(): Promise<AgentModel[]> {
+    return [...this.models];
+  }
+
+  async listAgents(): Promise<AgentSummary[]> {
+    return [...this.agents];
+  }
+
+  async listSessions(): Promise<AgentSession[]> {
+    return [...this.sessions.values()].sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
+  }
+
+  async switchModel(sessionId: string, model: string): Promise<void> {
+    this.switchedModels.push({ sessionId, model });
+    const session = this.sessions.get(sessionId);
+    if (session === undefined) throw new Error("session not found");
+    session.model = model;
+  }
+
+  async switchAgent(sessionId: string, agent: string): Promise<void> {
+    this.switchedAgents.push({ sessionId, agent });
+    const session = this.sessions.get(sessionId);
+    if (session === undefined) throw new Error("session not found");
+    session.agent = agent;
+  }
+
   async getDiff(sessionId: string): Promise<WorkspaceDiffFile[]> {
     return [...(this.diffs.get(sessionId) ?? [])];
   }
@@ -255,6 +313,7 @@ export interface UploadedFile {
 export class FakeOneBot implements OneBotPort {
   readonly sent: SentMessage[] = [];
   readonly uploads: UploadedFile[] = [];
+  readonly deleted: string[] = [];
   readonly imageUrls = new Map<string, string>();
   readonly listeners = new Set<(event: unknown) => void>();
   connected = true;
@@ -295,6 +354,10 @@ export class FakeOneBot implements OneBotPort {
 
   async uploadPrivateFile(userId: number, file: string, name: string): Promise<void> {
     this.uploads.push({ kind: "private", targetId: userId, file, name });
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    this.deleted.push(messageId);
   }
 
   async getImage(file: string): Promise<{ file: string; url: string; fileName: string }> {

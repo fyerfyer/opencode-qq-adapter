@@ -79,6 +79,25 @@ export interface AgentEventStatus {
   lastError: string | null;
 }
 
+export interface AgentModel {
+  /** `provider/modelID`, suitable for `!model`. */
+  id: string;
+  providerID: string;
+  modelID: string;
+  name: string;
+  enabled: boolean;
+  variants: string[];
+}
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  mode: "primary" | "subagent" | "all";
+  model: string | null;
+  hidden: boolean;
+}
+
 export interface AgentPort {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -97,6 +116,11 @@ export interface AgentPort {
     message?: string,
   ): Promise<void>;
   listMessages(sessionId: string, limit?: number): Promise<AgentMessage[]>;
+  listModels(directory?: string): Promise<AgentModel[]>;
+  listAgents(directory?: string): Promise<AgentSummary[]>;
+  listSessions(directory: string, limit?: number): Promise<AgentSession[]>;
+  switchModel(sessionId: string, model: string): Promise<void>;
+  switchAgent(sessionId: string, agent: string): Promise<void>;
   getDiff(sessionId: string): Promise<WorkspaceDiffFile[]>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
   eventStatus(): AgentEventStatus;

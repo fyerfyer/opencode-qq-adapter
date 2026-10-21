@@ -1,20 +1,19 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
 import { App } from "./app.js";
 import { ConfigError, type LoadedConfig, loadConfig } from "./config/loader.js";
+import { envFilesForConfig, loadEnvFiles, resolveConfigPath } from "./config/paths.js";
 import type { AppConfig } from "./config/schema.js";
 import { buildLogger } from "./observability/logger.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { OpenCodeAgent } from "./opencode/agent.js";
+import { SetupError } from "./setup/files.js";
+import { formatSetupSummary, type NapCatMode, runSetup } from "./setup/wizard.js";
 import { SqliteStore } from "./store/sqlite.js";
 import { VERSION } from "./version.js";
 
-const DEFAULT_CONFIG = "config/config.yaml";
-
 export async function runCli(argv: string[]): Promise<void> {
-  loadDotEnv();
   const program = new Command();
   program
     .name("opencode-qq")
@@ -22,13 +21,61 @@ export async function runCli(argv: string[]): Promise<void> {
     .version(VERSION);
 
   program
+    .command("setup")
+    .description("Create a first-run config and optionally start NapCat with Docker")
+    .option("-c, --config <path>", "configuration file")
+    .option("--data-dir <path>", "data directory")
+    .option("--owner-qq <qq>", "owner QQ number")
+    .option("--project <id=path>", "project, repeatable", collectProject, [] as string[])
+    .option("--napcat <mode>", "docker | existing | skip")
+    .option("--napcat-url <url>", "existing NapCat WebSocket URL")
+    .option("--napcat-token <token>", "NapCat access token")
+    .option("--ws-port <port>", "NapCat WebSocket host port", parsePort, 3001)
+    .option("--webui-port <port>", "NapCat WebUI host port", parsePort, 6099)
+    .option("--yes", "use defaults and do not prompt", false)
+    .option("--force", "back up and overwrite existing config", false)
+    .option("--skip-plugin", "do not install the OpenCode image plugin", false)
+    .option("--skip-doctor", "skip generated config validation", false)
+    .action(async (options: SetupCliOptions) => {
+      try {
+        const projects = parseProjects(options.project);
+        const result = await runSetup({
+          configPath: options.config,
+          dataDir: options.dataDir,
+          ownerQq: options.ownerQq,
+          projects,
+          napcat: parseNapCatMode(options.napcat),
+          napcatUrl: options.napcatUrl,
+          napcatToken: options.napcatToken,
+          wsPort: options.wsPort,
+          webuiPort: options.webuiPort,
+          yes: options.yes,
+          force: options.force,
+          skipPlugin: options.skipPlugin,
+          skipDoctor: options.skipDoctor,
+          output: (line) => console.log(line),
+        });
+        for (const warning of result.warnings) console.warn(`warning: ${warning}`);
+        console.log(formatSetupSummary(result).join("\n"));
+      } catch (error) {
+        if (error instanceof SetupError) {
+          console.error(`Setup failed (${error.code}): ${error.message}`);
+          process.exitCode = 1;
+          return;
+        }
+        throw error;
+      }
+    });
+
+  program
     .command("start")
     .description("Start the bridge")
-    .option("-c, --config <path>", "configuration file", DEFAULT_CONFIG)
+    .option("-c, --config <path>", "configuration file")
     .option("--log-level <level>", "override logging level")
     .option("--allow-missing-paths", "do not fail when project directories are missing", false)
-    .action(async (options: { config: string; logLevel?: string; allowMissingPaths: boolean }) => {
-      const loaded = await loadOrReport(options.config, {
+    .action(async (options: { config?: string; logLevel?: string; allowMissingPaths: boolean }) => {
+      const configPath = prepareConfig(options.config);
+      const loaded = await loadOrReport(configPath, {
         checkPaths: !options.allowMissingPaths,
       });
       if (loaded === null) return;
@@ -36,7 +83,7 @@ export async function runCli(argv: string[]): Promise<void> {
       if (options.logLevel) config.logging.level = normalizeLogLevel(options.logLevel);
       const logger = buildLogger(config);
       for (const warning of loaded.warnings) logger.warn({ warning }, "Configuration warning");
-      const app = new App(config, { logger });
+      const app = new App(config, { logger, configPath: loaded.path });
       let stopping = false;
       const shutdown = async (signal: string) => {
         if (stopping) return;
@@ -47,6 +94,11 @@ export async function runCli(argv: string[]): Promise<void> {
       };
       process.once("SIGINT", () => void shutdown("SIGINT"));
       process.once("SIGTERM", () => void shutdown("SIGTERM"));
+      process.on("SIGHUP", () => {
+        void app.reloadConfig().then((result) => {
+          if (!result.ok) logger.error({ error: result.error }, "SIGHUP config reload failed");
+        });
+      });
       try {
         await app.start();
       } catch (error) {
@@ -60,12 +112,13 @@ export async function runCli(argv: string[]): Promise<void> {
   configCommand
     .command("validate")
     .description("Validate configuration without starting the bridge")
-    .option("-c, --config <path>", "configuration file", DEFAULT_CONFIG)
+    .option("-c, --config <path>", "configuration file")
     .option("--skip-paths", "skip project directory existence checks", false)
     .option("--json", "print machine-readable output", false)
-    .action(async (options: { config: string; skipPaths: boolean; json: boolean }) => {
+    .action(async (options: { config?: string; skipPaths: boolean; json: boolean }) => {
+      const configPath = prepareConfig(options.config);
       try {
-        const loaded = await loadConfig(options.config, { checkPaths: !options.skipPaths });
+        const loaded = await loadConfig(configPath, { checkPaths: !options.skipPaths });
         if (options.json) {
           console.log(
             JSON.stringify(
@@ -94,12 +147,66 @@ export async function runCli(argv: string[]): Promise<void> {
   program
     .command("doctor")
     .description("Check configuration, database, OneBot and OpenCode connectivity")
-    .option("-c, --config <path>", "configuration file", DEFAULT_CONFIG)
-    .action(async (options: { config: string }) => {
-      await doctor(options.config);
+    .option("-c, --config <path>", "configuration file")
+    .action(async (options: { config?: string }) => {
+      const configPath = prepareConfig(options.config);
+      await doctor(configPath);
     });
 
   await program.parseAsync(argv);
+}
+
+interface SetupCliOptions {
+  config?: string;
+  dataDir?: string;
+  ownerQq?: string;
+  project: string[];
+  napcat?: string;
+  napcatUrl?: string;
+  napcatToken?: string;
+  wsPort: number;
+  webuiPort: number;
+  yes: boolean;
+  force: boolean;
+  skipPlugin: boolean;
+  skipDoctor: boolean;
+}
+
+function collectProject(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function parseProjects(values: string[]): Array<{ id: string; path: string }> | undefined {
+  if (values.length === 0) return undefined;
+  return values.map((value) => {
+    const separator = value.indexOf("=");
+    if (separator > 0) {
+      return { id: value.slice(0, separator), path: value.slice(separator + 1) };
+    }
+    const path = resolve(value);
+    const id = path.split(/[\\/]/).filter(Boolean).pop() ?? "main";
+    return { id, path };
+  });
+}
+
+function parsePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port: ${value}`);
+  }
+  return port;
+}
+
+function parseNapCatMode(value: string | undefined): NapCatMode | undefined {
+  if (value === undefined) return undefined;
+  if (value === "docker" || value === "existing" || value === "skip") return value;
+  throw new Error(`Invalid --napcat mode '${value}'; expected docker, existing, or skip`);
+}
+
+function prepareConfig(explicit?: string): string {
+  const configPath = resolveConfigPath(explicit);
+  loadEnvFiles(envFilesForConfig(configPath));
+  return configPath;
 }
 
 async function loadOrReport(
@@ -211,15 +318,4 @@ async function doctor(configPath: string): Promise<void> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-}
-
-function loadDotEnv(): void {
-  if (!existsSync(".env")) return;
-  try {
-    process.loadEnvFile(".env");
-  } catch (error) {
-    console.warn(
-      `warning: could not load .env: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }

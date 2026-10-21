@@ -13,6 +13,10 @@ Two variants are included:
 
 ## Install (V2 local plugin)
 
+`opencode-qq setup` installs this plugin automatically and writes the
+`qq-bridge.json` callback config. The manual steps below are for development or
+custom deployments.
+
 1. Copy or symlink `opencode-qq-plugin.ts` into an OpenCode plugin directory:
 
    ```bash

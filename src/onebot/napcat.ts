@@ -29,6 +29,7 @@ export interface NapCatClientLike {
     name: string;
     folder_id?: string;
   }): Promise<null>;
+  delete_msg?(params: { message_id: string | number }): Promise<null>;
   get_login_info?(): Promise<{ user_id: number; nickname: string }>;
 }
 
@@ -215,6 +216,22 @@ export class NapCatOneBotAdapter implements OneBotPort {
       );
     } catch (error) {
       throw wrapActionError("upload_group_file", error);
+    }
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    const client = this.#requireClient();
+    if (client.delete_msg === undefined) {
+      throw new OneBotError("NapCat client does not expose delete_msg");
+    }
+    try {
+      await this.#withTimeout(
+        client.delete_msg({ message_id: messageId }),
+        this.#config.action_timeout_ms,
+        "delete_msg",
+      );
+    } catch (error) {
+      throw wrapActionError("delete_msg", error);
     }
   }
 

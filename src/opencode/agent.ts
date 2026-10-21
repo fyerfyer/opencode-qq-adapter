@@ -7,11 +7,13 @@ import type {
   AgentEventStatus,
   AgentHealth,
   AgentMessage,
+  AgentModel,
   AgentPort,
   AgentPromptInput,
   AgentPromptReceipt,
   AgentSession,
   AgentSessionInput,
+  AgentSummary,
 } from "../ports/agent.js";
 import { AgentUnavailableError } from "./errors.js";
 import { OpenCodeEventStream } from "./events.js";
@@ -171,6 +173,52 @@ export class OpenCodeAgent implements AgentPort {
       order: "desc",
     });
     return response.data.map(mapMessage);
+  }
+
+  async listModels(directory?: string): Promise<AgentModel[]> {
+    const client = await this.#service.getClient();
+    const response = await client.model.list(
+      directory !== undefined ? { location: { directory } } : undefined,
+    );
+    return response.data.map((model) => ({
+      id: `${model.providerID}/${model.modelID}`,
+      providerID: model.providerID,
+      modelID: model.modelID,
+      name: model.name,
+      enabled: model.enabled,
+      variants: model.variants.map((variant) => variant.id),
+    }));
+  }
+
+  async listAgents(directory?: string): Promise<AgentSummary[]> {
+    const client = await this.#service.getClient();
+    const response = await client.agent.list(
+      directory !== undefined ? { location: { directory } } : undefined,
+    );
+    return response.data.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description ?? null,
+      mode: agent.mode,
+      model: agent.model ? `${agent.model.providerID}/${agent.model.id}` : null,
+      hidden: agent.hidden,
+    }));
+  }
+
+  async listSessions(directory: string, limit = 20): Promise<AgentSession[]> {
+    const client = await this.#service.getClient();
+    const response = await client.session.list({ directory, limit });
+    return response.data.map(mapSession);
+  }
+
+  async switchModel(sessionId: string, model: string): Promise<void> {
+    const client = await this.#service.getClient();
+    await client.session.switchModel({ sessionID: sessionId, model: parseModelRef(model) });
+  }
+
+  async switchAgent(sessionId: string, agent: string): Promise<void> {
+    const client = await this.#service.getClient();
+    await client.session.switchAgent({ sessionID: sessionId, agent });
   }
 
   async getDiff(sessionId: string): Promise<WorkspaceDiffFile[]> {

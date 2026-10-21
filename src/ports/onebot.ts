@@ -21,6 +21,7 @@ export interface OneBotPort {
   reply(chat: ChatRef, messageId: string, segments: OutgoingSegment[]): Promise<OneBotSendResult>;
   uploadPrivateFile(userId: number, file: string, name: string): Promise<void>;
   uploadGroupFile(groupId: number, file: string, name: string, folderId?: string): Promise<void>;
+  deleteMessage(messageId: string): Promise<void>;
   /** Resolve a NapCat image reference (the `file` field of an image segment). */
   getImage(file: string): Promise<{ file: string; url: string; fileName: string }>;
   getLoginInfo?(): Promise<{ userId: number; nickname: string }>;

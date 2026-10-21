@@ -196,6 +196,9 @@ qq:
   strip_markdown: true
   reply_to_message: true
   mention_sender_in_group: true
+  # Send a short transient "working" message for slow runs, then delete it.
+  progress_ack: true
+  progress_delay_ms: 3000
 
 storage:
   database_path: var/opencode-qq.db

@@ -52,6 +52,7 @@ export class RunExecutor {
     const started = Date.now();
     let timeoutController: AbortController | null = null;
     let lease: WorkspaceLease | null = null;
+    const progress = this.#startProgress(message);
     this.#store.runs.setStatus(record.id, "running");
     this.#hooks.onStarted?.(active);
 
@@ -215,6 +216,59 @@ export class RunExecutor {
       if (lease !== null) {
         this.#hooks.workspaces.release(lease);
       }
+      await this.#cleanupProgress(message, progress);
+    }
+  }
+
+  #startProgress(message: IncomingMessage): {
+    timer: NodeJS.Timeout | null;
+    sending: Promise<void> | null;
+    messageId: string | null;
+  } {
+    const state: {
+      timer: NodeJS.Timeout | null;
+      sending: Promise<void> | null;
+      messageId: string | null;
+    } = { timer: null, sending: null, messageId: null };
+    if (!this.#config.qq.progress_ack) return state;
+
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      state.sending = this.#sender
+        .reply(message.chat, message.id, "⏳ 正在处理…")
+        .then((result) => {
+          state.messageId =
+            result.messageId !== null && result.messageId.length > 0 ? result.messageId : null;
+        })
+        .catch((error) => {
+          this.#logger.debug({ err: error, chatKey: message.chat.chatKey }, "Progress ack failed");
+        })
+        .finally(() => {
+          state.sending = null;
+        });
+    }, this.#config.qq.progress_delay_ms);
+    state.timer.unref?.();
+    return state;
+  }
+
+  async #cleanupProgress(
+    message: IncomingMessage,
+    state: {
+      timer: NodeJS.Timeout | null;
+      sending: Promise<void> | null;
+      messageId: string | null;
+    },
+  ): Promise<void> {
+    if (state.timer !== null) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    if (state.sending !== null) {
+      await state.sending.catch(() => undefined);
+    }
+    if (state.messageId !== null) {
+      await this.#sender.delete(message.chat, state.messageId);
+      state.messageId = null;
     }
   }
 
@@ -293,19 +347,16 @@ export class RunExecutor {
       throw new Error(`Project '${conversation.projectId}' no longer exists`);
     }
     const resolved = projectModels(this.#config, project);
+    const agent = conversation.agent ?? resolved.agent;
+    const model = conversation.model ?? resolved.model;
     const session = await this.#agent.createSession({
       directory,
       title: `${conversation.projectId} · QQ ${message.userId}`,
-      agent: resolved.agent,
-      model: resolved.model,
+      agent,
+      model,
       ...(permissions.length > 0 ? { permissions } : {}),
     });
-    this.#store.conversations.setSession(
-      conversation.chatKey,
-      session.id,
-      resolved.agent,
-      resolved.model,
-    );
+    this.#store.conversations.setSession(conversation.chatKey, session.id, agent, model);
     return session;
   }
 

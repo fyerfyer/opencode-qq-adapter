@@ -1,5 +1,8 @@
 import type { Logger } from "pino";
 import { ApprovalBroker } from "./approval/broker.js";
+import { loadConfig } from "./config/loader.js";
+import { envFilesForConfig, loadEnvFiles } from "./config/paths.js";
+import { applyHotConfig, type ConfigReloadResult } from "./config/reload.js";
 import type { AppConfig } from "./config/schema.js";
 import { ConversationManager } from "./conversation/manager.js";
 import { SessionOwnership } from "./conversation/ownership.js";
@@ -29,6 +32,8 @@ import { WorkspaceManager } from "./workspace/manager.js";
 
 export interface AppDependencies {
   logger?: Logger;
+  /** Config file used by `!reload` / SIGHUP. */
+  configPath?: string;
   store?: StorePort;
   onebot?: OneBotPort;
   agent?: AgentPort;
@@ -60,6 +65,7 @@ export class App {
   readonly health: HealthService;
   readonly http: InternalHttpServer;
 
+  readonly #configPath: string | null;
   #unsubscribeOneBot: (() => void) | null = null;
   #started = false;
   #stopped = false;
@@ -69,6 +75,7 @@ export class App {
 
   constructor(config: AppConfig, dependencies: AppDependencies = {}) {
     this.config = config;
+    this.#configPath = dependencies.configPath ?? null;
     this.logger = dependencies.logger ?? buildLogger(config);
     this.store = dependencies.store ?? new SqliteStore(config.storage.database_path);
     this.onebot = dependencies.onebot ?? new NapCatOneBotAdapter(config.onebot, this.logger);
@@ -137,6 +144,7 @@ export class App {
       sudo: this.sudo,
       notifier: this.notifier,
       logger: this.logger,
+      reloadConfig: () => this.reloadConfig(),
     });
     this.health = new HealthService({
       config,
@@ -208,6 +216,71 @@ export class App {
       "OpenCode QQ Adapter started",
     );
     void this.notifier.startup(this.conversations.recoveredRuns, recoveredWorkspaces);
+  }
+
+  /**
+   * Re-read the configuration file and apply the hot-reloadable subset.
+   * A validation failure never changes the running configuration.
+   */
+  async reloadConfig(): Promise<ConfigReloadResult> {
+    if (this.#configPath === null) {
+      return {
+        ok: false,
+        applied: [],
+        restartRequired: [],
+        warnings: [],
+        error: "No configuration path is associated with this process.",
+      };
+    }
+    if (this.#stopped) {
+      return {
+        ok: false,
+        applied: [],
+        restartRequired: [],
+        warnings: [],
+        error: "Bridge is shutting down.",
+      };
+    }
+
+    let loaded: Awaited<ReturnType<typeof loadConfig>>;
+    try {
+      // Pick up newly added variables in .env. Existing process variables keep
+      // precedence, so a running systemd EnvironmentFile is not overridden.
+      loadEnvFiles(envFilesForConfig(this.#configPath));
+      loaded = await loadConfig(this.#configPath, { checkPaths: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error }, "Configuration reload failed; keeping old config");
+      return {
+        ok: false,
+        applied: [],
+        restartRequired: [],
+        warnings: [],
+        error: message,
+      };
+    }
+
+    const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
+    this.logger.level = this.config.logging.level;
+    this.audit.record({
+      ts: Date.now(),
+      actorQq: null,
+      chatKey: null,
+      projectId: null,
+      workspaceId: null,
+      action: "config.reloaded",
+      detail: { applied, restartRequired, warnings: loaded.warnings },
+    });
+    this.logger.info(
+      { applied, restartRequired, warnings: loaded.warnings },
+      "Configuration reloaded",
+    );
+    return {
+      ok: true,
+      applied,
+      restartRequired,
+      warnings: loaded.warnings,
+    };
   }
 
   async stop(): Promise<void> {

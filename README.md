@@ -43,146 +43,73 @@ OpenCode V2 service
 - 本机 OpenCode V2 service
 - 一个支持工具调用（需要发图时还需要 vision）的模型
 
-## 快速开始
+## 安装（npm 推荐）
 
-### 1. 安装依赖和配置
-
-```bash
-git clone <repo-url> opencode-qq-adapter
-cd opencode-qq-adapter
-pnpm install
-
-cp .env.example .env
-cp config/config.example.yaml config/config.yaml
-```
-
-编辑 `.env`：
-
-```dotenv
-NAPCAT_WS_URL=ws://127.0.0.1:3001
-NAPCAT_ACCESS_TOKEN=change-me
-QQ_BRIDGE_INTERNAL_TOKEN=change-me-too
-```
-
-编辑 `config/config.yaml`，至少确认：
-
-```yaml
-server:
-  internal_token: ${QQ_BRIDGE_INTERNAL_TOKEN}
-
-onebot:
-  url: ${NAPCAT_WS_URL:-ws://127.0.0.1:3001}
-  access_token: ${NAPCAT_ACCESS_TOKEN}
-
-users:
-  "你的QQ号":
-    role: owner
-    projects: ["*"]
-
-projects:
-  demo:
-    path: /绝对路径/到/你的项目
-    policy: standard
-    workspace: shared
-```
-
-`config.yaml` 里的相对路径按配置文件所在目录解析；密钥只放 `.env`，不要写进 YAML。
-
-### 2. 启动 OpenCode
+需要 Node.js >= 22.11，以及已经安装并配置好的 [OpenCode](https://opencode.ai/)。
 
 ```bash
-opencode serve --service
+npm install -g opencode-qq-adapter
+opencode-qq setup
 ```
 
-也可以让 bridge 自动拉起：把 `opencode.service.mode` 设为 `ensure`。生产环境更推荐用 systemd 管理 service。
+向导会完成这些事：
 
-检查 OpenCode 是否可用：
+- 写入 `~/.config/opencode-qq/config.yaml`
+- 写入 `~/.config/opencode-qq/.env`（权限 `0600`）
+- 生成 NapCat access token 和 bridge internal token
+- 安装 `qq_send_image` 插件到 `~/.config/opencode/plugins/`
+- 写入 `~/.config/opencode/qq-bridge.json`
+- 可选：生成并启动一个隔离的 NapCat Docker 容器，自动写入 `onebot11.json`
+- 跑一遍本地配置校验
+
+### setup 的三种 NapCat 模式
+
+| 模式 | 说明 |
+| --- | --- |
+| `docker` | 生成 `napcat-compose.yaml`，启动 `opencode-qq-napcat`，自动配置 WS 端口和 token |
+| `existing` | 使用已经运行的 NapCat，只填写 WS 地址和 token |
+| `skip` | 只写 bridge 配置，稍后手动配置 NapCat |
+
+非交互示例：
 
 ```bash
-opencode models
-pnpm doctor
+opencode-qq setup \
+  --owner-qq 123456789 \
+  --project demo=/home/me/code/blog \
+  --napcat docker \
+  --yes
 ```
 
-### 3. 启动 NapCat 并登录
+常用参数：
 
-```bash
-docker compose up -d
+```text
+--config <path>       指定配置文件
+--data-dir <path>     指定数据目录
+--owner-qq <qq>       owner QQ
+--project <id=path>   项目，可重复
+--napcat docker|existing|skip
+--napcat-url <url>    已有 NapCat 的 WS 地址
+--napcat-token <tok>  NapCat access token
+--yes                 非交互
+--force               覆盖已有配置（会先备份）
+--skip-plugin         不安装 OpenCode 插件
 ```
 
-查看日志里的 WebUI 地址和 token：
+Docker 模式只绑定 `127.0.0.1`，不会暴露到公网。扫码登录仍然需要手动完成：
 
 ```bash
 docker logs -f opencode-qq-napcat
 ```
 
-打开 WebUI 扫码登录。默认端口：
+打开日志里的 WebUI 地址扫码。登录态保存在 `~/.local/share/opencode-qq/napcat/qq`，不要删除。
 
-| 端口 | 用途 |
-| --- | --- |
-| `6099` | NapCat WebUI |
-| `3001` | NapCat 正向 WebSocket（bridge 连接） |
-| `8787` | bridge health / internal HTTP |
-
-如果你不用本项目的 Compose，需要在 NapCat 网络配置里启用 **WebSocket Server**，并让 `onebot.url` 和 `access_token` 与 NapCat 一致。
-
-登录态保存在：
-
-```text
-data/napcat/qq
-```
-
-不要删除这个目录，否则必须重新扫码。
-
-### 4. 安装 `qq_send_image` 插件（可选）
-
-只有需要 **agent 主动发图片回 QQ** 时才需要安装。入站图片、文字、命令、审批都不依赖它。
+### 启动 OpenCode 和 bridge
 
 ```bash
-mkdir -p ~/.config/opencode/plugins
-ln -sf "$(pwd)/plugin/opencode-qq-plugin.ts" \
-  ~/.config/opencode/plugins/opencode-qq-plugin.ts
-```
-
-配置 bridge 回调地址和 token。可以放在 OpenCode service 环境中：
-
-```bash
-export QQ_BRIDGE_INTERNAL_URL=http://127.0.0.1:8787
-export QQ_BRIDGE_INTERNAL_TOKEN=<与 server.internal_token 相同>
-```
-
-如果 OpenCode 由 TUI 自动拉起，可能不会继承 shell 环境，可以改用 `0600` 配置文件：
-
-```bash
-cat > ~/.config/opencode/qq-bridge.json <<'JSON'
-{
-  "url": "http://127.0.0.1:8787",
-  "token": "与 server.internal_token 相同"
-}
-JSON
-chmod 600 ~/.config/opencode/qq-bridge.json
-```
-
-确认插件已加载：
-
-```bash
-opencode plugin list
-```
-
-OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/README.md`](plugin/README.md)。
-
-### 5. 启动 bridge
-
-开发模式：
-
-```bash
-pnpm dev
-```
-
-生产模式：
-
-```bash
-pnpm build
-pnpm start
+opencode serve --service
+# 如果 OpenCode 已经在运行，重启一次让 qq_send_image 插件生效：
+# opencode service restart
+opencode-qq start
 ```
 
 健康检查：
@@ -197,7 +124,7 @@ curl -s http://127.0.0.1:8787/health | jq
 - `degraded`：OneBot 未连接或 OpenCode 不可用，HTTP 仍返回 200
 - `error`：数据库异常，返回 503
 
-### 6. 在 QQ 中验证
+### 在 QQ 中验证
 
 私聊机器人：
 
@@ -208,8 +135,8 @@ curl -s http://127.0.0.1:8787/health | jq
 !use demo
 请只回复：hello
 !status
-!ws
-!diff
+!model list
+!sessions
 !stop
 ```
 
@@ -233,31 +160,102 @@ curl -s http://127.0.0.1:8787/health | jq
 请用 qq_send_image 把 chart.png 发给我，并附一句说明。
 ```
 
+## 从源码开发
+
+```bash
+git clone <repo-url> opencode-qq-adapter
+cd opencode-qq-adapter
+pnpm install
+cp .env.example .env
+cp config/config.example.yaml config/config.yaml
+pnpm setup -- --force
+pnpm dev
+```
+
+`pnpm setup` 使用仓库内的 `config/config.yaml`，方便开发时直接修改。也可以手动编辑：
+
+```dotenv
+NAPCAT_WS_URL=ws://127.0.0.1:3001
+NAPCAT_ACCESS_TOKEN=change-me
+QQ_BRIDGE_INTERNAL_TOKEN=change-me-too
+```
+
+`config.yaml` 里的相对路径按配置文件所在目录解析；密钥只放 `.env`，不要写进 YAML。
+
+本地 NapCat：
+
+```bash
+docker compose up -d
+docker logs -f opencode-qq-napcat
+```
+
+默认端口：
+
+| 端口 | 用途 |
+| --- | --- |
+| `6099` | NapCat WebUI |
+| `3001` | NapCat 正向 WebSocket（bridge 连接） |
+| `8787` | bridge health / internal HTTP |
+
+生产构建：
+
+```bash
+pnpm build
+pnpm start
+```
+
+## 插件安装
+
+`opencode-qq setup` 会自动安装 V2 插件。手动安装方式：
+
+```bash
+mkdir -p ~/.config/opencode/plugins
+ln -sf "$(pwd)/plugin/opencode-qq-plugin.ts" \
+  ~/.config/opencode/plugins/opencode-qq-plugin.ts
+```
+
+`setup` 还会写入 `~/.config/opencode/qq-bridge.json`，这样即使 OpenCode 由 TUI 自动拉起、没有继承 shell 环境，插件也能找到 bridge。
+
+确认插件已加载：
+
+```bash
+opencode plugin list
+```
+
+OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/README.md`](plugin/README.md)。
+
 ## QQ 命令
 
 | 命令 | 说明 |
 | --- | --- |
 | `!ping` | 返回 `pong` |
-| `!help` | 命令帮助 |
-| `!whoami` | 显示 QQ、角色、可用项目 |
+| `!help` | 命令帮助（按会话 / 项目 / 模型 / 管理分组） |
+| `!whoami` | 显示 QQ、角色、群号、chatKey、可用项目 |
 | `!projects` | 列出可用项目 |
 | `!use <项目>` / `!cd <项目>` | 切换项目并重置会话 |
-| `!new` | 为当前项目创建新会话 |
+| `!new` | 清除当前会话，保留模型/agent 偏好 |
 | `!status` | OneBot / OpenCode / 项目 / 工作区锁 / 会话 / 运行状态 |
+| `!sessions` | 列出当前项目最近 20 个 OpenCode 会话 |
+| `!switch <ID前缀>` | 恢复指定会话（shared 群仅 owner/admin） |
 | `!diff` | 当前会话 diff + 工作区 git 改动摘要 |
 | `!ws` | 当前工作区、锁持有者和租约 |
 | `!ws list` | 列出可用工作区及状态 |
 | `!ws clean` | 释放过期租约（owner；启用 2FA 时需先 `!sudo`） |
 | `!stop` | 中断当前 run，清空排队任务 |
 | `!model` | 查看当前模型 |
+| `!model list [provider]` | 列出可用模型 |
+| `!model <provider/model[#variant]>` | 切换当前会话模型 |
 | `!agent` | 查看当前 agent |
+| `!agent list` | 列出 primary agents |
+| `!agent <ID>` | 切换当前会话 agent |
+| `!reload` | 热加载配置（owner，仅私聊） |
 | `!sudo <TOTP>` | 为 owner 危险操作开启短窗口（仅私聊） |
 | `!approvals` | 查看当前会话待审批请求 |
 | `!approve <id> once\|always\|reject` | 处理审批 |
 | `!reject <id>` | 拒绝审批 |
 | `!audit N` | 查看最近 N 条审计记录（owner/admin） |
 
-普通文本会作为 prompt 发送给 OpenCode。最终回答会做 Markdown 降级和长消息分段；群里默认 @ 发起人并引用原消息。
+普通文本会作为 prompt 发送给 OpenCode。最终回答会做 Markdown 降级和长消息分段；群里默认 @ 发起人并引用原消息。超过 `qq.progress_delay_ms` 的任务会先收到一条会随后删除的“正在处理”提示。
 
 ## 图片与文件
 
@@ -442,6 +440,18 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 | `QQ_BRIDGE_INTERNAL_TOKEN` | 是 | 插件回调鉴权 |
 | `QQ_ADMIN_TOTP_SECRET` | 否 | owner 2FA 的 Base32 TOTP secret |
 | `LOG_LEVEL` | 否 | 覆盖日志级别 |
+| `OPENCODE_QQ_CONFIG` | 否 | 覆盖配置文件路径 |
+| `OPENCODE_QQ_ENV_FILE` | 否 | 覆盖 `.env` 路径 |
+
+默认路径：
+
+```text
+~/.config/opencode-qq/config.yaml     # npm 安装
+~/.config/opencode-qq/.env
+~/.local/share/opencode-qq/           # SQLite / inbox / workspaces
+```
+
+源码目录中存在 `config/config.yaml` 时优先使用它，方便 `pnpm dev`。`.env` 会从配置文件同目录和当前目录加载，已有 shell/systemd 环境变量优先。
 
 约定：
 
@@ -450,23 +460,45 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 - 用户、群、项目都需要显式声明。
 - 一个用户只有一个可用项目时自动选择；多个项目使用 `default_project` 或 `!use`。
 
+热加载：
+
+- 私聊 owner 发送 `!reload`，或给进程发送 `SIGHUP`。
+- 立即生效：`users`、`groups`、`projects`、`policies`、`security`、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
+- 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`logging.pretty`。
+- 校验失败时保留旧配置，不会中断正在运行的任务。
+
+长任务反馈：
+
+```yaml
+qq:
+  progress_ack: true
+  progress_delay_ms: 3000
+```
+
+超过延迟仍未完成时发送一条 `⏳ 正在处理…`，最终回答发出后尝试删除。设置 `progress_ack: false` 可关闭。
+
 校验配置：
 
 ```bash
+opencode-qq config validate
+opencode-qq config validate --json
 pnpm config:validate
-pnpm config:validate -- --json
 ```
 
 ## CLI
 
 ```bash
-pnpm dev                                  # 开发模式，tsx watch
-pnpm build && pnpm start                  # 生产构建并启动
-pnpm config:validate                      # 校验配置和项目目录
-pnpm doctor                               # 检查配置、SQLite、OpenCode、OneBot
+opencode-qq setup                          # 首次安装向导（npm 安装）
+opencode-qq start                          # 启动 bridge
+opencode-qq doctor                         # 检查配置、SQLite、OpenCode、OneBot
+opencode-qq config validate                # 校验配置和项目目录
+
+pnpm dev                                   # 源码开发模式，tsx watch
+pnpm build && pnpm start                   # 生产构建并启动
+pnpm doctor                                # 源码环境检查
 ```
 
-`pnpm start` 默认校验项目目录；调试时可加 `--allow-missing-paths`。
+`start` 默认校验项目目录；调试时可加 `--allow-missing-paths`。
 
 ## 长期运行
 
