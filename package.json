@@ -18,6 +18,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fyerfyer/opencode-qq-adapter.git"
+  },
+  "homepage": "https://github.com/fyerfyer/opencode-qq-adapter#readme",
+  "bugs": {
+    "url": "https://github.com/fyerfyer/opencode-qq-adapter/issues"
+  },
   "engines": {
     "node": ">=22.11"
   },
@@ -28,12 +36,16 @@
   "keywords": [
     "opencode",
     "qq",
+    "qq-bot",
     "napcat",
     "onebot",
+    "onebot11",
     "coding-agent"
   ],
   "scripts": {
     "predev": "node scripts/ensure-config.mjs",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test",
     "dev": "tsx watch src/main.ts start --config config/config.yaml",
     "setup": "tsx src/main.ts setup --config config/config.yaml",
     "prestart": "node scripts/ensure-config.mjs",

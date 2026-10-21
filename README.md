@@ -529,11 +529,18 @@ NapCat 掉线通常是 **QQ 登录会话失效**，不是 bridge 崩溃。建议
 7. WebUI 里优先使用“快速登录”；会话被 QQ 吊销时只能重新扫码。
 8. 如果仍频繁掉线，可尝试在 NapCat `config/napcat.json` 中设置 `"o3HookMode": 0`，或更换出口 IP。
 
-本地测试号可以按需启动：
+本地测试号可以按需启动（单独的测试 compose，不会影响生产 NapCat）：
 
 ```bash
-docker compose --profile e2e up -d napcat-peer
-docker compose --profile e2e stop napcat-peer
+docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml stop
+docker compose -f docker-compose.test.yml down
+```
+
+也可以和生产 NapCat 一起启动：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 ```
 
 ## 安全建议
