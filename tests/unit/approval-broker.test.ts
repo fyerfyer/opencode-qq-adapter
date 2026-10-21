@@ -71,6 +71,7 @@ async function seedSession(
   store.conversations.upsert({
     chatKey,
     projectId: "demo",
+    workspaceId: null,
     sessionId,
     actorQq: options.actorQq ?? 20000,
     agent: null,
@@ -82,6 +83,7 @@ async function seedSession(
     id: "run-1",
     chatKey,
     projectId: "demo",
+    workspaceId: null,
     sessionId,
     actorQq: options.actorQq ?? 20000,
     status: "running",
@@ -422,5 +424,33 @@ describe("ApprovalBroker", () => {
     );
     expect(owner.ok).toBe(true);
     expect(agent.permissionReplies).toHaveLength(1);
+  });
+
+  it("does not let an admin outside the group allowlist approve", async () => {
+    const { config, store, agent, broker } = await setup({ groupShared: true });
+    config.users["20002"] = { role: "admin", projects: ["*"] };
+    await seedSession(store, { chatKey: "group:30001", actorQq: 20000 });
+    agent.askPermission({
+      id: "per_1",
+      sessionId: "ses_1",
+      action: "shell",
+      resources: ["npm test"],
+      save: [],
+      message: null,
+      metadata: null,
+    });
+    await waitFor(() => broker.pending("group:30001").length === 1, 2000, "pending");
+    const approval = firstPending(broker, "group:30001");
+
+    const outsider = await broker.resolve(
+      makeIncomingMessage({
+        userId: 20002,
+        chat: { type: "group", userId: 20002, groupId: 30001, chatKey: "group:30001" },
+      }),
+      approval.shortId,
+      "once",
+    );
+    expect(outsider).toMatchObject({ ok: false, reason: "forbidden" });
+    expect(agent.permissionReplies).toHaveLength(0);
   });
 });

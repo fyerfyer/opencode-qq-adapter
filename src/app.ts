@@ -2,11 +2,15 @@ import type { Logger } from "pino";
 import { ApprovalBroker } from "./approval/broker.js";
 import type { AppConfig } from "./config/schema.js";
 import { ConversationManager } from "./conversation/manager.js";
+import { SessionOwnership } from "./conversation/ownership.js";
 import type { IncomingMessage } from "./domain/message.js";
 import { InternalHttpServer } from "./internal-http/server.js";
+import { InboundMediaService } from "./media/inbound.js";
+import { PluginMediaService } from "./media/plugin.js";
 import { AuditTrail } from "./observability/audit.js";
 import { HealthService } from "./observability/health.js";
 import { buildLogger } from "./observability/logger.js";
+import { OwnerNotifier } from "./observability/notifier.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { isMessageEvent, type OneBotEvent } from "./onebot/protocol.js";
 import { toIncomingMessage } from "./onebot/segments.js";
@@ -18,8 +22,10 @@ import type { OneBotPort } from "./ports/onebot.js";
 import type { StorePort } from "./ports/store.js";
 import { MessageSender } from "./qq/sender.js";
 import { MessageRouter } from "./router/router.js";
+import { SudoService } from "./security/sudo.js";
 import { SqliteStore } from "./store/sqlite.js";
 import { VERSION } from "./version.js";
+import { WorkspaceManager } from "./workspace/manager.js";
 
 export interface AppDependencies {
   logger?: Logger;
@@ -27,6 +33,10 @@ export interface AppDependencies {
   onebot?: OneBotPort;
   agent?: AgentPort;
   sender?: MessageSender;
+  workspaces?: WorkspaceManager;
+  media?: InboundMediaService;
+  pluginMedia?: PluginMediaService;
+  notifier?: OwnerNotifier;
 }
 
 export class App {
@@ -38,6 +48,12 @@ export class App {
   readonly policy: PolicyEngine;
   readonly audit: AuditTrail;
   readonly quota: QuotaService;
+  readonly workspaces: WorkspaceManager;
+  readonly ownership: SessionOwnership;
+  readonly media: InboundMediaService;
+  readonly pluginMedia: PluginMediaService;
+  readonly notifier: OwnerNotifier;
+  readonly sudo: SudoService;
   readonly conversations: ConversationManager;
   readonly approvals: ApprovalBroker;
   readonly router: MessageRouter;
@@ -48,6 +64,8 @@ export class App {
   #started = false;
   #stopped = false;
   #lastSeenPrune = 0;
+  #pruneTimer: NodeJS.Timeout | null = null;
+  #loginProbeTimer: NodeJS.Timeout | null = null;
 
   constructor(config: AppConfig, dependencies: AppDependencies = {}) {
     this.config = config;
@@ -59,13 +77,30 @@ export class App {
     this.policy = new PolicyEngine(config);
     this.audit = new AuditTrail(this.store, this.logger);
     this.quota = new QuotaService({ config, store: this.store });
+    this.workspaces =
+      dependencies.workspaces ??
+      new WorkspaceManager({ config, store: this.store, logger: this.logger });
+    this.ownership = new SessionOwnership(this.store, this.agent, this.logger);
+    this.media =
+      dependencies.media ??
+      new InboundMediaService({ config, onebot: this.onebot, logger: this.logger });
+    this.notifier =
+      dependencies.notifier ?? new OwnerNotifier({ config, sender, logger: this.logger });
+    this.sudo = new SudoService(config.security.admin_2fa);
     this.conversations = new ConversationManager(
       config,
       this.store,
       this.agent,
       sender,
       this.logger,
-      { quota: this.quota, audit: this.audit },
+      {
+        quota: this.quota,
+        audit: this.audit,
+        workspaces: this.workspaces,
+        onRunFailed: (active, error) => {
+          void this.notifier.runFailed(active, error);
+        },
+      },
     );
     this.approvals = new ApprovalBroker({
       config,
@@ -76,6 +111,17 @@ export class App {
       audit: this.audit,
       logger: this.logger,
     });
+    this.pluginMedia =
+      dependencies.pluginMedia ??
+      new PluginMediaService({
+        config,
+        store: this.store,
+        ownership: this.ownership,
+        workspaces: this.workspaces,
+        sender,
+        audit: this.audit,
+        logger: this.logger,
+      });
     this.router = new MessageRouter({
       config,
       policy: this.policy,
@@ -86,6 +132,10 @@ export class App {
       sender,
       agent: this.agent,
       onebot: this.onebot,
+      media: this.media,
+      workspaces: this.workspaces,
+      sudo: this.sudo,
+      notifier: this.notifier,
       logger: this.logger,
     });
     this.health = new HealthService({
@@ -97,7 +147,9 @@ export class App {
       logger: this.logger,
       version: VERSION,
     });
-    this.http = new InternalHttpServer(config, this.health, this.logger);
+    this.http = new InternalHttpServer(config, this.health, this.logger, {
+      pluginMedia: this.pluginMedia,
+    });
   }
 
   get httpPort(): number {
@@ -106,8 +158,23 @@ export class App {
 
   async start(): Promise<void> {
     if (this.#started) return;
-    this.#unsubscribeOneBot = this.onebot.onEvent((event) => this.#onOneBotEvent(event));
+    const recoveredWorkspaces = this.workspaces.recover();
+    if (recoveredWorkspaces > 0) {
+      this.audit.record({
+        ts: Date.now(),
+        actorQq: null,
+        chatKey: null,
+        projectId: null,
+        workspaceId: null,
+        action: "workspaces.recovered",
+        detail: { count: recoveredWorkspaces },
+      });
+    }
     this.audit.prune(this.config.logging.audit_retention_days);
+    const prunedImages = await this.media.cleanupInbox().catch(() => 0);
+    if (prunedImages > 0) this.logger.info({ prunedImages }, "Pruned expired inbox images");
+    this.#unsubscribeOneBot = this.onebot.onEvent((event) => this.#onOneBotEvent(event));
+    this.ownership.start();
     try {
       await this.http.start();
       await this.agent.start();
@@ -118,6 +185,16 @@ export class App {
       await this.stop();
       throw error;
     }
+    this.#pruneTimer = setInterval(
+      () => {
+        this.audit.prune(this.config.logging.audit_retention_days);
+        void this.media.cleanupInbox().catch(() => 0);
+        this.workspaces.cleanup();
+      },
+      60 * 60 * 1000,
+    );
+    this.#pruneTimer.unref?.();
+    this.#startLoginProbe();
     this.#started = true;
     this.logger.info(
       {
@@ -125,16 +202,28 @@ export class App {
         httpPort: this.httpPort,
         onebotUrl: this.config.onebot.url,
         opencodeMode: this.config.opencode.service.mode,
+        recoveredWorkspaces,
+        recoveredRuns: this.conversations.recoveredRuns,
       },
       "OpenCode QQ Adapter started",
     );
+    void this.notifier.startup(this.conversations.recoveredRuns, recoveredWorkspaces);
   }
 
   async stop(): Promise<void> {
     if (this.#stopped) return;
     this.#stopped = true;
+    if (this.#pruneTimer !== null) {
+      clearInterval(this.#pruneTimer);
+      this.#pruneTimer = null;
+    }
+    if (this.#loginProbeTimer !== null) {
+      clearInterval(this.#loginProbeTimer);
+      this.#loginProbeTimer = null;
+    }
     this.#unsubscribeOneBot?.();
     this.#unsubscribeOneBot = null;
+    this.ownership.stop();
     await this.approvals.stop().catch((error) => {
       this.logger.warn({ err: error }, "Approval broker shutdown failed");
     });
@@ -152,6 +241,32 @@ export class App {
     });
     this.store.close();
     this.logger.info("OpenCode QQ Adapter stopped");
+  }
+
+  #startLoginProbe(): void {
+    const interval = this.config.onebot.login_probe_ms;
+    if (interval <= 0 || this.onebot.getLoginInfo === undefined) return;
+    this.#loginProbeTimer = setInterval(() => {
+      void this.#probeNapCatLogin();
+    }, interval);
+    this.#loginProbeTimer.unref?.();
+  }
+
+  async #probeNapCatLogin(): Promise<void> {
+    if (!this.onebot.status().connected) return;
+    try {
+      await this.onebot.getLoginInfo?.();
+    } catch (error) {
+      this.logger.warn({ err: error }, "NapCat login probe failed");
+      void this.notifier.notify(
+        [
+          "⚠️ NapCat / QQ 登录可能已失效",
+          "OneBot WebSocket 仍连接，但 get_login_info 失败。",
+          "请在 NapCat WebUI 检查二维码或快速登录；bridge 会继续重连。",
+        ].join("\n"),
+        { key: "napcat-login-lost", ttlMs: 30 * 60 * 1000 },
+      );
+    }
   }
 
   #onOneBotEvent(raw: unknown): void {

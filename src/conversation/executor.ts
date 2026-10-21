@@ -4,18 +4,22 @@ import type { AppConfig } from "../config/schema.js";
 import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
+import type { WorkspaceLease } from "../domain/workspace.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
+import { WorkspaceLockAbortedError, type WorkspaceManager } from "../workspace/manager.js";
 import { friendlyError, isSessionMissing } from "./errors.js";
 import { collectResponse, toPromptFiles } from "./response.js";
 import { type ActiveRun, RunStoppedError, type RunUsage } from "./types.js";
 
 export interface RunHooks {
+  workspaces: WorkspaceManager;
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
   onStarted?(active: ActiveRun): void;
   onFinished?(active: ActiveRun, status: RunStatus, usage: RunUsage | null): void;
+  onRunFailed?(active: ActiveRun, error: string): void;
 }
 
 /** Executes one queued run: session resolution, prompt, wait, response, errors. */
@@ -47,6 +51,7 @@ export class RunExecutor {
     const { record, message } = active;
     const started = Date.now();
     let timeoutController: AbortController | null = null;
+    let lease: WorkspaceLease | null = null;
     this.#store.runs.setStatus(record.id, "running");
     this.#hooks.onStarted?.(active);
 
@@ -56,8 +61,25 @@ export class RunExecutor {
         throw new Error(`Project '${record.projectId}' no longer exists in configuration`);
       }
 
-      const conversation = this.#ensureConversation(chatKey, record.projectId, message.userId);
-      const ensured = await this.#ensureSession(conversation, project.path, message, active);
+      lease = await this.#hooks.workspaces.acquire(
+        record.projectId,
+        chatKey,
+        record.id,
+        active.abort.signal,
+      );
+      active.workspaceId = lease.id;
+      active.workspacePath = lease.path;
+      record.workspaceId = lease.id;
+      this.#store.runs.setWorkspace(record.id, lease.id);
+      this.#store.conversations.setWorkspace(chatKey, lease.id);
+
+      const conversation = this.#ensureConversation(
+        chatKey,
+        record.projectId,
+        lease.id,
+        message.userId,
+      );
+      const ensured = await this.#ensureSession(conversation, lease.path, message, active);
       const session = ensured.session;
       const updated = ensured.conversation;
       record.sessionId = session.id;
@@ -84,7 +106,7 @@ export class RunExecutor {
         );
         const recreated = await this.#createSession(
           updated,
-          project.path,
+          lease.path,
           message,
           active.permissions,
         );
@@ -163,7 +185,11 @@ export class RunExecutor {
         "Run completed",
       );
     } catch (error) {
-      if (active.stopRequested || error instanceof RunStoppedError) {
+      if (
+        active.stopRequested ||
+        error instanceof RunStoppedError ||
+        error instanceof WorkspaceLockAbortedError
+      ) {
         this.#finish(record.id, "interrupted", { stopReason: "user" });
         this.#hooks.onFinished?.(active, "interrupted", active.usage);
         this.#logger.info({ runId: record.id, chatKey }, "Run interrupted by user");
@@ -172,6 +198,7 @@ export class RunExecutor {
       const friendly = friendlyError(error);
       this.#finish(record.id, "failed", { error: friendly });
       this.#hooks.onFinished?.(active, "failed", active.usage);
+      this.#hooks.onRunFailed?.(active, friendly);
       this.#logger.error({ err: error, runId: record.id, chatKey }, "Run failed");
       try {
         await this.#sender.reply(message.chat, message.id, `处理失败：${friendly}`);
@@ -185,21 +212,35 @@ export class RunExecutor {
       if (record.sessionId !== null) {
         this.#hooks.unbindSession(record.sessionId);
       }
+      if (lease !== null) {
+        this.#hooks.workspaces.release(lease);
+      }
     }
   }
 
-  #ensureConversation(chatKey: string, projectId: string, actorQq: number): ConversationRecord {
+  #ensureConversation(
+    chatKey: string,
+    projectId: string,
+    workspaceId: string,
+    actorQq: number,
+  ): ConversationRecord {
     const existing = this.#store.conversations.get(chatKey);
     const now = Date.now();
     if (existing !== null && existing.projectId === projectId) {
-      if (existing.actorQq !== actorQq) {
-        this.#store.conversations.upsert({ ...existing, actorQq, lastActiveAt: now });
+      if (existing.actorQq !== actorQq || existing.workspaceId !== workspaceId) {
+        this.#store.conversations.upsert({
+          ...existing,
+          workspaceId,
+          actorQq,
+          lastActiveAt: now,
+        });
       }
-      return { ...existing, actorQq, lastActiveAt: now };
+      return { ...existing, workspaceId, actorQq, lastActiveAt: now };
     }
     const record: ConversationRecord = {
       chatKey,
       projectId,
+      workspaceId,
       sessionId: null,
       actorQq,
       agent: null,

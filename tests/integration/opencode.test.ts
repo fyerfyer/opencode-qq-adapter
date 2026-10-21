@@ -1,6 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../../src/config/schema.js";
 import { buildLogger } from "../../src/observability/logger.js";
@@ -27,7 +28,8 @@ describe.skipIf(!enabled)("OpenCode integration", () => {
       await agent.start();
       const health = await agent.health(true);
       expect(health.healthy).toBe(true);
-      expect(health.version).toBe("2.0.32");
+      expect(health.version).toBeTruthy();
+      expect(semver.satisfies(health.version ?? "0.0.0", ">=2.0.0 <3.0.0")).toBe(true);
 
       const session = await agent.createSession({ directory, title: "integration", model });
       const receipt = await agent.prompt({

@@ -1,6 +1,7 @@
 export interface ConversationRecord {
   chatKey: string;
   projectId: string;
+  workspaceId: string | null;
   sessionId: string | null;
   /** QQ user that most recently used this conversation. */
   actorQq: number | null;
@@ -24,6 +25,7 @@ export interface RunRecord {
   id: string;
   chatKey: string;
   projectId: string;
+  workspaceId: string | null;
   sessionId: string | null;
   /** QQ user that submitted this run. */
   actorQq: number | null;

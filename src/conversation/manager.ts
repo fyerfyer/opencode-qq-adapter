@@ -9,9 +9,10 @@ import type { QuotaService } from "../policy/quota.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
+import type { WorkspaceDiff, WorkspaceManager, WorkspaceStatus } from "../workspace/manager.js";
 import { RunExecutor } from "./executor.js";
 import { ChatRunQueue } from "./queue.js";
-import type { ConversationStatus, SubmitResult } from "./types.js";
+import type { ActiveRun, ConversationStatus, SubmitResult } from "./types.js";
 
 export type { ConversationStatus, SubmitResult } from "./types.js";
 export { RunStoppedError } from "./types.js";
@@ -28,6 +29,8 @@ export class ConversationManager {
   readonly #unsubscribe: () => void;
   readonly #quota: QuotaService | undefined;
   readonly #audit: AuditTrail | undefined;
+  readonly #workspaces: WorkspaceManager;
+  readonly #recoveredRuns: number;
 
   constructor(
     config: AppConfig,
@@ -35,7 +38,12 @@ export class ConversationManager {
     agent: AgentPort,
     sender: MessageSender,
     logger: Logger,
-    options: { quota?: QuotaService; audit?: AuditTrail } = {},
+    options: {
+      quota?: QuotaService;
+      audit?: AuditTrail;
+      workspaces: WorkspaceManager;
+      onRunFailed?: (active: ActiveRun, error: string) => void;
+    },
   ) {
     this.#config = config;
     this.#store = store;
@@ -44,12 +52,14 @@ export class ConversationManager {
     this.#logger = logger;
     this.#quota = options.quota;
     this.#audit = options.audit;
+    this.#workspaces = options.workspaces;
     this.#queue = new ChatRunQueue({
       maxQueued: config.security.max_queued_prompts,
       logger,
       execute: (chatKey, active) => this.#executor.execute(chatKey, active),
     });
     this.#executor = new RunExecutor(config, store, agent, sender, logger, {
+      workspaces: this.#workspaces,
       bindSession: (sessionId, active) => this.#queue.bindSession(sessionId, active),
       unbindSession: (sessionId) => this.#queue.unbindSession(sessionId),
       onStarted: (active) => {
@@ -58,11 +68,12 @@ export class ConversationManager {
           actorQq: active.record.actorQq,
           chatKey: active.record.chatKey,
           projectId: active.record.projectId,
-          workspaceId: null,
+          workspaceId: active.workspaceId,
           action: "run.started",
           detail: { runId: active.record.id, sessionId: active.record.sessionId },
         });
       },
+      onRunFailed: (active, error) => options.onRunFailed?.(active, error),
       onFinished: (active, status, usage) => {
         if (usage !== null && active.record.actorQq !== null) {
           this.#quota?.recordRunUsage(active.record.actorQq, active.record.projectId, {
@@ -76,7 +87,7 @@ export class ConversationManager {
           actorQq: active.record.actorQq,
           chatKey: active.record.chatKey,
           projectId: active.record.projectId,
-          workspaceId: null,
+          workspaceId: active.workspaceId,
           action: "run.finished",
           detail: {
             runId: active.record.id,
@@ -91,6 +102,7 @@ export class ConversationManager {
     });
     this.#unsubscribe = agent.subscribe((event) => this.#queue.applyAgentEvent(event));
     const recovered = store.runs.recoverActive(Date.now());
+    this.#recoveredRuns = recovered;
     if (recovered > 0) {
       this.#logger.warn({ recovered }, "Marked stale runs as interrupted after restart");
       this.#audit?.record({
@@ -109,6 +121,10 @@ export class ConversationManager {
     return this.#store.conversations.get(chatKey);
   }
 
+  get recoveredRuns(): number {
+    return this.#recoveredRuns;
+  }
+
   async submit(
     message: IncomingMessage,
     projectId: string,
@@ -119,6 +135,7 @@ export class ConversationManager {
       id: ulid(now),
       chatKey: message.chat.chatKey,
       projectId,
+      workspaceId: null,
       sessionId: null,
       actorQq: message.userId,
       status: "queued",
@@ -198,6 +215,7 @@ export class ConversationManager {
     this.#store.conversations.upsert({
       chatKey,
       projectId,
+      workspaceId: null,
       sessionId: null,
       actorQq: userId,
       agent: null,
@@ -232,6 +250,33 @@ export class ConversationManager {
     };
   }
 
+  workspaceStatus(projectId: string): WorkspaceStatus {
+    return this.#workspaces.status(projectId);
+  }
+
+  async diff(
+    projectId: string,
+    sessionId: string | null,
+  ): Promise<{
+    workspace: WorkspaceDiff;
+    session: Awaited<ReturnType<AgentPort["getDiff"]>> | null;
+  }> {
+    const workspace = await this.#workspaces.diff(projectId);
+    let session: Awaited<ReturnType<AgentPort["getDiff"]>> | null = null;
+    if (sessionId !== null) {
+      try {
+        session = await this.#agent.getDiff(sessionId);
+      } catch (error) {
+        this.#logger.debug({ err: error, sessionId }, "Session diff unavailable");
+      }
+    }
+    return { workspace, session };
+  }
+
+  cleanWorkspaces(): number {
+    return this.#workspaces.cleanup();
+  }
+
   activeRuns(): number {
     return this.#queue.activeCount();
   }
@@ -260,5 +305,6 @@ export class ConversationManager {
     }
     await this.#queue.waitForIdle(5000);
     this.#queue.clear();
+    this.#workspaces.releaseAll();
   }
 }

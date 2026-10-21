@@ -8,6 +8,7 @@ import type {
   ApprovalDecision,
   PermissionRuleset,
 } from "../../src/domain/permission.js";
+import type { WorkspaceDiffFile } from "../../src/domain/workspace.js";
 import type {
   AgentEvent,
   AgentEventStatus,
@@ -40,6 +41,7 @@ export class FakeAgent implements AgentPort {
   readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
   readonly listeners = new Set<(event: AgentEvent) => void>();
   readonly waiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
+  readonly diffs = new Map<string, WorkspaceDiffFile[]>();
 
   autoComplete = true;
   answer = "fake answer";
@@ -191,6 +193,10 @@ export class FakeAgent implements AgentPort {
     return [...(this.messages.get(sessionId) ?? [])];
   }
 
+  async getDiff(sessionId: string): Promise<WorkspaceDiffFile[]> {
+    return [...(this.diffs.get(sessionId) ?? [])];
+  }
+
   subscribe(listener: (event: AgentEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -249,11 +255,13 @@ export interface UploadedFile {
 export class FakeOneBot implements OneBotPort {
   readonly sent: SentMessage[] = [];
   readonly uploads: UploadedFile[] = [];
+  readonly imageUrls = new Map<string, string>();
   readonly listeners = new Set<(event: unknown) => void>();
   connected = true;
   selfId: number | null = 10000;
   lastEventAt: number | null = Date.now();
   lastError: string | null = null;
+  loginInfoError: string | null = null;
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {}
@@ -289,6 +297,12 @@ export class FakeOneBot implements OneBotPort {
     this.uploads.push({ kind: "private", targetId: userId, file, name });
   }
 
+  async getImage(file: string): Promise<{ file: string; url: string; fileName: string }> {
+    const url = this.imageUrls.get(file);
+    if (url === undefined) throw new Error(`No fake image URL for ${file}`);
+    return { file: `fake-${file}.png`, url, fileName: `${file}.png` };
+  }
+
   async uploadGroupFile(
     groupId: number,
     file: string,
@@ -305,6 +319,7 @@ export class FakeOneBot implements OneBotPort {
   }
 
   async getLoginInfo(): Promise<{ userId: number; nickname: string }> {
+    if (this.loginInfoError !== null) throw new Error(this.loginInfoError);
     return { userId: this.selfId ?? 0, nickname: "FakeBot" };
   }
 
@@ -351,7 +366,11 @@ export function makeTestConfig(options: {
       self_id: 10000,
     },
     opencode: { service: { mode: "off", base_url: "http://127.0.0.1:1" } },
-    storage: { database_path: ":memory:" },
+    storage: {
+      database_path: ":memory:",
+      inbox_dir: `${options.projectPath}/.qq-inbox`,
+    },
+    workspaces: { root: `${options.projectPath}/.qq-workspaces` },
     default_project: "demo",
     users: {
       [options.userQQ ?? "20000"]: { role: "owner", projects: ["*"] },
@@ -359,7 +378,10 @@ export function makeTestConfig(options: {
     projects: {
       demo: { path: options.projectPath, allowed_users: [options.userQQ ?? "20000"] },
     },
-    security: { max_queued_prompts: options.maxQueued ?? 3 },
+    security: {
+      max_queued_prompts: options.maxQueued ?? 3,
+      allow_private_image_urls: true,
+    },
   });
 }
 

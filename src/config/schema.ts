@@ -88,6 +88,17 @@ const budgetsSchema = z
   .strict()
   .prefault({});
 
+const admin2faSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    totp_secret: z.string().default(""),
+    window_seconds: z.number().int().min(30).default(300),
+    period_seconds: z.number().int().min(10).max(300).default(30),
+    digits: z.number().int().min(6).max(8).default(6),
+  })
+  .strict()
+  .prefault({});
+
 const securitySchema = z
   .object({
     default_effect: effectSchema.default("deny"),
@@ -100,9 +111,17 @@ const securitySchema = z
       .int()
       .positive()
       .default(10 * 1024 * 1024),
+    max_outbound_image_bytes: z
+      .number()
+      .int()
+      .positive()
+      .default(20 * 1024 * 1024),
     max_queued_prompts: z.number().int().nonnegative().default(3),
+    /** Allow inbound image URLs that resolve to loopback/private addresses. */
+    allow_private_image_urls: z.boolean().default(false),
     rate_limit: rateLimitSchema,
     budgets: budgetsSchema,
+    admin_2fa: admin2faSchema,
   })
   .strict()
   .prefault({});
@@ -133,6 +152,8 @@ const onebotSchema = z
       .int()
       .min(1000)
       .default(10 * 60 * 1000),
+    /** Probe get_login_info at this interval; 0 disables. */
+    login_probe_ms: z.number().int().min(0).default(60_000),
     dedupe_ttl_ms: z
       .number()
       .int()
@@ -222,6 +243,8 @@ const storageSchema = z
   .object({
     database_path: z.string().min(1).default("var/opencode-qq.db"),
     inbox_dir: z.string().min(1).default("var/inbox"),
+    /** Delete downloaded inbound images that were not used after this many hours. */
+    inbox_ttl_hours: z.number().int().positive().default(24),
   })
   .strict()
   .prefault({});
@@ -232,10 +255,29 @@ const workspacesSchema = z
     root: z.string().min(1).default("var/workspaces"),
     idle_ttl_hours: z.number().int().positive().default(72),
     max_per_project: z.number().int().positive().default(5),
+    /** How long a workspace lock survives without a renewal. */
+    lock_lease_ms: z.number().int().min(5000).default(120_000),
+    /** How often long-running runs renew their workspace lease. */
+    renew_interval_ms: z.number().int().min(1000).default(30_000),
     cleanup: z
       .object({
         require_clean: z.boolean().default(true),
         keep_dirty_days: z.number().int().positive().default(7),
+      })
+      .strict()
+      .prefault({}),
+  })
+  .strict()
+  .prefault({});
+
+const notificationsSchema = z
+  .object({
+    owner_alerts: z
+      .object({
+        enabled: z.boolean().default(true),
+        on_startup: z.boolean().default(false),
+        on_run_failure: z.boolean().default(true),
+        on_budget_exceeded: z.boolean().default(true),
       })
       .strict()
       .prefault({}),
@@ -279,6 +321,7 @@ export const configSchema = z
       .prefault({}),
     policies: z.record(z.string().min(1), policySchema).prefault({}),
     workspaces: workspacesSchema,
+    notifications: notificationsSchema,
     logging: loggingSchema,
     features: featuresSchema,
     qq: qqSchema,

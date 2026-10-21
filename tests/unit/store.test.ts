@@ -32,6 +32,7 @@ describe("SqliteStore M2 repositories", () => {
     store.conversations.upsert({
       chatKey: "private:20000",
       projectId: "demo",
+      workspaceId: null,
       sessionId: "ses_1",
       actorQq: 20000,
       agent: null,
@@ -107,6 +108,36 @@ describe("SqliteStore M2 repositories", () => {
     });
     expect(store.usage.countEvents(20000, "prompt", 0)).toBe(2);
     expect(store.usage.pruneEvents(1500)).toBe(1);
+    store.close();
+  });
+
+  it("stores workspace locks, renews leases and recovers them", () => {
+    const store = new SqliteStore(":memory:");
+    store.workspaces.ensure({
+      id: "shared:demo",
+      projectId: "demo",
+      kind: "shared",
+      path: "/tmp/demo",
+      branch: null,
+      ownerChatKey: null,
+      status: "idle",
+      lockedByRunId: null,
+      leaseExpiresAt: null,
+      createdAt: 1,
+      lastUsedAt: 1,
+      metadata: null,
+    });
+
+    expect(store.workspaces.tryLock("shared:demo", "run-1", "private:1", 1000, 5000)).toBe(true);
+    expect(store.workspaces.tryLock("shared:demo", "run-2", "private:2", 1000, 5000)).toBe(false);
+    expect(store.workspaces.renew("shared:demo", "run-1", 9000)).toBe(true);
+    expect(store.workspaces.get("shared:demo")?.leaseExpiresAt).toBe(9000);
+    expect(store.workspaces.releaseExpired(9001)).toBe(1);
+    expect(store.workspaces.get("shared:demo")?.status).toBe("idle");
+
+    expect(store.workspaces.tryLock("shared:demo", "run-3", "private:3", 1000, 5000)).toBe(true);
+    expect(store.workspaces.recoverLocks(2000)).toBe(1);
+    expect(store.workspaces.get("shared:demo")?.status).toBe("idle");
     store.close();
   });
 });

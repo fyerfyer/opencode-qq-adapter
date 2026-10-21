@@ -6,6 +6,7 @@ import type {
   RunRecord,
   RunStatus,
 } from "../domain/conversation.js";
+import type { WorkspaceKind, WorkspaceRecord, WorkspaceStatus } from "../domain/workspace.js";
 
 export interface UsageDelta {
   inputTokens: number;
@@ -24,12 +25,28 @@ export interface StorePort {
       agent: string | null,
       model: string | null,
     ): void;
+    setWorkspace(chatKey: string, workspaceId: string | null): void;
     list(): ConversationRecord[];
+  };
+  workspaces: {
+    ensure(record: WorkspaceRecord): void;
+    get(id: string): WorkspaceRecord | null;
+    getByProject(projectId: string, kind?: WorkspaceKind): WorkspaceRecord | null;
+    list(projectId?: string): WorkspaceRecord[];
+    /** Atomically lock unless another live run holds the workspace. */
+    tryLock(id: string, runId: string, chatKey: string, now: number, expiresAt: number): boolean;
+    renew(id: string, runId: string, expiresAt: number): boolean;
+    unlock(id: string, runId: string | null, now: number): void;
+    setStatus(id: string, status: WorkspaceStatus, now: number): void;
+    /** Release every lock; used once at startup because one bridge owns the DB. */
+    recoverLocks(now: number): number;
+    releaseExpired(now: number): number;
   };
   runs: {
     create(record: RunRecord): void;
     setStatus(id: string, status: RunStatus): void;
     setSession(id: string, sessionId: string): void;
+    setWorkspace(id: string, workspaceId: string): void;
     finish(id: string, finish: RunFinish): void;
     get(id: string): RunRecord | null;
     activeForChat(chatKey: string): RunRecord | null;

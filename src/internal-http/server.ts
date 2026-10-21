@@ -2,21 +2,42 @@ import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
 import { Hono } from "hono";
 import type { Logger } from "pino";
+import { z } from "zod";
 import type { AppConfig } from "../config/schema.js";
+import { PluginMediaError, type PluginMediaService } from "../media/plugin.js";
 import type { HealthService } from "../observability/health.js";
 import { bearerToken, tokenMatches } from "../util/token.js";
+
+const sendImageBody = z
+  .object({
+    sessionId: z.string().min(1),
+    path: z.string().min(1),
+    caption: z.string().max(1000).optional(),
+  })
+  .strict();
+
+export interface InternalHttpOptions {
+  pluginMedia?: PluginMediaService;
+}
 
 export class InternalHttpServer {
   readonly #config: AppConfig;
   readonly #health: HealthService;
   readonly #logger: Logger;
+  readonly #pluginMedia: PluginMediaService | undefined;
   #server: ServerType | null = null;
   #port = 0;
 
-  constructor(config: AppConfig, health: HealthService, logger: Logger) {
+  constructor(
+    config: AppConfig,
+    health: HealthService,
+    logger: Logger,
+    options: InternalHttpOptions = {},
+  ) {
     this.#config = config;
     this.#health = health;
     this.#logger = logger;
+    this.#pluginMedia = options.pluginMedia;
   }
 
   get port(): number {
@@ -83,15 +104,35 @@ export class InternalHttpServer {
       await next();
     });
 
-    app.post("/internal/plugin/send-image", (context) =>
-      context.json(
-        {
-          error: "not_implemented",
-          message: "Image forwarding is planned for milestone M4.",
-        },
-        501,
-      ),
-    );
+    app.post("/internal/plugin/send-image", async (context) => {
+      const plugin = this.#pluginMedia;
+      if (plugin === undefined) {
+        return context.json({ error: "plugin_media_disabled" }, 503);
+      }
+      let body: unknown;
+      try {
+        body = await context.req.json();
+      } catch {
+        return context.json({ error: "invalid_json" }, 400);
+      }
+      const parsed = sendImageBody.safeParse(body);
+      if (!parsed.success) {
+        return context.json(
+          { error: "invalid_request", details: parsed.error.issues.map((issue) => issue.message) },
+          400,
+        );
+      }
+      try {
+        const result = await plugin.sendImage(parsed.data);
+        return context.json({ ok: true, messageId: result.messageId });
+      } catch (error) {
+        if (error instanceof PluginMediaError) {
+          return context.json({ error: "media_rejected", message: error.message }, error.status);
+        }
+        this.#logger.error({ err: error }, "Plugin send-image failed");
+        return context.json({ error: "internal_error" }, 500);
+      }
+    });
     app.post("/internal/plugin/send-file", (context) =>
       context.json(
         {

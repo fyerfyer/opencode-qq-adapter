@@ -10,11 +10,13 @@ import type {
   RunStatus,
 } from "../domain/conversation.js";
 import type { ApprovalDecision } from "../domain/permission.js";
+import type { WorkspaceKind, WorkspaceRecord, WorkspaceStatus } from "../domain/workspace.js";
 import type { StorePort, UsageDelta } from "../ports/store.js";
 
 interface ConversationRow {
   chat_key: string;
   project_id: string;
+  workspace_id: string | null;
   session_id: string | null;
   actor_qq: number | null;
   agent: string | null;
@@ -27,6 +29,7 @@ interface RunRow {
   id: string;
   chat_key: string;
   project_id: string;
+  workspace_id: string | null;
   session_id: string | null;
   actor_qq: number | null;
   status: RunStatus;
@@ -35,6 +38,21 @@ interface RunRow {
   stop_reason: string | null;
   error: string | null;
   usage_json: string | null;
+}
+
+interface WorkspaceRow {
+  id: string;
+  project_id: string;
+  kind: WorkspaceKind;
+  path: string;
+  branch: string | null;
+  owner_chat_key: string | null;
+  status: WorkspaceStatus;
+  locked_by_run_id: string | null;
+  lease_expires_at: number | null;
+  created_at: number;
+  last_used_at: number;
+  metadata_json: string | null;
 }
 
 interface ApprovalRow {
@@ -183,6 +201,30 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
       CREATE INDEX IF NOT EXISTS usage_events_ts ON usage_events(ts);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE conversations ADD COLUMN workspace_id TEXT;
+      ALTER TABLE runs ADD COLUMN workspace_id TEXT;
+
+      CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        path TEXT NOT NULL,
+        branch TEXT,
+        owner_chat_key TEXT,
+        status TEXT NOT NULL,
+        locked_by_run_id TEXT,
+        lease_expires_at INTEGER,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER NOT NULL,
+        metadata_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS workspaces_project_status ON workspaces(project_id, status);
+      CREATE INDEX IF NOT EXISTS workspaces_lease ON workspaces(lease_expires_at);
+    `,
+  },
 ];
 
 export class SqliteStore implements StorePort {
@@ -245,10 +287,12 @@ export class SqliteStore implements StorePort {
       this.#db
         .prepare(
           `INSERT INTO conversations
-             (chat_key, project_id, session_id, actor_qq, agent, model, created_at, last_active_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             (chat_key, project_id, workspace_id, session_id, actor_qq, agent, model,
+              created_at, last_active_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(chat_key) DO UPDATE SET
              project_id = excluded.project_id,
+             workspace_id = excluded.workspace_id,
              session_id = excluded.session_id,
              actor_qq = excluded.actor_qq,
              agent = excluded.agent,
@@ -258,6 +302,7 @@ export class SqliteStore implements StorePort {
         .run(
           record.chatKey,
           record.projectId,
+          record.workspaceId,
           record.sessionId,
           record.actorQq,
           record.agent,
@@ -280,6 +325,11 @@ export class SqliteStore implements StorePort {
         )
         .run(sessionId, agent, model, Date.now(), chatKey);
     },
+    setWorkspace: (chatKey: string, workspaceId: string | null): void => {
+      this.#db
+        .prepare("UPDATE conversations SET workspace_id = ?, last_active_at = ? WHERE chat_key = ?")
+        .run(workspaceId, Date.now(), chatKey);
+    },
     list: (): ConversationRecord[] => {
       const rows = this.#db
         .prepare("SELECT * FROM conversations ORDER BY last_active_at DESC")
@@ -293,13 +343,15 @@ export class SqliteStore implements StorePort {
       this.#db
         .prepare(
           `INSERT INTO runs
-             (id, chat_key, project_id, session_id, actor_qq, status, started_at, finished_at, stop_reason, error, usage_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (id, chat_key, project_id, workspace_id, session_id, actor_qq, status,
+              started_at, finished_at, stop_reason, error, usage_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.id,
           record.chatKey,
           record.projectId,
+          record.workspaceId,
           record.sessionId,
           record.actorQq,
           record.status,
@@ -328,6 +380,9 @@ export class SqliteStore implements StorePort {
     },
     setSession: (id: string, sessionId: string): void => {
       this.#db.prepare("UPDATE runs SET session_id = ? WHERE id = ?").run(sessionId, id);
+    },
+    setWorkspace: (id: string, workspaceId: string): void => {
+      this.#db.prepare("UPDATE runs SET workspace_id = ? WHERE id = ?").run(workspaceId, id);
     },
     setStatus: (id: string, status: RunStatus): void => {
       this.#db.prepare("UPDATE runs SET status = ? WHERE id = ?").run(status, id);
@@ -497,6 +552,127 @@ export class SqliteStore implements StorePort {
     },
   };
 
+  workspaces = {
+    ensure: (record: WorkspaceRecord): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO workspaces
+             (id, project_id, kind, path, branch, owner_chat_key, status, locked_by_run_id,
+              lease_expires_at, created_at, last_used_at, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             project_id = excluded.project_id,
+             kind = excluded.kind,
+             path = excluded.path,
+             last_used_at = excluded.last_used_at`,
+        )
+        .run(
+          record.id,
+          record.projectId,
+          record.kind,
+          record.path,
+          record.branch,
+          record.ownerChatKey,
+          record.status,
+          record.lockedByRunId,
+          record.leaseExpiresAt,
+          record.createdAt,
+          record.lastUsedAt,
+          record.metadata === null ? null : safeJson(record.metadata),
+        );
+    },
+    get: (id: string): WorkspaceRecord | null => {
+      const row = this.#db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as
+        | WorkspaceRow
+        | undefined;
+      return row ? mapWorkspace(row) : null;
+    },
+    getByProject: (projectId: string, kind: WorkspaceKind = "shared"): WorkspaceRecord | null => {
+      const row = this.#db
+        .prepare(
+          "SELECT * FROM workspaces WHERE project_id = ? AND kind = ? ORDER BY last_used_at DESC LIMIT 1",
+        )
+        .get(projectId, kind) as WorkspaceRow | undefined;
+      return row ? mapWorkspace(row) : null;
+    },
+    list: (projectId?: string): WorkspaceRecord[] => {
+      const rows =
+        projectId === undefined
+          ? (this.#db
+              .prepare("SELECT * FROM workspaces ORDER BY last_used_at DESC")
+              .all() as WorkspaceRow[])
+          : (this.#db
+              .prepare("SELECT * FROM workspaces WHERE project_id = ? ORDER BY last_used_at DESC")
+              .all(projectId) as WorkspaceRow[]);
+      return rows.map(mapWorkspace);
+    },
+    tryLock: (
+      id: string,
+      runId: string,
+      chatKey: string,
+      now: number,
+      expiresAt: number,
+    ): boolean => {
+      const result = this.#db
+        .prepare(
+          `UPDATE workspaces
+           SET status = 'locked', locked_by_run_id = ?, owner_chat_key = ?,
+               lease_expires_at = ?, last_used_at = ?
+           WHERE id = ? AND (
+             status != 'locked'
+             OR locked_by_run_id = ?
+             OR lease_expires_at IS NULL
+             OR lease_expires_at < ?
+           )`,
+        )
+        .run(runId, chatKey, expiresAt, now, id, runId, now);
+      return result.changes > 0;
+    },
+    renew: (id: string, runId: string, expiresAt: number): boolean => {
+      const result = this.#db
+        .prepare(
+          `UPDATE workspaces SET lease_expires_at = ?
+           WHERE id = ? AND status = 'locked' AND locked_by_run_id = ?`,
+        )
+        .run(expiresAt, id, runId);
+      return result.changes > 0;
+    },
+    unlock: (id: string, runId: string | null, now: number): void => {
+      this.#db
+        .prepare(
+          `UPDATE workspaces
+           SET status = 'idle', locked_by_run_id = NULL, lease_expires_at = NULL, last_used_at = ?
+           WHERE id = ? AND (? IS NULL OR locked_by_run_id = ?)`,
+        )
+        .run(now, id, runId, runId);
+    },
+    setStatus: (id: string, status: WorkspaceStatus, now: number): void => {
+      this.#db
+        .prepare("UPDATE workspaces SET status = ?, last_used_at = ? WHERE id = ?")
+        .run(status, now, id);
+    },
+    recoverLocks: (now: number): number => {
+      const result = this.#db
+        .prepare(
+          `UPDATE workspaces
+           SET status = 'idle', locked_by_run_id = NULL, lease_expires_at = NULL, last_used_at = ?
+           WHERE status = 'locked'`,
+        )
+        .run(now);
+      return result.changes;
+    },
+    releaseExpired: (now: number): number => {
+      const result = this.#db
+        .prepare(
+          `UPDATE workspaces
+           SET status = 'idle', locked_by_run_id = NULL, lease_expires_at = NULL, last_used_at = ?
+           WHERE status = 'locked' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?`,
+        )
+        .run(now, now);
+      return result.changes;
+    },
+  };
+
   audit = {
     record: (entry: AuditEntry): void => {
       this.#db
@@ -628,6 +804,7 @@ function mapConversation(row: ConversationRow): ConversationRecord {
   return {
     chatKey: row.chat_key,
     projectId: row.project_id,
+    workspaceId: row.workspace_id,
     sessionId: row.session_id,
     actorQq: row.actor_qq,
     agent: row.agent,
@@ -642,6 +819,7 @@ function mapRun(row: RunRow): RunRecord {
     id: row.id,
     chatKey: row.chat_key,
     projectId: row.project_id,
+    workspaceId: row.workspace_id,
     sessionId: row.session_id,
     actorQq: row.actor_qq,
     status: row.status,
@@ -650,6 +828,24 @@ function mapRun(row: RunRow): RunRecord {
     stopReason: row.stop_reason,
     error: row.error,
     usageJson: row.usage_json,
+  };
+}
+
+function mapWorkspace(row: WorkspaceRow): WorkspaceRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    kind: row.kind,
+    path: row.path,
+    branch: row.branch,
+    ownerChatKey: row.owner_chat_key,
+    status: row.status,
+    lockedByRunId: row.locked_by_run_id,
+    leaseExpiresAt: row.lease_expires_at,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    metadata:
+      row.metadata_json === null ? null : (parseJson(row.metadata_json) as Record<string, unknown>),
   };
 }
 

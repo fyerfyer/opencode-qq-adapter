@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   PermissionRuleset,
 } from "../domain/permission.js";
+import type { WorkspaceDiffFile } from "../domain/workspace.js";
 
 export interface AgentHealth {
   healthy: boolean;
@@ -96,6 +97,7 @@ export interface AgentPort {
     message?: string,
   ): Promise<void>;
   listMessages(sessionId: string, limit?: number): Promise<AgentMessage[]>;
+  getDiff(sessionId: string): Promise<WorkspaceDiffFile[]>;
   subscribe(listener: (event: AgentEvent) => void): () => void;
   eventStatus(): AgentEventStatus;
   getLastError(): string | null;

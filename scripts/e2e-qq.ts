@@ -43,6 +43,10 @@ async function main(): Promise<void> {
   const pong = await waitForReply(started, (raw) => raw.endsWith("pong"));
   console.log(`✓ !ping -> ${pong}`);
 
+  await send("!use demo");
+  await delay(500);
+  await send("!new");
+  await delay(500);
   await send(prompt);
   const answer = await waitForReply(started, (raw) => raw.includes("qq-opencode-ok"), 120);
   console.log(`✓ prompt -> ${answer.slice(0, 200)}`);
@@ -56,6 +60,8 @@ async function main(): Promise<void> {
   }
 
   if (env.QQ_E2E_APPROVAL === "1") {
+    await send("!new");
+    await delay(500);
     await send(
       "请必须使用 shell 工具执行命令 `echo qq-approval-ok`，然后只回复命令输出，不要猜测结果。",
     );

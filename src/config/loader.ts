@@ -126,10 +126,13 @@ const NULLABLE_SECTIONS = new Set([
   "policies",
   "workspaces",
   "cleanup",
+  "notifications",
+  "owner_alerts",
   "logging",
   "features",
   "qq",
   "storage",
+  "admin_2fa",
 ]);
 
 /** `key:` with only comments in YAML parses as null; treat known sections as empty objects. */
@@ -281,6 +284,16 @@ async function resolveAndValidate(
     }
   }
 
+  if (config.workspaces.renew_interval_ms >= config.workspaces.lock_lease_ms) {
+    errors.push("workspaces.renew_interval_ms must be smaller than workspaces.lock_lease_ms");
+  }
+  if (config.security.admin_2fa.enabled) {
+    if (config.security.admin_2fa.totp_secret.trim().length === 0) {
+      errors.push("security.admin_2fa.enabled requires security.admin_2fa.totp_secret");
+    } else if (!isBase32(config.security.admin_2fa.totp_secret)) {
+      errors.push("security.admin_2fa.totp_secret must be a Base32 encoded TOTP secret");
+    }
+  }
   if (config.onebot.access_token === "") {
     warnings.push("onebot.access_token is empty; only use this for local testing");
   }
@@ -329,6 +342,11 @@ async function verifyDirectory(path: string): Promise<string | undefined> {
   } catch (error) {
     return `'${path}' is not accessible: ${error instanceof Error ? error.message : String(error)}`;
   }
+}
+
+function isBase32(value: string): boolean {
+  const normalized = value.replace(/[\s-]/g, "").replace(/=+$/g, "").toUpperCase();
+  return normalized.length >= 16 && /^[A-Z2-7]+$/.test(normalized);
 }
 
 function isModelRef(value: string): boolean {

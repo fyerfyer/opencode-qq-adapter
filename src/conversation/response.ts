@@ -1,4 +1,3 @@
-import type { IncomingMessage } from "../domain/message.js";
 import type { AgentMessage, AgentPort } from "../ports/agent.js";
 import type { ActiveRun, RunUsage } from "./types.js";
 
@@ -60,16 +59,4 @@ export function sumUsage(messages: AgentMessage[]): RunUsage | null {
   return { cost, tokens };
 }
 
-export function toPromptFiles(image: IncomingMessage["images"][number]): Array<{
-  uri: string;
-  name?: string;
-  description?: string;
-}> {
-  const file = image.file;
-  if (file?.startsWith("file://")) {
-    return [{ uri: file, name: "image", description: image.summary }];
-  }
-  // OpenCode v2 prompts only accept local file URIs. Downloading remote QQ
-  // images is part of M4; ignoring the URL here keeps prompt handling safe.
-  return [];
-}
+export { toPromptFiles } from "../media/inbound.js";

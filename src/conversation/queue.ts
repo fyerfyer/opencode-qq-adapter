@@ -162,6 +162,8 @@ export class ChatRunQueue {
       agentError: null,
       partialText: "",
       usage: null,
+      workspaceId: null,
+      workspacePath: null,
     };
     state.active = active;
     state.draining = true;

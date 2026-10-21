@@ -81,25 +81,45 @@ export class MessageRouter {
   }
 
   async #handlePrompt(message: IncomingMessage): Promise<void> {
-    const { config, policy, conversations, sender } = this.#deps;
+    const { config, policy, conversations, sender, media } = this.#deps;
     const actor = policy.actor(message.userId);
     if (actor === null) return;
 
-    if (message.text.length === 0) {
-      if (message.images.length > 0) {
+    if (message.text.length === 0 && message.images.length === 0) return;
+
+    let images = message.images;
+    if (images.length > 0) {
+      if (!config.features.images) {
+        images = [];
         await sender.reply(
           message.chat,
           message.id,
-          "当前版本暂不支持图片输入（计划在 M4 支持）。请先发送文字。",
+          "当前配置未启用图片输入，本条消息仅处理文字。",
         );
+      } else {
+        const prepared = await media.prepare(images);
+        images = prepared.images;
+        if (prepared.warnings.length > 0) {
+          await sender.reply(message.chat, message.id, prepared.warnings.join("\n"));
+        }
+        if (images.length === 0) {
+          if (message.text.length === 0) {
+            await sender.reply(message.chat, message.id, "没有可处理的图片，请重试或改发文字。");
+            return;
+          }
+        }
       }
-      return;
     }
-    if (message.text.length > config.security.max_prompt_chars) {
+
+    const text =
+      message.text.length > 0
+        ? message.text
+        : "请直接查看附件图片并描述其内容，不要使用 shell 工具。";
+    if (text.length > config.security.max_prompt_chars) {
       await sender.reply(
         message.chat,
         message.id,
-        `消息过长（${message.text.length} 字），上限为 ${config.security.max_prompt_chars} 字。`,
+        `消息过长（${text.length} 字），上限为 ${config.security.max_prompt_chars} 字。`,
       );
       return;
     }
@@ -131,14 +151,6 @@ export class MessageRouter {
       autoSelected = conversation === null;
     }
 
-    if (message.images.length > 0) {
-      await sender.reply(
-        message.chat,
-        message.id,
-        "提示：当前版本暂不处理图片附件（计划在 M4 支持），本条消息仅发送文字部分。",
-      );
-    }
-
     const permissions = policy.permissionsFor(message, projectId);
     if (permissions === null) {
       await sender.reply(message.chat, message.id, "项目配置已失效，请联系管理员。");
@@ -157,6 +169,12 @@ export class MessageRouter {
         detail: { reason: quota.reason, textLength: message.text.length },
       });
       await sender.reply(message.chat, message.id, quota.message ?? "请求被限流，请稍后再试。");
+      void this.#deps.notifier.budgetExceeded(
+        message.userId,
+        projectId,
+        quota.reason ?? "unknown",
+        quota.message ?? "请求被限流",
+      );
       return;
     }
 
@@ -164,7 +182,12 @@ export class MessageRouter {
       await sender.reply(message.chat, message.id, `已自动选择项目：${projectId}`);
     }
 
-    const submitted = await conversations.submit(message, projectId, permissions.ruleset);
+    const promptMessage: IncomingMessage = {
+      ...message,
+      text,
+      images,
+    };
+    const submitted = await conversations.submit(promptMessage, projectId, permissions.ruleset);
     if (submitted.accepted) {
       this.#deps.quota.recordPrompt(message.userId, projectId);
       this.#deps.audit.record({
@@ -177,8 +200,8 @@ export class MessageRouter {
         detail: {
           runId: submitted.runId,
           queued: submitted.queued,
-          textLength: message.text.length,
-          images: message.images.length,
+          textLength: text.length,
+          images: images.length,
           policyNames: permissions.policyNames,
         },
       });

@@ -25,6 +25,8 @@ export interface ActiveRun {
   agentError: string | null;
   partialText: string;
   usage: RunUsage | null;
+  workspaceId: string | null;
+  workspacePath: string | null;
 }
 
 export interface PendingRun {

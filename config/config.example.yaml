@@ -4,7 +4,7 @@ server:
   host: 127.0.0.1
   port: 8787
   health_path: /health
-  # Used by the OpenCode plugin callback endpoints (M4). Leave empty to disable.
+  # Used by the OpenCode qq_send_image plugin callback. Leave empty to disable.
   internal_token: ${QQ_BRIDGE_INTERNAL_TOKEN:-}
 
 onebot:
@@ -16,6 +16,8 @@ onebot:
   # self_id: 123456789
   action_timeout_ms: 15000
   upload_timeout_ms: 600000
+  # Probe get_login_info; if it fails while WS is connected, alert the owner.
+  login_probe_ms: 60000
   dedupe_ttl_ms: 600000
   reconnect:
     enabled: true
@@ -48,7 +50,10 @@ security:
   max_prompt_chars: 8000
   max_images_per_message: 4
   max_image_bytes: 10485760
+  max_outbound_image_bytes: 20971520
   max_queued_prompts: 3
+  # Normally image URLs must be public. Enable only for a local test CDN.
+  allow_private_image_urls: false
   rate_limit:
     prompts_per_minute: 6
     runs_per_hour: 30
@@ -56,6 +61,14 @@ security:
     daily_cost_usd_per_user: 5
     daily_tokens_per_user: 2000000
     daily_cost_usd_per_project: 20
+  # Optional owner 2FA for bridge-side dangerous commands (!ws clean, ...).
+  # `!sudo <code>` opens a short private-chat-only elevation window.
+  admin_2fa:
+    enabled: false
+    totp_secret: ${QQ_ADMIN_TOTP_SECRET:-}
+    window_seconds: 300
+    period_seconds: 30
+    digits: 6
 
 # The project selected when a user has several available projects.
 default_project: demo
@@ -146,9 +159,20 @@ workspaces:
   root: var/workspaces
   idle_ttl_hours: 72
   max_per_project: 5
+  # A run renews its lease while it is active. Leases are released on startup,
+  # so a bridge restart never leaves a shared workspace permanently locked.
+  lock_lease_ms: 120000
+  renew_interval_ms: 30000
   cleanup:
     require_clean: true
     keep_dirty_days: 7
+
+notifications:
+  owner_alerts:
+    enabled: true
+    on_startup: false
+    on_run_failure: true
+    on_budget_exceeded: true
 
 logging:
   level: info
@@ -161,7 +185,7 @@ logging:
   # pretty: true
 
 features:
-  images: false # Image input/output lands in M4
+  images: true # inbound QQ images + qq_send_image plugin
   files: false
   worktrees: false
   forms: false
@@ -176,3 +200,4 @@ qq:
 storage:
   database_path: var/opencode-qq.db
   inbox_dir: var/inbox
+  inbox_ttl_hours: 24

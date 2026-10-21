@@ -4,6 +4,9 @@ export interface IncomingImage {
   file?: string;
   url?: string;
   summary?: string;
+  /** Absolute path of the downloaded copy in the bridge inbox. */
+  localPath?: string;
+  mime?: string;
 }
 
 export interface IncomingMessage {

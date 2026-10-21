@@ -189,4 +189,53 @@ projects:
       code: "semantic",
     });
   });
+
+  it("requires a valid Base32 secret when owner 2FA is enabled", async () => {
+    const root = await workspace();
+    const base = `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+`;
+    const missing = await writeConfig(
+      root,
+      `${base}
+security:
+  admin_2fa:
+    enabled: true
+`,
+    );
+    await expect(loadConfig(missing, { env: {} })).rejects.toMatchObject({
+      code: "semantic",
+    });
+
+    const invalid = await writeConfig(
+      root,
+      `${base}
+security:
+  admin_2fa:
+    enabled: true
+    totp_secret: not-base32!
+`,
+    );
+    await expect(loadConfig(invalid, { env: {} })).rejects.toMatchObject({
+      code: "semantic",
+    });
+
+    const valid = await writeConfig(
+      root,
+      `${base}
+security:
+  admin_2fa:
+    enabled: true
+    totp_secret: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+`,
+    );
+    const loaded = await loadConfig(valid, { env: {} });
+    expect(loaded.config.security.admin_2fa.enabled).toBe(true);
+  });
 });

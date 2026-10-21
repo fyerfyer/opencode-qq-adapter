@@ -1,0 +1,22 @@
+[Unit]
+Description=OpenCode QQ Adapter
+After=network-online.target opencode.service
+Wants=network-online.target opencode.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/opencode-qq-adapter
+EnvironmentFile=%h/Projects/opencode-qq-adapter/.env
+# Use the production build; run `pnpm build` before enabling this unit.
+ExecStart=%h/.nvm/versions/node/v22.19.0/bin/node %h/Projects/opencode-qq-adapter/dist/main.js start --config config/config.yaml
+Restart=always
+RestartSec=5
+# Keep the process alive through the user manager after logout.
+# Also run: loginctl enable-linger $USER
+KillSignal=SIGTERM
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

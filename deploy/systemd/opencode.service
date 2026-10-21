@@ -1,0 +1,17 @@
+[Unit]
+Description=OpenCode V2 service for the QQ adapter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust these two paths if your OpenCode binary or project lives elsewhere.
+ExecStart=%h/.opencode/bin/opencode serve --service
+Restart=always
+RestartSec=5
+# Optional: uncomment if you prefer environment variables over
+# ~/.config/opencode/qq-bridge.json for the qq_send_image plugin.
+# EnvironmentFile=%h/.config/opencode/qq-bridge.env
+
+[Install]
+WantedBy=default.target

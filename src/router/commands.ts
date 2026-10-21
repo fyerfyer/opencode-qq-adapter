@@ -1,6 +1,6 @@
 import { parseApprovalDecision } from "../approval/broker.js";
 import type { AuditRecord } from "../domain/audit.js";
-import { formatProjects, formatStatus, HELP_TEXT } from "./format.js";
+import { formatDiff, formatProjects, formatStatus, formatWorkspace, HELP_TEXT } from "./format.js";
 import type { CommandHandler, RouterDeps } from "./types.js";
 
 export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
@@ -129,6 +129,141 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       detail: { stopped: result.stopped, queuedCleared: result.queuedCleared, rejected },
     });
     await deps.sender.reply(message.chat, message.id, parts.join("\n"));
+  });
+
+  commands.set("diff", async ({ message }) => {
+    const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    if (conversation === null) {
+      await deps.sender.reply(message.chat, message.id, "还没有选择项目。请先发送 !use <项目>。");
+      return;
+    }
+    const result = await deps.conversations.diff(conversation.projectId, conversation.sessionId);
+    deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId: conversation.projectId,
+      workspaceId: conversation.workspaceId,
+      action: "workspace.diff",
+      detail: {
+        files: result.session?.length ?? 0,
+        git: result.workspace.isGit,
+      },
+    });
+    await deps.sender.reply(message.chat, message.id, formatDiff(result));
+  });
+
+  const workspaceCommand: CommandHandler = async ({ message, args }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
+    const sub = (args[0] ?? "").toLowerCase();
+    if (sub === "list") {
+      const entries = deps.policy.availableProjects(actor, message.userId, message.chat.groupId);
+      if (entries.length === 0) {
+        await deps.sender.reply(message.chat, message.id, "没有可用项目。");
+        return;
+      }
+      const lines = ["工作区："];
+      for (const entry of entries) {
+        const status = deps.conversations.workspaceStatus(entry.id);
+        const state =
+          status.workspace?.status === "locked"
+            ? `locked by ${status.lockedByChatKey ?? "?"}`
+            : (status.workspace?.status ?? "idle");
+        lines.push(`- ${entry.id}: ${entry.project.path} (${state})`);
+      }
+      await deps.sender.reply(message.chat, message.id, lines.join("\n"));
+      return;
+    }
+    if (sub === "clean") {
+      if (actor.role !== "owner") {
+        await deps.sender.reply(message.chat, message.id, "只有 owner 可以清理工作区。");
+        return;
+      }
+      if (!deps.sudo.isActive(message.userId)) {
+        await deps.sender.reply(
+          message.chat,
+          message.id,
+          `该操作需要先发送 !sudo <6位动态验证码> 授权（${deps.sudo.windowSeconds} 秒内有效）。`,
+        );
+        return;
+      }
+      const released = deps.conversations.cleanWorkspaces();
+      deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: deps.conversations.getConversation(message.chat.chatKey)?.projectId ?? null,
+        workspaceId: null,
+        action: "workspace.cleanup",
+        detail: { released },
+      });
+      await deps.sender.reply(
+        message.chat,
+        message.id,
+        released > 0 ? `已释放 ${released} 个过期工作区锁。` : "没有需要清理的过期锁。",
+      );
+      return;
+    }
+
+    const conversation = deps.conversations.getConversation(message.chat.chatKey);
+    if (conversation === null) {
+      await deps.sender.reply(message.chat, message.id, "还没有选择项目。请先发送 !use <项目>。");
+      return;
+    }
+    const status = deps.conversations.workspaceStatus(conversation.projectId);
+    await deps.sender.reply(
+      message.chat,
+      message.id,
+      formatWorkspace(conversation.projectId, status, Date.now()),
+    );
+  };
+  commands.set("ws", workspaceCommand);
+  commands.set("workspace", workspaceCommand);
+
+  commands.set("sudo", async ({ message, args }) => {
+    const actor = deps.policy.actor(message.userId);
+    if (actor === null) return;
+    if (actor.role !== "owner") {
+      await deps.sender.reply(message.chat, message.id, "只有 owner 可以使用 !sudo。");
+      return;
+    }
+    if (message.chat.type !== "private") {
+      await deps.sender.reply(message.chat, message.id, "为安全起见，!sudo 只允许私聊使用。");
+      return;
+    }
+    if (!deps.sudo.enabled) {
+      await deps.sender.reply(message.chat, message.id, "2FA 未启用，无需 sudo 授权。");
+      return;
+    }
+    const code = args[0] ?? "";
+    if (!deps.sudo.verify(message.userId, code)) {
+      deps.audit.record({
+        ts: Date.now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId: null,
+        workspaceId: null,
+        action: "sudo.denied",
+        detail: {},
+      });
+      await deps.sender.reply(message.chat, message.id, "验证码无效或已过期。");
+      return;
+    }
+    deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId: null,
+      workspaceId: null,
+      action: "sudo.granted",
+      detail: { windowSeconds: deps.sudo.windowSeconds },
+    });
+    await deps.sender.reply(
+      message.chat,
+      message.id,
+      `已授权 ${deps.sudo.windowSeconds} 秒危险操作窗口。`,
+    );
   });
 
   commands.set("approvals", async ({ message }) => {

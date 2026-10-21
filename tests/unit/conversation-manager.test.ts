@@ -6,6 +6,7 @@ import { ConversationManager } from "../../src/conversation/manager.js";
 import { buildLogger } from "../../src/observability/logger.js";
 import { MessageSender } from "../../src/qq/sender.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
+import { WorkspaceManager } from "../../src/workspace/manager.js";
 import {
   FakeAgent,
   FakeOneBot,
@@ -29,7 +30,8 @@ async function setup(maxQueued = 3) {
   const onebot = new FakeOneBot();
   const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
   const sender = new MessageSender(onebot, config.qq, logger);
-  const manager = new ConversationManager(config, store, agent, sender, logger);
+  const workspaces = new WorkspaceManager({ config, store, logger });
+  const manager = new ConversationManager(config, store, agent, sender, logger, { workspaces });
   disposers.push(async () => {
     await manager.shutdown();
     store.close();
@@ -107,6 +109,47 @@ describe("ConversationManager", () => {
       sessionId: store.conversations.get("private:20000")?.sessionId,
       permissions,
     });
+  });
+
+  it("serializes runs from different chats that share a workspace", async () => {
+    const { config, agent, manager } = await setup();
+    config.users["20001"] = { role: "owner", projects: ["*"] };
+    agent.autoComplete = false;
+
+    await manager.submit(
+      makeIncomingMessage({
+        id: "a",
+        userId: 20000,
+        chat: { type: "private", userId: 20000, chatKey: "private:20000" },
+        text: "first",
+      }),
+      "demo",
+    );
+    await waitFor(() => agent.prompts.length === 1, 3000, "first prompt");
+    await manager.submit(
+      makeIncomingMessage({
+        id: "b",
+        userId: 20001,
+        chat: { type: "private", userId: 20001, chatKey: "private:20001" },
+        text: "second",
+      }),
+      "demo",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(agent.prompts).toHaveLength(1);
+    expect(manager.workspaceStatus("demo").workspace?.status).toBe("locked");
+
+    const firstSession = manager.status("private:20000").activeRun?.sessionId ?? "";
+    agent.complete(firstSession);
+    await waitFor(() => agent.prompts.length === 2, 3000, "second prompt after release");
+    const secondSession = manager.status("private:20001").activeRun?.sessionId ?? "";
+    agent.complete(secondSession);
+    await waitFor(
+      () => manager.workspaceStatus("demo").workspace?.status === "idle",
+      3000,
+      "workspace released",
+    );
   });
 
   it("reports a failed run to QQ", async () => {

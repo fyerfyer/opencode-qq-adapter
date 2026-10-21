@@ -1,6 +1,7 @@
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import type { AgentPermissionRequest, ApprovalDecision } from "../domain/permission.js";
+import type { WorkspaceDiffFile } from "../domain/workspace.js";
 import type {
   AgentEvent,
   AgentEventStatus,
@@ -170,6 +171,18 @@ export class OpenCodeAgent implements AgentPort {
       order: "desc",
     });
     return response.data.map(mapMessage);
+  }
+
+  async getDiff(sessionId: string): Promise<WorkspaceDiffFile[]> {
+    const client = await this.#service.getClient();
+    const files = await client.session.diff({ sessionID: sessionId });
+    return files.map((file) => ({
+      file: file.file,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      ...(file.patch.length > 0 ? { patch: file.patch } : {}),
+    }));
   }
 
   subscribe(listener: (event: AgentEvent) => void): () => void {

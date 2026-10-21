@@ -1,0 +1,29 @@
+{
+  "name": "opencode-qq-plugin",
+  "version": "0.1.0",
+  "description": "Send workspace images back to QQ from OpenCode",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./opencode-qq-plugin.ts"
+  },
+  "files": [
+    "opencode-qq-plugin.ts",
+    "v1-opencode-qq-plugin.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "qq",
+    "napcat"
+  ],
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.19.3",
+    "@types/node": "^22.18.12",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  }
+}

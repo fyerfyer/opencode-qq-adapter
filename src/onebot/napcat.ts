@@ -16,6 +16,12 @@ export interface NapCatClientLike {
     group_id: number;
     message: SendMessageSegment[];
   }): Promise<{ message_id: number }>;
+  get_image?(params: { file: string }): Promise<{
+    file: string;
+    url: string;
+    file_size: string;
+    file_name: string;
+  }>;
   upload_private_file(params: { user_id: number; file: string; name: string }): Promise<null>;
   upload_group_file(params: {
     group_id: number;
@@ -157,6 +163,23 @@ export class NapCatOneBotAdapter implements OneBotPort {
       return this.sendGroup(chat.groupId, withReply);
     }
     return this.sendPrivate(chat.userId, withReply);
+  }
+
+  async getImage(file: string): Promise<{ file: string; url: string; fileName: string }> {
+    const client = this.#requireClient();
+    if (client.get_image === undefined) {
+      throw new OneBotError("NapCat client does not expose get_image");
+    }
+    try {
+      const result = await this.#withTimeout(
+        client.get_image({ file }),
+        this.#config.action_timeout_ms,
+        "get_image",
+      );
+      return { file: result.file, url: result.url, fileName: result.file_name };
+    } catch (error) {
+      throw wrapActionError("get_image", error);
+    }
   }
 
   async uploadPrivateFile(userId: number, file: string, name: string): Promise<void> {
