@@ -41,7 +41,7 @@ export function createPrompt(): Prompt {
           `  ${index + 1}) ${option.label}${index === defaultIndex ? " (default)" : ""}`,
       );
       const answer = (
-        await rl.question(`${question}\n${lines.join("\n")}\n选择 [${defaultIndex + 1}]: `)
+        await rl.question(`${question}\n${lines.join("\n")}\nSelect [${defaultIndex + 1}]: `)
       ).trim();
       const index = answer.length === 0 ? defaultIndex : Number(answer) - 1;
       const selected = options[index];

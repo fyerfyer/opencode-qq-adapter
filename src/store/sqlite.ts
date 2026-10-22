@@ -234,7 +234,27 @@ export class SqliteStore implements StorePort {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
-    this.#db = new Database(path);
+    try {
+      this.#db = new Database(path);
+    } catch (error) {
+      if (isNativeBindingError(error)) {
+        throw new Error(
+          [
+            "SQLite 原生模块 better-sqlite3 没有正确安装（找不到 better_sqlite3.node）。",
+            "这通常发生在 npx 缓存不完整，或安装时跳过了 install script。",
+            "",
+            "修复方式：",
+            "  npm cache clean --force",
+            "  npm install -g opencode-qq-adapter",
+            "",
+            "如果仍然失败，请先安装构建工具，然后运行：",
+            "  npm rebuild better-sqlite3 --build-from-source",
+          ].join("\n"),
+          { cause: error },
+        );
+      }
+      throw error;
+    }
     this.#db.pragma("busy_timeout = 5000");
     this.#db.pragma("foreign_keys = ON");
     if (path !== ":memory:") {
@@ -926,4 +946,13 @@ function safeJson(value: unknown): string {
   } catch {
     return JSON.stringify({ error: "unserializable detail" });
   }
+}
+
+function isNativeBindingError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Could not locate the bindings file") ||
+    message.includes("better_sqlite3.node") ||
+    message.includes("Module did not self-register")
+  );
 }

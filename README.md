@@ -95,6 +95,14 @@ opencode-qq setup \
 --skip-plugin         不安装 OpenCode 插件
 ```
 
+如果 `npx` 报 `Could not locate the bindings file` 或 `better_sqlite3.node`，通常是 npx 缓存里跳过了原生模块安装：
+
+```bash
+npm cache clean --force
+npm install -g opencode-qq-adapter
+opencode-qq setup
+```
+
 Docker 模式只绑定 `127.0.0.1`，不会暴露到公网。扫码登录仍然需要手动完成：
 
 ```bash

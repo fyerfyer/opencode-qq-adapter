@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import semver from "semver";
 import { stringify as stringifyYaml } from "yaml";
 import { loadConfig } from "../config/loader.js";
 import {
@@ -7,8 +8,6 @@ import {
   defaultDataDir,
   resolveConfigPath,
 } from "../config/paths.js";
-import type { AppConfig } from "../config/schema.js";
-import { SqliteStore } from "../store/sqlite.js";
 import {
   backupFile,
   ensureDirectory,
@@ -284,6 +283,14 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
   const prompt = interactive ? createPrompt() : null;
 
   try {
+    output("");
+    output("OpenCode QQ Adapter setup");
+    output("==========================");
+    output("");
+    output(`Config file: ${configPath}`);
+    output(`Data directory: ${dataDir}`);
+    output("");
+
     if (existsSync(configPath) && options.force !== true) {
       throw new SetupError(
         "exists",
@@ -291,17 +298,54 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
       );
     }
 
+    output("[1/7] Checking runtime...");
+    if (!semver.satisfies(process.versions.node, ">=22.18.0")) {
+      throw new SetupError(
+        "unsupported",
+        `Node.js 22.18+ is required; current version is ${process.versions.node}.`,
+      );
+    }
+    output(`      Node.js ${process.versions.node}`);
+    try {
+      const result = await (options.runner ?? defaultRunner).run("opencode", ["--version"], {
+        timeoutMs: 5000,
+      });
+      output(`      OpenCode ${result.stdout.trim() || "detected"}`);
+    } catch {
+      warnings.push("OpenCode CLI was not found on PATH. Install it before starting the bridge.");
+    }
+    const sqliteError = await checkSqliteBinding();
+    if (sqliteError === null) {
+      output("      SQLite: OK");
+    } else {
+      output("      SQLite: missing native binding (see warning below)");
+      warnings.push(sqliteError);
+    }
+    output("");
+
+    output("[2/7] Owner and projects...");
     const ownerQq = options.ownerQq ?? (await askOwnerQq(prompt, options.yes === true));
     if (!isNumericQq(ownerQq)) {
       throw new SetupError("invalid", `Owner QQ must be a numeric QQ number, got: ${ownerQq}`);
     }
-
+    output(`      Owner QQ: ${ownerQq}`);
     const projects = await resolveProjects(prompt, options, cwd);
-    const napcat = await resolveNapcatMode(prompt, options, dataDir, configPath);
+    for (const project of projects) {
+      output(`      Project ${project.id}: ${project.path}`);
+    }
+    output("");
+
+    output("[3/7] Configuring NapCat...");
+    const napcat = await resolveNapcatMode(prompt, options, dataDir, configPath, output);
     const accessToken = napcat.accessToken;
     const bridgeToken = randomToken(24);
     const wsUrl = napcat.wsUrl;
+    output(`      NapCat mode: ${napcat.mode}`);
+    output(`      WebSocket:   ${wsUrl}`);
+    warnings.push(...napcat.warnings);
+    output("");
 
+    output("[4/7] Writing bridge config...");
     if (options.force === true) {
       const configBackup = backupFile(configPath);
       if (configBackup !== null) warnings.push(`Backed up previous config to ${configBackup}`);
@@ -314,7 +358,11 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     const envPath = join(dirname(configPath), ".env");
     writePublicFile(configPath, renderConfigYaml({ ownerQq, projects, dataDir }));
     writePrivateFile(envPath, renderEnvFile({ wsUrl, accessToken, bridgeToken }));
+    output(`      ${configPath}`);
+    output(`      ${envPath} (mode 0600)`);
+    output("");
 
+    output("[5/7] Installing OpenCode plugin...");
     let pluginPath: string | null = null;
     let bridgeConfigPath: string | null = null;
     if (options.skipPlugin !== true) {
@@ -328,13 +376,19 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
         pluginPath = installed.pluginPath;
         bridgeConfigPath = installed.bridgeConfigPath;
         warnings.push(...installed.warnings);
+        output(`      ${installed.pluginPath}`);
+        output(`      ${installed.bridgeConfigPath} (mode 0600)`);
       } catch (error) {
         warnings.push(
           `OpenCode plugin was not installed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+    } else {
+      output("      skipped (--skip-plugin)");
     }
+    output("");
 
+    output("[6/7] Validating configuration...");
     if (options.skipDoctor !== true) {
       const validation = await validateGeneratedConfig(configPath, {
         ...env,
@@ -343,14 +397,12 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
         QQ_BRIDGE_INTERNAL_TOKEN: bridgeToken,
       });
       warnings.push(...validation);
+      output("      OK");
+    } else {
+      output("      skipped (--skip-doctor)");
     }
-
-    if (options.yes !== true) {
-      output("");
-      output(`配置已写入：${configPath}`);
-      output(`环境文件：${envPath}`);
-      output(`数据目录：${dataDir}`);
-    }
+    output("");
+    output("[7/7] Setup complete.");
 
     return {
       configPath,
@@ -375,7 +427,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
 
 async function askOwnerQq(prompt: Prompt | null, yes: boolean): Promise<string> {
   if (prompt !== null) {
-    return prompt.ask("你的 QQ 号（bridge owner）");
+    return prompt.ask("Owner QQ number");
   }
   if (yes) {
     throw new SetupError("invalid", "Missing --owner-qq (required with --yes).");
@@ -397,10 +449,10 @@ async function resolveProjects(
 
   const projects: SetupProject[] = [];
   for (;;) {
-    const path = resolve(await prompt.ask("项目目录", projects.length === 0 ? cwd : ""));
-    const id = sanitizeProjectId(await prompt.ask("项目 ID", sanitizeProjectId(basename(path))));
+    const path = resolve(await prompt.ask("Project directory", projects.length === 0 ? cwd : ""));
+    const id = sanitizeProjectId(await prompt.ask("Project ID", sanitizeProjectId(basename(path))));
     projects.push({ id, path });
-    if (!(await prompt.confirm("再添加一个项目？", false))) break;
+    if (!(await prompt.confirm("Add another project?", false))) break;
     if (projects.length >= 10) break;
   }
   return validateProjects(projects);
@@ -431,6 +483,7 @@ async function resolveNapcatMode(
   options: SetupOptions,
   dataDir: string,
   configPath: string,
+  output: (line: string) => void,
 ): Promise<{
   mode: NapCatMode;
   accessToken: string;
@@ -455,11 +508,16 @@ async function resolveNapcatMode(
     if (prompt !== null) {
       const choices: Array<{ value: NapCatMode; label: string }> = [];
       if (dockerAvailable) {
-        choices.push({ value: "docker", label: "启动新的 NapCat Docker 容器（推荐）" });
+        choices.push({
+          value: "docker",
+          label: "Start a new NapCat Docker container (recommended)",
+        });
+      } else {
+        output("      Docker Compose is not available; skipping the Docker option.");
       }
-      choices.push({ value: "existing", label: "使用已经运行的 NapCat" });
-      choices.push({ value: "skip", label: "暂不配置，稍后手动填写" });
-      mode = await prompt.select("NapCat：", choices, 0);
+      choices.push({ value: "existing", label: "Use an existing NapCat" });
+      choices.push({ value: "skip", label: "Skip for now and configure manually" });
+      mode = await prompt.select("NapCat setup:", choices, 0);
     } else {
       mode = "skip";
     }
@@ -478,6 +536,7 @@ async function resolveNapcatMode(
         runner: options.runner,
         sleep: options.sleep,
         portAvailable: options.portAvailable ?? isPortAvailable,
+        onProgress: (line) => output(`      ${line}`),
       });
       return {
         mode,
@@ -490,9 +549,9 @@ async function resolveNapcatMode(
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      warnings.push(`NapCat Docker 启动失败：${message}`);
+      warnings.push(`NapCat Docker setup failed: ${message}`);
       warnings.push(
-        "已继续写入 bridge 配置。请修复 Docker 后重新运行 setup，或使用 existing 模式。",
+        "The bridge config will still be written. Fix Docker/ports and rerun setup, or use the existing NapCat mode.",
       );
       return {
         mode,
@@ -510,13 +569,16 @@ async function resolveNapcatMode(
     let wsUrl = options.napcatUrl;
     let accessToken = options.napcatToken;
     if (prompt !== null) {
-      wsUrl = await prompt.ask("NapCat WebSocket 地址", wsUrl ?? `ws://127.0.0.1:${wsPort}`);
-      accessToken = await prompt.ask("NapCat access token（未设置可直接回车）", accessToken ?? "");
+      wsUrl = await prompt.ask("NapCat WebSocket URL", wsUrl ?? `ws://127.0.0.1:${wsPort}`);
+      accessToken = await prompt.ask(
+        "NapCat access token (leave empty if not set)",
+        accessToken ?? "",
+      );
     }
     wsUrl ??= `ws://127.0.0.1:${wsPort}`;
     accessToken ??= "";
     if (accessToken.length === 0) {
-      warnings.push("NapCat access token 为空；仅建议在 loopback 测试环境使用。");
+      warnings.push("NapCat access token is empty; only use this for loopback testing.");
     }
     return {
       mode,
@@ -530,7 +592,9 @@ async function resolveNapcatMode(
   }
 
   const accessToken = options.napcatToken ?? randomToken(24);
-  warnings.push("未启动 NapCat。请稍后在 NapCat 中配置 WebSocket 服务器并填入 access token。");
+  warnings.push(
+    "NapCat was not started. Configure its WebSocket server with the token shown below.",
+  );
   return {
     mode: "skip",
     accessToken,
@@ -542,16 +606,36 @@ async function resolveNapcatMode(
   };
 }
 
+async function checkSqliteBinding(): Promise<string | null> {
+  try {
+    const module = await import("better-sqlite3");
+    const database = new module.default(":memory:");
+    database.close();
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      message.includes("Could not locate the bindings file") ||
+      message.includes("better_sqlite3.node")
+    ) {
+      return [
+        "SQLite native binding is missing. Fix it before starting the bridge:",
+        "  npm cache clean --force",
+        "  npm install -g opencode-qq-adapter",
+        "If it still fails, install build tools and run: npm rebuild better-sqlite3 --build-from-source",
+      ].join("\n");
+    }
+    return `SQLite check failed: ${message}`;
+  }
+}
+
 async function validateGeneratedConfig(
   configPath: string,
   env: NodeJS.ProcessEnv,
 ): Promise<string[]> {
-  const warnings: string[] = [];
-  let config: AppConfig;
   try {
     const loaded = await loadConfig(configPath, { checkPaths: true, env });
-    config = loaded.config;
-    warnings.push(...loaded.warnings);
+    return loaded.warnings;
   } catch (error) {
     throw new SetupError(
       "invalid",
@@ -559,45 +643,36 @@ async function validateGeneratedConfig(
       { cause: error },
     );
   }
-
-  const store = new SqliteStore(config.storage.database_path);
-  try {
-    if (!store.ping()) warnings.push("SQLite database check failed.");
-  } finally {
-    store.close();
-  }
-
-  return warnings;
 }
 
 export function formatSetupSummary(result: SetupResult): string[] {
   const lines: string[] = [];
   lines.push("");
-  lines.push("下一步：");
+  lines.push("Next steps:");
   if (result.napcatMode === "docker") {
     if (result.napcatStarted) {
-      lines.push("1. NapCat 已启动。打开 WebUI 扫码登录：");
+      lines.push("1. Open the NapCat WebUI and scan the QQ login QR code:");
       lines.push(`   ${result.webuiUrl ?? "http://127.0.0.1:6099/webui"}`);
-      lines.push("   如果扫码后 token 变化，请运行：docker logs -f opencode-qq-napcat");
+      lines.push("   If the token changes after login, run: docker logs -f opencode-qq-napcat");
     } else {
-      lines.push("1. NapCat Docker 未成功启动，请先修复 Docker/端口，再重新运行 setup。");
+      lines.push("1. NapCat Docker did not start. Fix Docker/ports and rerun setup.");
     }
   } else if (result.napcatMode === "existing") {
-    lines.push("1. 使用现有 NapCat；请确认其 WebSocket 服务器 token 与 .env 一致。");
+    lines.push("1. Using the existing NapCat. Verify its WebSocket token matches .env.");
   } else {
-    lines.push("1. 启动 NapCat，并在网络配置中添加 WebSocket 服务器：");
-    lines.push(`   地址：${result.napcatUrl}`);
-    lines.push(`   token：${result.napcatAccessToken || "(空)"}`);
+    lines.push("1. Start NapCat and add a WebSocket server in its network settings:");
+    lines.push(`   URL:   ${result.napcatUrl}`);
+    lines.push(`   Token: ${result.napcatAccessToken || "(empty)"}`);
   }
-  lines.push("2. 启动 OpenCode：opencode serve --service");
-  lines.push("   如果它已经在运行，执行 opencode service restart 让插件生效。");
-  lines.push("3. 启动 bridge：opencode-qq start");
-  lines.push("4. 在 QQ 私聊机器人发送：!ping");
+  lines.push("2. Start OpenCode: opencode serve --service");
+  lines.push("   If it is already running, run `opencode service restart` to load the plugin.");
+  lines.push("3. Start the bridge: opencode-qq start");
+  lines.push("4. Send `!ping` to the bot in a QQ private chat.");
   lines.push("");
-  lines.push(`配置：${result.configPath}`);
-  lines.push(`环境：${result.envPath}`);
-  if (result.pluginPath !== null) lines.push(`插件：${result.pluginPath}`);
-  if (result.webuiUrl !== null) lines.push(`NapCat WebUI：${result.webuiUrl}`);
+  lines.push(`Config:      ${result.configPath}`);
+  lines.push(`Environment: ${result.envPath}`);
+  if (result.pluginPath !== null) lines.push(`Plugin:      ${result.pluginPath}`);
+  if (result.webuiUrl !== null) lines.push(`NapCat UI:   ${result.webuiUrl}`);
   return lines;
 }
 

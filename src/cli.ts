@@ -83,7 +83,14 @@ export async function runCli(argv: string[]): Promise<void> {
       if (options.logLevel) config.logging.level = normalizeLogLevel(options.logLevel);
       const logger = buildLogger(config);
       for (const warning of loaded.warnings) logger.warn({ warning }, "Configuration warning");
-      const app = new App(config, { logger, configPath: loaded.path });
+      let app: App;
+      try {
+        app = new App(config, { logger, configPath: loaded.path });
+      } catch (error) {
+        logger.fatal({ err: error }, "Bridge initialization failed");
+        process.exitCode = 1;
+        return;
+      }
       let stopping = false;
       const shutdown = async (signal: string) => {
         if (stopping) return;
@@ -274,11 +281,15 @@ async function doctor(configPath: string): Promise<void> {
     report(true, `project ${id}`, project.path);
   }
 
-  const store = new SqliteStore(config.storage.database_path);
   try {
-    report(store.ping(), "database", config.storage.database_path);
-  } finally {
-    store.close();
+    const store = new SqliteStore(config.storage.database_path);
+    try {
+      report(store.ping(), "database", config.storage.database_path);
+    } finally {
+      store.close();
+    }
+  } catch (error) {
+    report(false, "database", error instanceof Error ? error.message : String(error));
   }
 
   const logger = buildLogger({ ...config, logging: { ...config.logging, level: "silent" } });

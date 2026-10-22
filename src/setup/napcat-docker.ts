@@ -31,6 +31,7 @@ export interface NapCatDockerOptions {
   sleep?: (ms: number) => Promise<void>;
   portAvailable?: (port: number) => Promise<boolean>;
   timeoutMs?: number;
+  onProgress?: (message: string) => void;
 }
 
 export interface NapCatDockerResult {
@@ -157,6 +158,7 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
   const runner = options.runner ?? defaultRunner;
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const progress = options.onProgress ?? (() => undefined);
   const wsPort = options.wsPort ?? 3001;
   const webuiPort = options.webuiPort ?? 6099;
   const warnings: string[] = [];
@@ -193,6 +195,9 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
   const composeCommand = await detectComposeCommand(runner).catch((error) => {
     throw new Error(error instanceof Error ? error.message : String(error), { cause: error });
   });
+  progress(
+    `Docker Compose detected: ${[composeCommand.command, ...composeCommand.prefix].join(" ")}`,
+  );
   const composeArgs = [...composeCommand.prefix, "-f", composePath];
 
   const container = await runner
@@ -205,7 +210,9 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
     .map((line) => line.trim())
     .includes("opencode-qq-napcat");
 
-  if (!containerExists) {
+  if (containerExists) {
+    progress("Reusing existing container: opencode-qq-napcat");
+  } else {
     const checkPort = options.portAvailable ?? isPortAvailable;
     const wsFree = await checkPort(wsPort);
     const webuiFree = await checkPort(webuiPort);
@@ -220,14 +227,17 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
         `NapCat ports are already in use (${busy}). Stop the other service, change the ports, or choose the existing NapCat mode.`,
       );
     }
+    progress(`Ports available: WebSocket ${wsPort}, WebUI ${webuiPort}`);
   }
 
+  progress("Starting NapCat container (this may download the image on first run)...");
   await runner.run(composeCommand.command, [...composeArgs, "up", "-d", "napcat"], {
     cwd: options.configDir,
     timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
   });
 
   const initFile = join(configPath, "napcat.json");
+  progress("Waiting for NapCat to initialize its config directory...");
   const ready = await waitForFile(initFile, options.timeoutMs ?? 60_000, sleep);
   if (!ready) warnings.push("NapCat config did not appear within 60s; check `docker logs`.");
   // The entrypoint copies the bundled config files on first start. Waiting for
@@ -239,11 +249,13 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
       `Existing NapCat OneBot config left untouched: ${oneBotPath}. Make sure its WebSocket token matches NAPCAT_ACCESS_TOKEN.`,
     );
   } else {
+    progress("Writing NapCat OneBot WebSocket config (token and port 3001)...");
     writePrivateFile(oneBotPath, generateOneBotConfig(options.accessToken));
   }
 
   // The container entrypoint may have copied default config files on first
   // start. Restarting after our write makes the OneBot settings effective.
+  progress("Restarting NapCat to apply the OneBot config...");
   await runner.run(composeCommand.command, [...composeArgs, "restart", "napcat"], {
     cwd: options.configDir,
     timeoutMs: 120_000,
