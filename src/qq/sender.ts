@@ -25,11 +25,20 @@ export class MessageSender {
     return first;
   }
 
-  async send(chat: ChatRef, text: string): Promise<OneBotSendResult> {
+  async send(
+    chat: ChatRef,
+    text: string,
+    options: { mention?: boolean } = {},
+  ): Promise<OneBotSendResult> {
     const chunks = this.#prepare(text);
     let first: OneBotSendResult = { messageId: "" };
     for (const [index, chunk] of chunks.entries()) {
-      const result = await this.#sendChunk(chat, chunk, null, index === 0);
+      const result = await this.#sendChunk(
+        chat,
+        chunk,
+        null,
+        index === 0 && options.mention !== false,
+      );
       if (index === 0) first = result;
     }
     return first;

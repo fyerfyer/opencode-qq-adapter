@@ -11,7 +11,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 config/config.yaml
+config/config.yaml.bak.*
 config/config.local.yaml
+config/napcat-compose.yaml
 
 data/
 var/

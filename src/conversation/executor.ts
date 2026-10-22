@@ -13,6 +13,15 @@ import { friendlyError, isSessionMissing } from "./errors.js";
 import { collectResponse, toPromptFiles } from "./response.js";
 import { type ActiveRun, RunStoppedError, type RunUsage } from "./types.js";
 
+interface ProgressState {
+  timer: NodeJS.Timeout | null;
+  interval: NodeJS.Timeout | null;
+  sending: Promise<void> | null;
+  messageId: string | null;
+  startedAt: number;
+  closed: boolean;
+}
+
 export interface RunHooks {
   workspaces: WorkspaceManager;
   bindSession(sessionId: string, active: ActiveRun): void;
@@ -50,6 +59,15 @@ export class RunExecutor {
   async execute(chatKey: string, active: ActiveRun): Promise<void> {
     const { record, message } = active;
     const started = Date.now();
+    let phaseStart = started;
+    const phases = {
+      queueWaitMs: Math.max(0, started - record.startedAt),
+      lockMs: 0,
+      sessionMs: 0,
+      promptMs: 0,
+      waitMs: 0,
+      collectMs: 0,
+    };
     let timeoutController: AbortController | null = null;
     let lease: WorkspaceLease | null = null;
     const progress = this.#startProgress(message);
@@ -68,6 +86,8 @@ export class RunExecutor {
         record.id,
         active.abort.signal,
       );
+      phases.lockMs = Date.now() - phaseStart;
+      phaseStart = Date.now();
       active.workspaceId = lease.id;
       active.workspacePath = lease.path;
       record.workspaceId = lease.id;
@@ -90,6 +110,8 @@ export class RunExecutor {
       if (active.permissions.length > 0) {
         await this.#agent.updatePermissions(session.id, active.permissions);
       }
+      phases.sessionMs = Date.now() - phaseStart;
+      phaseStart = Date.now();
       if (active.stopRequested) throw new RunStoppedError();
 
       let receipt: { messageId: string; created: number };
@@ -121,6 +143,8 @@ export class RunExecutor {
           ...(message.images.length > 0 ? { files: message.images.flatMap(toPromptFiles) } : {}),
         });
       }
+      phases.promptMs = Date.now() - phaseStart;
+      phaseStart = Date.now();
       if (active.stopRequested) throw new RunStoppedError();
 
       timeoutController = new AbortController();
@@ -146,6 +170,8 @@ export class RunExecutor {
       } finally {
         clearTimeout(timer);
       }
+      phases.waitMs = Date.now() - phaseStart;
+      phaseStart = Date.now();
 
       if (active.stopRequested || active.interrupted) {
         throw new RunStoppedError();
@@ -160,6 +186,7 @@ export class RunExecutor {
         receipt,
         active,
       );
+      phases.collectMs = Date.now() - phaseStart;
       if (result.error !== null) {
         throw new Error(result.error);
       }
@@ -181,6 +208,7 @@ export class RunExecutor {
           chatKey,
           sessionId: record.sessionId,
           durationMs: Date.now() - started,
+          phases,
           cost: usage?.cost,
         },
         "Run completed",
@@ -200,7 +228,10 @@ export class RunExecutor {
       this.#finish(record.id, "failed", { error: friendly });
       this.#hooks.onFinished?.(active, "failed", active.usage);
       this.#hooks.onRunFailed?.(active, friendly);
-      this.#logger.error({ err: error, runId: record.id, chatKey }, "Run failed");
+      this.#logger.error(
+        { err: error, runId: record.id, chatKey, phases, durationMs: Date.now() - started },
+        "Run failed",
+      );
       try {
         await this.#sender.reply(message.chat, message.id, `处理失败：${friendly}`);
       } catch (sendError) {
@@ -220,48 +251,69 @@ export class RunExecutor {
     }
   }
 
-  #startProgress(message: IncomingMessage): {
-    timer: NodeJS.Timeout | null;
-    sending: Promise<void> | null;
-    messageId: string | null;
-  } {
-    const state: {
-      timer: NodeJS.Timeout | null;
-      sending: Promise<void> | null;
-      messageId: string | null;
-    } = { timer: null, sending: null, messageId: null };
+  #startProgress(message: IncomingMessage): ProgressState {
+    const state: ProgressState = {
+      timer: null,
+      interval: null,
+      sending: null,
+      messageId: null,
+      startedAt: Date.now(),
+      closed: false,
+    };
     if (!this.#config.qq.progress_ack) return state;
 
     state.timer = setTimeout(() => {
       state.timer = null;
-      state.sending = this.#sender
-        .reply(message.chat, message.id, "⏳ 正在处理…")
-        .then((result) => {
-          state.messageId =
-            result.messageId !== null && result.messageId.length > 0 ? result.messageId : null;
-        })
-        .catch((error) => {
-          this.#logger.debug({ err: error, chatKey: message.chat.chatKey }, "Progress ack failed");
-        })
-        .finally(() => {
-          state.sending = null;
-        });
+      void this.#sendProgress(message, state, true);
+      const interval = this.#config.qq.progress_interval_ms;
+      if (interval > 0) {
+        state.interval = setInterval(() => {
+          void this.#sendProgress(message, state, false);
+        }, interval);
+        state.interval.unref?.();
+      }
     }, this.#config.qq.progress_delay_ms);
     state.timer.unref?.();
     return state;
   }
 
-  async #cleanupProgress(
+  async #sendProgress(
     message: IncomingMessage,
-    state: {
-      timer: NodeJS.Timeout | null;
-      sending: Promise<void> | null;
-      messageId: string | null;
-    },
+    state: ProgressState,
+    initial: boolean,
   ): Promise<void> {
+    if (state.closed || state.sending !== null) return;
+    const elapsed = Math.max(0, Math.round((Date.now() - state.startedAt) / 1000));
+    state.sending = (async () => {
+      if (!initial && state.messageId !== null) {
+        await this.#sender.delete(message.chat, state.messageId);
+        state.messageId = null;
+      }
+      const text = initial ? "⏳ 正在处理…" : `⏳ 仍在处理…（已 ${elapsed} 秒）`;
+      const result = initial
+        ? await this.#sender.reply(message.chat, message.id, text)
+        : await this.#sender.send(message.chat, text, { mention: false });
+      state.messageId =
+        result.messageId !== null && result.messageId.length > 0 ? result.messageId : null;
+    })()
+      .catch((error) => {
+        this.#logger.debug({ err: error, chatKey: message.chat.chatKey }, "Progress ack failed");
+      })
+      .finally(() => {
+        state.sending = null;
+      });
+    await state.sending;
+  }
+
+  async #cleanupProgress(message: IncomingMessage, state: ProgressState): Promise<void> {
+    state.closed = true;
     if (state.timer !== null) {
       clearTimeout(state.timer);
       state.timer = null;
+    }
+    if (state.interval !== null) {
+      clearInterval(state.interval);
+      state.interval = null;
     }
     if (state.sending !== null) {
       await state.sending.catch(() => undefined);

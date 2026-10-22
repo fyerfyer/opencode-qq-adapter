@@ -28,6 +28,10 @@ export async function runCli(argv: string[]): Promise<void> {
     .option("--owner-qq <qq>", "owner QQ number")
     .option("--project <id=path>", "project, repeatable", collectProject, [] as string[])
     .option("--napcat <mode>", "docker | existing | skip")
+    .option(
+      "--agent <id>",
+      "qq-code (create dedicated agent), default, or an existing OpenCode agent ID",
+    )
     .option("--napcat-url <url>", "existing NapCat WebSocket URL")
     .option("--napcat-token <token>", "NapCat access token")
     .option("--ws-port <port>", "NapCat WebSocket host port", parsePort, 3001)
@@ -45,6 +49,7 @@ export async function runCli(argv: string[]): Promise<void> {
           ownerQq: options.ownerQq,
           projects,
           napcat: parseNapCatMode(options.napcat),
+          agent: options.agent,
           napcatUrl: options.napcatUrl,
           napcatToken: options.napcatToken,
           wsPort: options.wsPort,
@@ -169,6 +174,7 @@ interface SetupCliOptions {
   ownerQq?: string;
   project: string[];
   napcat?: string;
+  agent?: string;
   napcatUrl?: string;
   napcatToken?: string;
   wsPort: number;

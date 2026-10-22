@@ -102,7 +102,13 @@ export async function formatStatus(
   }
   const last = status.recentRuns[0];
   if (last !== undefined) {
-    lines.push(`最近运行：${last.status} (${last.id})`);
+    const duration =
+      last.finishedAt === null
+        ? null
+        : Math.max(0, Math.round((last.finishedAt - last.startedAt) / 1000));
+    lines.push(
+      `最近运行：${last.status} (${last.id})${duration === null ? "" : ` · ${duration} 秒`}`,
+    );
   }
   return lines.join("\n");
 }

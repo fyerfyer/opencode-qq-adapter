@@ -22,6 +22,7 @@ async function runTempSetup(overrides: Parameters<typeof runSetup>[0] = {}) {
     ownerQq: "12345678",
     projects: [{ id: "demo", path: dir }],
     napcat: "skip",
+    agent: "default",
     yes: true,
     skipPlugin: true,
     output: () => undefined,
@@ -53,6 +54,48 @@ describe("setup wizard", () => {
     expect(loaded.config.qq.progress_ack).toBe(true);
   });
 
+  it("creates a dedicated qq-code agent and selects it in config", async () => {
+    const dir = await tempDir();
+    const xdg = join(dir, "xdg");
+    const result = await runSetup({
+      configPath: join(dir, "config.yaml"),
+      dataDir: join(dir, "data"),
+      ownerQq: "12345678",
+      projects: [{ id: "demo", path: dir }],
+      napcat: "skip",
+      agent: "qq-code",
+      yes: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      env: { ...process.env, XDG_CONFIG_HOME: xdg },
+      output: () => undefined,
+    });
+    expect(result.agentId).toBe("qq-code");
+    expect(result.agentPath).toBe(join(xdg, "opencode", "agents", "qq-code.md"));
+    expect(await readFile(result.agentPath ?? "", "utf8")).toContain("QQ remote coding agent");
+    const config = await readFile(join(dir, "config.yaml"), "utf8");
+    expect(config).toContain("default_agent: qq-code");
+  });
+
+  it("creates a missing project directory", async () => {
+    const dir = await tempDir();
+    const projectPath = join(dir, "new-project");
+    const result = await runSetup({
+      configPath: join(dir, "config.yaml"),
+      dataDir: join(dir, "data"),
+      ownerQq: "12345678",
+      projects: [{ id: "new", path: projectPath }],
+      napcat: "skip",
+      agent: "default",
+      yes: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      output: () => undefined,
+    });
+    expect((await stat(projectPath)).isDirectory()).toBe(true);
+    expect(result.projects[0]?.path).toBe(projectPath);
+  });
+
   it("refuses to overwrite an existing config without --force", async () => {
     const dir = await tempDir();
     const configPath = join(dir, "config.yaml");
@@ -64,6 +107,7 @@ describe("setup wizard", () => {
         ownerQq: "12345678",
         projects: [{ id: "demo", path: dir }],
         napcat: "skip",
+        agent: "default",
         yes: true,
         skipPlugin: true,
         output: () => undefined,
@@ -80,6 +124,7 @@ describe("setup wizard", () => {
       ownerQq: "12345678",
       projects: [{ id: "demo", path: dir }],
       napcat: "skip",
+      agent: "default",
       yes: true,
       force: true,
       skipPlugin: true,

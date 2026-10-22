@@ -238,6 +238,8 @@ const qqSchema = z
     /** Send a short "working" message for runs that exceed progress_delay_ms. */
     progress_ack: z.boolean().default(true),
     progress_delay_ms: z.number().int().min(0).max(600000).default(3000),
+    /** Refresh the transient progress message at this interval; 0 disables. */
+    progress_interval_ms: z.number().int().min(0).max(600000).default(30000),
   })
   .strict()
   .prefault({});

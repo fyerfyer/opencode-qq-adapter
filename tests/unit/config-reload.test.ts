@@ -65,6 +65,7 @@ describe("config hot reload", () => {
       ownerQq: "12345678",
       projects: [{ id: "demo", path: dir }],
       napcat: "skip",
+      agent: "default",
       yes: true,
       skipPlugin: true,
       output: () => undefined,

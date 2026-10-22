@@ -22,10 +22,11 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function setup(delayMs: number) {
+async function setup(delayMs: number, intervalMs = 30_000) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-progress-"));
   const config = makeTestConfig({ projectPath });
   config.qq.progress_delay_ms = delayMs;
+  config.qq.progress_interval_ms = intervalMs;
   const store = new SqliteStore(":memory:");
   const agent = new FakeAgent();
   const onebot = new FakeOneBot();
@@ -60,6 +61,24 @@ describe("progress feedback", () => {
     );
     await waitFor(() => onebot.deleted.length === 1, 2000, "progress deletion");
     expect(onebot.texts().some((text) => text.includes("正在处理"))).toBe(true);
+  });
+
+  it("refreshes a long-running task with elapsed time", async () => {
+    const { agent, onebot, manager } = await setup(5, 20);
+    agent.autoComplete = false;
+    await manager.submit(makeIncomingMessage({ text: "slow" }), "demo");
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("仍在处理")),
+      2000,
+      "progress refresh",
+    );
+    agent.complete(manager.status("private:20000").activeRun?.sessionId ?? "");
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("fake answer")),
+      3000,
+      "final answer",
+    );
+    await waitFor(() => onebot.deleted.length >= 2, 2000, "progress cleanup");
   });
 
   it("does not send a progress ack for a fast run", async () => {

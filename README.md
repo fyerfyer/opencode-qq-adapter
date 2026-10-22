@@ -88,6 +88,9 @@ opencode-qq setup \
 --owner-qq <qq>       owner QQ
 --project <id=path>   项目，可重复
 --napcat docker|existing|skip
+--agent qq-code      创建/更新独立的 qq-code agent（推荐）
+--agent default      使用 OpenCode 默认 agent
+--agent <existing>   使用已有的 OpenCode agent ID
 --napcat-url <url>    已有 NapCat 的 WS 地址
 --napcat-token <tok>  NapCat access token
 --yes                 非交互
@@ -101,6 +104,53 @@ opencode-qq setup \
 npm cache clean --force
 npm install -g opencode-qq-adapter
 opencode-qq setup
+```
+
+`npx` 也不适合长期运行 bridge：它可能每次重新安装依赖，并卡在 npm audit 网络请求。推荐先全局安装或直接使用源码：
+
+```bash
+# 从本地 tarball 安装
+npm install -g ./opencode-qq-adapter-0.1.1.tgz
+opencode-qq start
+
+# 或在源码目录
+pnpm build
+pnpm start
+```
+
+如果只是临时用 npx 调试，可以关闭 audit/fund：
+
+```bash
+npm_config_audit=false npm_config_fund=false \
+  npx -y -p ./opencode-qq-adapter-0.1.1.tgz opencode-qq start
+```
+
+### OpenCode agent
+
+OpenCode V2 支持全局 Markdown agent。`setup` 默认会创建：
+
+```text
+~/.config/opencode/agents/qq-code.md
+```
+
+它包含：
+
+- `mode: primary`
+- QQ 场景的简洁回复提示
+- `external_directory`、`.env`、`sudo` 的额外禁止规则
+- 通过 `qq_send_image` 发图的提示
+
+如果不想创建独立 agent：
+
+```bash
+opencode-qq setup --agent default          # 使用 OpenCode 默认 agent
+opencode-qq setup --agent build            # 使用已有的 build agent
+```
+
+也可以使用任意已有 agent ID。创建 agent 后需要重启 OpenCode service：
+
+```bash
+opencode service restart
 ```
 
 Docker 模式只绑定 `127.0.0.1`，不会暴露到公网。扫码登录仍然需要手动完成：
@@ -481,9 +531,29 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 qq:
   progress_ack: true
   progress_delay_ms: 3000
+  progress_interval_ms: 30000
 ```
 
-超过延迟仍未完成时发送一条 `⏳ 正在处理…`，最终回答发出后尝试删除。设置 `progress_ack: false` 可关闭。
+超过延迟仍未完成时发送一条 `⏳ 正在处理…`，之后按间隔更新为 `⏳ 仍在处理…（已 N 秒）`，最终回答发出后尝试删除。设置 `progress_ack: false` 可关闭，`progress_interval_ms: 0` 可只保留首条提示。
+
+### 为什么 QQ 回复比 OpenCode TUI 慢
+
+bridge 只负责把 prompt 投递给 OpenCode，然后等最终结果；TUI 则能看到逐 token 流式输出。实际耗时通常来自 OpenCode/provider，而不是 QQ 传输。可以从以下位置排查：
+
+```bash
+opencode service status
+opencode api get /api/info
+tail -n 200 ~/.local/share/opencode/log/opencode.log
+```
+
+常见原因：
+
+- provider 网络超时或 `provider.internal` 上游不可用；
+- OpenCode 启动时拉取 provider config / models.dev 超时；
+- 项目里配置了 context7、playwright 等 MCP，每次 session 初始化都要等待连接或超时；
+- 大体量系统提示、工具定义或项目文件导致输入 token 很多。
+
+bridge 的 JSON 日志现在会记录 `phases.lockMs`、`phases.sessionMs`、`phases.promptMs`、`phases.waitMs`、`phases.collectMs`，可以直接看时间花在哪一段。`!status` 也会显示最近一次 run 的总耗时。
 
 校验配置：
 
