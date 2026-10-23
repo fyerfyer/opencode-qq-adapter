@@ -1,14 +1,19 @@
 import type { AddressInfo } from "node:net";
 import { type ServerType, serve } from "@hono/node-server";
-import { Hono } from "hono";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
 import { z } from "zod";
+import { createAdminApi } from "../admin/routes.js";
+import type { AdminService } from "../admin/service.js";
+import { adminBuildHint, adminDistRoot, readAdminIndex } from "../admin/ui.js";
 import type { AppConfig } from "../config/schema.js";
 import { PluginMediaError, type PluginMediaService } from "../media/plugin.js";
 import type { HealthService } from "../observability/health.js";
 import { bearerToken, tokenMatches } from "../util/token.js";
+import { VERSION } from "../version.js";
 
-const sendImageBody = z
+const sendMediaBody = z
   .object({
     sessionId: z.string().min(1),
     path: z.string().min(1),
@@ -18,6 +23,7 @@ const sendImageBody = z
 
 export interface InternalHttpOptions {
   pluginMedia?: PluginMediaService;
+  admin?: AdminService;
 }
 
 export class InternalHttpServer {
@@ -25,6 +31,7 @@ export class InternalHttpServer {
   readonly #health: HealthService;
   readonly #logger: Logger;
   readonly #pluginMedia: PluginMediaService | undefined;
+  readonly #admin: AdminService | undefined;
   #server: ServerType | null = null;
   #port = 0;
 
@@ -38,6 +45,7 @@ export class InternalHttpServer {
     this.#health = health;
     this.#logger = logger;
     this.#pluginMedia = options.pluginMedia;
+    this.#admin = options.admin;
   }
 
   get port(): number {
@@ -51,7 +59,7 @@ export class InternalHttpServer {
     app.get("/", (context) =>
       context.json({
         name: "opencode-qq-adapter",
-        version: "0.1.0",
+        version: VERSION,
         health: this.#config.server.health_path,
       }),
     );
@@ -115,7 +123,7 @@ export class InternalHttpServer {
       } catch {
         return context.json({ error: "invalid_json" }, 400);
       }
-      const parsed = sendImageBody.safeParse(body);
+      const parsed = sendMediaBody.safeParse(body);
       if (!parsed.success) {
         return context.json(
           { error: "invalid_request", details: parsed.error.issues.map((issue) => issue.message) },
@@ -133,15 +141,39 @@ export class InternalHttpServer {
         return context.json({ error: "internal_error" }, 500);
       }
     });
-    app.post("/internal/plugin/send-file", (context) =>
-      context.json(
-        {
-          error: "not_implemented",
-          message: "File forwarding is planned for milestone M4.",
-        },
-        501,
-      ),
-    );
+    app.post("/internal/plugin/send-file", async (context) => {
+      const plugin = this.#pluginMedia;
+      if (plugin === undefined) {
+        return context.json({ error: "plugin_media_disabled" }, 503);
+      }
+      let body: unknown;
+      try {
+        body = await context.req.json();
+      } catch {
+        return context.json({ error: "invalid_json" }, 400);
+      }
+      const parsed = sendMediaBody.safeParse(body);
+      if (!parsed.success) {
+        return context.json(
+          { error: "invalid_request", details: parsed.error.issues.map((issue) => issue.message) },
+          400,
+        );
+      }
+      try {
+        const result = await plugin.sendFile(parsed.data);
+        return context.json({ ok: true, messageId: result.messageId });
+      } catch (error) {
+        if (error instanceof PluginMediaError) {
+          return context.json({ error: "media_rejected", message: error.message }, error.status);
+        }
+        this.#logger.error({ err: error }, "Plugin send-file failed");
+        return context.json({ error: "internal_error" }, 500);
+      }
+    });
+
+    if (this.#config.admin.enabled && this.#admin !== undefined) {
+      this.#mountAdmin(app, this.#admin);
+    }
 
     app.notFound((context) => context.json({ error: "not_found" }, 404));
     app.onError((error, context) => {
@@ -171,6 +203,54 @@ export class InternalHttpServer {
       { host: this.#config.server.host, port: this.#port, health: this.#config.server.health_path },
       "Internal HTTP server listening",
     );
+  }
+
+  #mountAdmin(app: Hono, admin: AdminService): void {
+    const distRoot = adminDistRoot();
+    app.use("/admin/*", async (context, next) => {
+      context.header("X-Content-Type-Options", "nosniff");
+      context.header("X-Frame-Options", "DENY");
+      context.header("Referrer-Policy", "no-referrer");
+      context.header("X-Robots-Tag", "noindex, nofollow");
+      context.header(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      );
+      await next();
+    });
+
+    app.route(
+      "/admin/api",
+      createAdminApi({
+        service: admin,
+        config: this.#config,
+        version: VERSION,
+        logger: this.#logger,
+      }),
+    );
+
+    app.use("/admin/assets/*", async (context, next) => {
+      context.header("Cache-Control", "public, max-age=31536000, immutable");
+      await next();
+    });
+    app.use("/admin/assets/*", serveStatic({ root: distRoot }));
+    app.get("/admin/assets/*", (context) => context.json({ error: "asset_not_found" }, 404));
+
+    const serveIndex = async (context: Context): Promise<Response> => {
+      if (!this.#config.admin.enabled) return context.notFound();
+      const html = await readAdminIndex();
+      if (html === null) {
+        return context.html(adminBuildHint(), 503);
+      }
+      context.header("Cache-Control", "no-store");
+      return context.html(html);
+    };
+    app.get("/admin", serveIndex);
+    app.get("/admin/", serveIndex);
+    app.get("/admin/*", serveIndex);
+    app.get("/favicon.ico", (context) => context.redirect("/admin/favicon.svg", 302));
+
+    this.#logger.info({ path: "/admin", dist: distRoot }, "Admin WebUI enabled");
   }
 
   async stop(): Promise<void> {

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
+import type { AdminSessionInput, AdminSessionRecord, AdminUserRecord } from "../domain/admin.js";
 import type { ApprovalRecord, ApprovalStatus, ApprovalUpdate } from "../domain/approval.js";
 import type { AuditEntry, AuditRecord, DailyUsage } from "../domain/audit.js";
 import type {
@@ -95,6 +96,25 @@ interface UsageRow {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+}
+
+interface AdminUserRow {
+  username: string;
+  password_hash: string;
+  must_change_password: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface AdminSessionRow {
+  token_hash: string;
+  username: string;
+  csrf_token: string;
+  created_at: number;
+  expires_at: number;
+  last_seen_at: number;
+  user_agent: string | null;
+  ip: string | null;
 }
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
@@ -223,6 +243,31 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
       );
       CREATE INDEX IF NOT EXISTS workspaces_project_status ON workspaces(project_id, status);
       CREATE INDEX IF NOT EXISTS workspaces_lease ON workspaces(lease_expires_at);
+    `,
+  },
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS admin_users (
+        username TEXT PRIMARY KEY,
+        password_hash TEXT NOT NULL,
+        must_change_password INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_sessions (
+        token_hash TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        csrf_token TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        user_agent TEXT,
+        ip TEXT
+      );
+      CREATE INDEX IF NOT EXISTS admin_sessions_expires ON admin_sessions(expires_at);
+      CREATE INDEX IF NOT EXISTS admin_sessions_user ON admin_sessions(username);
     `,
   },
 ];
@@ -435,6 +480,12 @@ export class SqliteStore implements StorePort {
       const rows = this.#db
         .prepare("SELECT * FROM runs WHERE chat_key = ? ORDER BY started_at DESC LIMIT ?")
         .all(chatKey, limit) as RunRow[];
+      return rows.map(mapRun);
+    },
+    listRecentAll: (limit: number): RunRecord[] => {
+      const rows = this.#db
+        .prepare("SELECT * FROM runs ORDER BY started_at DESC LIMIT ?")
+        .all(limit) as RunRow[];
       return rows.map(mapRun);
     },
     listByStatus: (status: RunStatus): RunRecord[] => {
@@ -774,6 +825,12 @@ export class SqliteStore implements StorePort {
         .get(day, projectId, day, projectId) as UsageRow;
       return mapUsage({ ...row, actor_qq: 0 });
     },
+    listDaily: (day: string): DailyUsage[] => {
+      const rows = this.#db
+        .prepare("SELECT * FROM usage_daily WHERE day = ? ORDER BY cost_usd DESC, prompts DESC")
+        .all(day) as UsageRow[];
+      return rows.map(mapUsage);
+    },
     recordEvent: (ts: number, actorQq: number, projectId: string, kind: string): void => {
       this.#db
         .prepare("INSERT INTO usage_events (ts, actor_qq, project_id, kind) VALUES (?, ?, ?, ?)")
@@ -802,6 +859,87 @@ export class SqliteStore implements StorePort {
     },
     prune: (before: number): number => {
       const result = this.#db.prepare("DELETE FROM seen_messages WHERE seen_at < ?").run(before);
+      return result.changes;
+    },
+  };
+
+  admin = {
+    getUser: (username: string): AdminUserRecord | null => {
+      const row = this.#db.prepare("SELECT * FROM admin_users WHERE username = ?").get(username) as
+        | AdminUserRow
+        | undefined;
+      return row ? mapAdminUser(row) : null;
+    },
+    createUser: (record: AdminUserRecord): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO admin_users
+             (username, password_hash, must_change_password, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          record.username,
+          record.passwordHash,
+          record.mustChangePassword ? 1 : 0,
+          record.createdAt,
+          record.updatedAt,
+        );
+    },
+    updatePassword: (
+      username: string,
+      passwordHash: string,
+      mustChange: boolean,
+      now: number,
+    ): void => {
+      this.#db
+        .prepare(
+          `UPDATE admin_users
+           SET password_hash = ?, must_change_password = ?, updated_at = ?
+           WHERE username = ?`,
+        )
+        .run(passwordHash, mustChange ? 1 : 0, now, username);
+    },
+    createSession: (record: AdminSessionInput): void => {
+      this.#db
+        .prepare(
+          `INSERT INTO admin_sessions
+             (token_hash, username, csrf_token, created_at, expires_at, last_seen_at, user_agent, ip)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          record.tokenHash,
+          record.username,
+          record.csrfToken,
+          record.createdAt,
+          record.expiresAt,
+          record.createdAt,
+          record.userAgent,
+          record.ip,
+        );
+    },
+    getSession: (tokenHash: string): AdminSessionRecord | null => {
+      const row = this.#db
+        .prepare("SELECT * FROM admin_sessions WHERE token_hash = ?")
+        .get(tokenHash) as AdminSessionRow | undefined;
+      return row ? mapAdminSession(row) : null;
+    },
+    touchSession: (tokenHash: string, lastSeenAt: number, expiresAt: number): void => {
+      this.#db
+        .prepare("UPDATE admin_sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?")
+        .run(lastSeenAt, expiresAt, tokenHash);
+    },
+    deleteSession: (tokenHash: string): void => {
+      this.#db.prepare("DELETE FROM admin_sessions WHERE token_hash = ?").run(tokenHash);
+    },
+    deleteSessions: (username?: string): number => {
+      const result =
+        username === undefined
+          ? this.#db.prepare("DELETE FROM admin_sessions").run()
+          : this.#db.prepare("DELETE FROM admin_sessions WHERE username = ?").run(username);
+      return result.changes;
+    },
+    pruneSessions: (now: number): number => {
+      const result = this.#db.prepare("DELETE FROM admin_sessions WHERE expires_at < ?").run(now);
       return result.changes;
     },
   };
@@ -902,6 +1040,29 @@ function mapAudit(row: AuditRow): AuditRecord {
     workspaceId: row.workspace_id,
     action: row.action,
     detail: parseJson(row.detail_json),
+  };
+}
+
+function mapAdminUser(row: AdminUserRow): AdminUserRecord {
+  return {
+    username: row.username,
+    passwordHash: row.password_hash,
+    mustChangePassword: row.must_change_password === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapAdminSession(row: AdminSessionRow): AdminSessionRecord {
+  return {
+    tokenHash: row.token_hash,
+    username: row.username,
+    csrfToken: row.csrf_token,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    lastSeenAt: row.last_seen_at,
+    userAgent: row.user_agent,
+    ip: row.ip,
   };
 }
 

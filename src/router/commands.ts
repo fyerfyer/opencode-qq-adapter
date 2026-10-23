@@ -283,7 +283,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       await deps.sender.reply(
         message.chat,
         message.id,
-        "用法：!approve ID once|always|reject\n也可以直接引用审批消息回复 1/2/3。",
+        "用法：!approve ID once\n     !approve ID always\n     !approve ID reject\n也可以直接引用审批消息回复 1/2/3。",
       );
       return;
     }

@@ -105,6 +105,31 @@ describe("PluginMediaService", () => {
     ).rejects.toMatchObject({ status: 415 });
   });
 
+  it("sends a workspace file and caption to the conversation", async () => {
+    const { projectPath, onebot, service } = await setup();
+    await writeFile(join(projectPath, "computer-jokes.md"), "# jokes\n");
+    const result = await service.sendFile({
+      sessionId: "ses_1",
+      path: "computer-jokes.md",
+      caption: "final report",
+    });
+    expect(result.messageId).toBe("");
+    expect(onebot.uploads.at(-1)).toMatchObject({
+      kind: "private",
+      name: "computer-jokes.md",
+    });
+    expect(onebot.uploads.at(-1)?.file.startsWith("base64://")).toBe(true);
+    expect(onebot.texts()).toContain("final report");
+  });
+
+  it("rejects sensitive files", async () => {
+    const { projectPath, service } = await setup();
+    await writeFile(join(projectPath, ".env"), "SECRET=1\n");
+    await expect(service.sendFile({ sessionId: "ses_1", path: ".env" })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
   it("maps child sessions to their parent conversation", async () => {
     const { projectPath, agent, onebot, service } = await setup();
     await writeFile(join(projectPath, "chart.png"), PNG);

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { loadConfig } from "../../src/config/loader.js";
 import { parseEnvFile } from "../../src/config/paths.js";
 import type { SetupError } from "../../src/setup/files.js";
 import { installOpenCodePlugin } from "../../src/setup/plugin.js";
-import { runSetup } from "../../src/setup/wizard.js";
+import { formatSetupSummary, runSetup } from "../../src/setup/wizard.js";
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "qq-setup-"));
@@ -38,6 +38,8 @@ describe("setup wizard", () => {
     const env = parseEnvFile(envSource);
     expect(env.NAPCAT_ACCESS_TOKEN).toBeTruthy();
     expect(env.QQ_BRIDGE_INTERNAL_TOKEN).toBeTruthy();
+    expect(env.OPENCODE_QQ_ADMIN_PASSWORD).toBe(result.adminPassword);
+    expect(result.adminPassword).toBeTruthy();
     expect(result.napcatMode).toBe("skip");
 
     const envMode = (await stat(result.envPath)).mode & 0o777;
@@ -51,7 +53,40 @@ describe("setup wizard", () => {
     expect(loaded.config.projects.demo?.path).toBe(result.projects[0]?.path);
     expect(loaded.config.default_project).toBe("demo");
     expect(loaded.config.storage.database_path.startsWith(result.dataDir)).toBe(true);
-    expect(loaded.config.qq.progress_ack).toBe(true);
+    expect(loaded.config.qq.progress_ack).toBe(false);
+    expect(loaded.config.admin.enabled).toBe(true);
+    expect(loaded.config.admin.allow_remote).toBe(false);
+    expect(result.adminUrl).toBe("http://127.0.0.1:8787/admin");
+    expect(formatSetupSummary(result).join("\n")).toContain(result.adminUrl);
+  });
+
+  it("does not generate an admin password when the database already exists", async () => {
+    const dir = await tempDir();
+    const dataDir = join(dir, "data");
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(dataDir, "opencode-qq.db"), "");
+    const result = await runSetup({
+      configPath: join(dir, "config.yaml"),
+      dataDir,
+      ownerQq: "12345678",
+      projects: [{ id: "demo", path: dir }],
+      napcat: "skip",
+      agent: "default",
+      yes: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      output: () => undefined,
+    });
+    expect(result.adminPassword).toBeNull();
+    const env = parseEnvFile(await readFile(result.envPath, "utf8"));
+    expect(env.OPENCODE_QQ_ADMIN_PASSWORD).toBeUndefined();
+  });
+
+  it("accepts an explicit first-run admin password", async () => {
+    const { result } = await runTempSetup({ adminPassword: "explicit-admin-password" });
+    expect(result.adminPassword).toBe("explicit-admin-password");
+    const env = parseEnvFile(await readFile(result.envPath, "utf8"));
+    expect(env.OPENCODE_QQ_ADMIN_PASSWORD).toBe("explicit-admin-password");
   });
 
   it("creates a dedicated qq-code agent and selects it in config", async () => {

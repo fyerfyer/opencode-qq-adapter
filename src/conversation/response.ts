@@ -22,15 +22,18 @@ export async function collectResponse(
     userIndex >= 0
       ? messages.slice(0, userIndex)
       : messages.filter((entry) => entry.created >= receipt.created);
-  const assistant = relevant.filter((entry) => entry.type === "assistant").reverse();
+  // OpenCode message history is requested newest-first. Keep that order so the
+  // first non-empty assistant message is the final answer.
+  const assistant = relevant.filter((entry) => entry.type === "assistant");
   if (assistant.length === 0) {
     return { text: active.partialText, error: null, usage: active.usage };
   }
-  const texts = assistant.map((entry) => entry.text.trim()).filter((entry) => entry.length > 0);
+  const finalText =
+    assistant.find((entry) => entry.text.trim().length > 0)?.text.trim() ?? active.partialText;
   const firstError = assistant.find((entry) => entry.error !== null)?.error ?? null;
   const usage = sumUsage(assistant);
   return {
-    text: texts.join("\n\n"),
+    text: finalText,
     error: firstError,
     usage: usage ?? active.usage,
   };

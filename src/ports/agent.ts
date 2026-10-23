@@ -104,6 +104,7 @@ export interface AgentPort {
   health(force?: boolean): Promise<AgentHealth>;
   createSession(input: AgentSessionInput): Promise<AgentSession>;
   getSession(sessionId: string): Promise<AgentSession | null>;
+  deleteSession(sessionId: string): Promise<void>;
   prompt(input: AgentPromptInput): Promise<AgentPromptReceipt>;
   waitForCompletion(sessionId: string, signal?: AbortSignal): Promise<void>;
   interrupt(sessionId: string): Promise<boolean>;

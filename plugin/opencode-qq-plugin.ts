@@ -1,6 +1,6 @@
 /**
- * OpenCode V2 plugin that lets an agent send an image back to the QQ chat that
- * owns the current session.
+ * OpenCode V2 plugin that lets an agent send an image or file back to the QQ
+ * chat that owns the current session.
  *
  * Install by copying/symlinking this file into one of OpenCode's plugin
  * directories (`~/.config/opencode/plugins/` or `.opencode/plugins/`), and set
@@ -21,6 +21,11 @@ interface BridgeConfig {
 }
 
 interface SendImageInput {
+  path: string;
+  caption?: string;
+}
+
+interface SendFileInput {
   path: string;
   caption?: string;
 }
@@ -147,6 +152,50 @@ export default {
           return {
             content: `Image sent to the QQ conversation${result.messageId ? ` (message ${result.messageId})` : ""}.`,
           };
+        },
+      });
+
+      editor.add({
+        name: "qq_send_file",
+        description:
+          "Send a file back to the QQ conversation that is using this session. " +
+          "The path must be inside the current workspace; prefer a relative path. " +
+          "Use this for Markdown reports, generated documents, archives, or other files " +
+          "that the user asked to receive. Do not send .env files, secrets, or .git internals.",
+        input: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description:
+                "File path inside the workspace (relative paths are resolved from the workspace)",
+            },
+            caption: {
+              type: "string",
+              description: "Optional short caption sent after the file",
+            },
+          },
+          required: ["path"],
+          additionalProperties: false,
+        },
+        async execute(rawInput, context) {
+          const input = rawInput as SendFileInput;
+          if (typeof input.path !== "string" || input.path.length === 0) {
+            throw new Error("path is required");
+          }
+          if (typeof context.sessionID !== "string" || context.sessionID.length === 0) {
+            throw new Error("OpenCode did not provide a session ID for this tool call");
+          }
+          await post(
+            "/internal/plugin/send-file",
+            {
+              sessionId: context.sessionID,
+              path: input.path,
+              ...(typeof input.caption === "string" ? { caption: input.caption } : {}),
+            },
+            context.signal,
+          );
+          return { content: "File sent to the QQ conversation." };
         },
       });
     });

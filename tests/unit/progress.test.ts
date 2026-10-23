@@ -25,6 +25,7 @@ afterEach(async () => {
 async function setup(delayMs: number, intervalMs = 30_000) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-progress-"));
   const config = makeTestConfig({ projectPath });
+  config.qq.progress_ack = true;
   config.qq.progress_delay_ms = delayMs;
   config.qq.progress_interval_ms = intervalMs;
   const store = new SqliteStore(":memory:");

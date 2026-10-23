@@ -51,6 +51,7 @@ security:
   max_images_per_message: 4
   max_image_bytes: 10485760
   max_outbound_image_bytes: 20971520
+  max_outbound_file_bytes: 52428800
   max_queued_prompts: 3
   # Normally image URLs must be public. Enable only for a local test CDN.
   allow_private_image_urls: false
@@ -174,6 +175,16 @@ notifications:
     on_run_failure: true
     on_budget_exceeded: true
 
+admin:
+  # Local management UI at http://127.0.0.1:8787/admin
+  # The first start generates a one-time password and prints it to the log.
+  # Use `opencode-qq admin reset-password` if you miss it.
+  enabled: true
+  allow_remote: false
+  trust_proxy: false
+  session_hours: 12
+  login_attempts: 5
+
 logging:
   level: info
   audit_retention_days: 90
@@ -186,7 +197,7 @@ logging:
 
 features:
   images: true # inbound QQ images + qq_send_image plugin
-  files: false
+  files: true
   worktrees: false
   forms: false
   metrics: false
@@ -197,7 +208,7 @@ qq:
   reply_to_message: true
   mention_sender_in_group: true
   # Send a short transient "working" message for slow runs, then delete it.
-  progress_ack: true
+  progress_ack: false
   progress_delay_ms: 3000
   progress_interval_ms: 30000
 

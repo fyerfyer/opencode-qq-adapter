@@ -1,4 +1,6 @@
 import type { Logger } from "pino";
+import type { AdminBootstrap } from "./admin/auth.js";
+import { AdminService } from "./admin/service.js";
 import { ApprovalBroker } from "./approval/broker.js";
 import { loadConfig } from "./config/loader.js";
 import { envFilesForConfig, loadEnvFiles } from "./config/paths.js";
@@ -42,6 +44,11 @@ export interface AppDependencies {
   media?: InboundMediaService;
   pluginMedia?: PluginMediaService;
   notifier?: OwnerNotifier;
+  admin?: AdminService;
+  /** One-time bootstrap password for the local admin UI (tests / automation). */
+  adminPassword?: string;
+  /** Override the OpenCode agent prompt directory (tests). */
+  promptRoot?: string;
 }
 
 export class App {
@@ -63,6 +70,7 @@ export class App {
   readonly approvals: ApprovalBroker;
   readonly router: MessageRouter;
   readonly health: HealthService;
+  readonly admin: AdminService;
   readonly http: InternalHttpServer;
 
   readonly #configPath: string | null;
@@ -155,8 +163,29 @@ export class App {
       logger: this.logger,
       version: VERSION,
     });
+    const initialAdminPassword =
+      dependencies.adminPassword ?? process.env.OPENCODE_QQ_ADMIN_PASSWORD;
+    this.admin =
+      dependencies.admin ??
+      new AdminService({
+        config,
+        configPath: this.#configPath,
+        version: VERSION,
+        store: this.store,
+        health: this.health,
+        agent: this.agent,
+        conversations: this.conversations,
+        audit: this.audit,
+        logger: this.logger,
+        reloadConfig: () => this.reloadConfig(),
+        ...(initialAdminPassword !== undefined && initialAdminPassword.length > 0
+          ? { initialPassword: initialAdminPassword }
+          : {}),
+        ...(dependencies.promptRoot !== undefined ? { promptRoot: dependencies.promptRoot } : {}),
+      });
     this.http = new InternalHttpServer(config, this.health, this.logger, {
       pluginMedia: this.pluginMedia,
+      admin: this.admin,
     });
   }
 
@@ -184,7 +213,9 @@ export class App {
     this.#unsubscribeOneBot = this.onebot.onEvent((event) => this.#onOneBotEvent(event));
     this.ownership.start();
     try {
+      const adminBootstrap = this.config.admin.enabled ? await this.admin.start() : null;
       await this.http.start();
+      if (adminBootstrap !== null) this.#announceAdmin(adminBootstrap);
       await this.agent.start();
       this.approvals.start();
       await this.onebot.start();
@@ -261,6 +292,7 @@ export class App {
     }
 
     const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
+    this.admin.updateSettings();
     this.logger.level = this.config.logging.level;
     this.audit.record({
       ts: Date.now(),
@@ -314,6 +346,27 @@ export class App {
     });
     this.store.close();
     this.logger.info("OpenCode QQ Adapter stopped");
+  }
+
+  #announceAdmin(bootstrap: AdminBootstrap): void {
+    const configuredHost = this.config.server.host;
+    const host =
+      configuredHost === "0.0.0.0" || configuredHost === "::" || configuredHost === ""
+        ? "127.0.0.1"
+        : configuredHost;
+    const url = `http://${host}:${this.httpPort}/admin`;
+    if (bootstrap.password !== undefined) {
+      this.logger.warn(
+        {
+          url,
+          username: bootstrap.username,
+          password: bootstrap.password,
+        },
+        "Admin WebUI created its initial password. Save it now; it will not be shown again.",
+      );
+    } else {
+      this.logger.info({ url, username: bootstrap.username }, "Admin WebUI is available");
+    }
   }
 
   #startLoginProbe(): void {

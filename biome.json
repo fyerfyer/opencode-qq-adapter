@@ -6,6 +6,8 @@
       "tests/**/*.ts",
       "scripts/**/*.ts",
       "plugin/**/*.ts",
+      "packages/webui/src/**/*.{ts,tsx}",
+      "packages/webui/*.ts",
       "*.json",
       "*.jsonc"
     ]
@@ -29,6 +31,25 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/webui/src/components/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "useFocusableInteractive": "off",
+            "useSemanticElements": "off"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          },
+          "suspicious": {
+            "noDocumentCookie": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

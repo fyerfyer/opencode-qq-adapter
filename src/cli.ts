@@ -1,6 +1,10 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command } from "commander";
+import { ADMIN_USERNAME } from "./admin/auth.js";
+import { generatePassword, hashPassword } from "./admin/password.js";
+import { adminIndexPath } from "./admin/ui.js";
 import { App } from "./app.js";
 import { ConfigError, type LoadedConfig, loadConfig } from "./config/loader.js";
 import { envFilesForConfig, loadEnvFiles, resolveConfigPath } from "./config/paths.js";
@@ -34,6 +38,7 @@ export async function runCli(argv: string[]): Promise<void> {
     )
     .option("--napcat-url <url>", "existing NapCat WebSocket URL")
     .option("--napcat-token <token>", "NapCat access token")
+    .option("--admin-password <password>", "first-run /admin password (default: generated)")
     .option("--ws-port <port>", "NapCat WebSocket host port", parsePort, 3001)
     .option("--webui-port <port>", "NapCat WebUI host port", parsePort, 6099)
     .option("--yes", "use defaults and do not prompt", false)
@@ -52,6 +57,7 @@ export async function runCli(argv: string[]): Promise<void> {
           agent: options.agent,
           napcatUrl: options.napcatUrl,
           napcatToken: options.napcatToken,
+          adminPassword: options.adminPassword,
           wsPort: options.wsPort,
           webuiPort: options.webuiPort,
           yes: options.yes,
@@ -165,6 +171,41 @@ export async function runCli(argv: string[]): Promise<void> {
       await doctor(configPath);
     });
 
+  const adminCommand = program.command("admin").description("Admin WebUI utilities");
+  adminCommand
+    .command("reset-password")
+    .description("Generate a new admin password and revoke existing sessions")
+    .option("-c, --config <path>", "configuration file")
+    .action(async (options: { config?: string }) => {
+      const configPath = prepareConfig(options.config);
+      const loaded = await loadOrReport(configPath, { checkPaths: false });
+      if (loaded === null) return;
+      const store = new SqliteStore(loaded.config.storage.database_path);
+      try {
+        const now = Date.now();
+        const password = generatePassword();
+        const passwordHash = await hashPassword(password);
+        const existing = store.admin.getUser(ADMIN_USERNAME);
+        if (existing === null) {
+          store.admin.createUser({
+            username: ADMIN_USERNAME,
+            passwordHash,
+            mustChangePassword: true,
+            createdAt: now,
+            updatedAt: now,
+          });
+        } else {
+          store.admin.updatePassword(ADMIN_USERNAME, passwordHash, true, now);
+        }
+        store.admin.deleteSessions();
+        console.log(`Admin password reset for ${ADMIN_USERNAME}:`);
+        console.log(`  ${password}`);
+        console.log("保存后请立即登录 /admin 修改密码。旧会话已全部失效。");
+      } finally {
+        store.close();
+      }
+    });
+
   await program.parseAsync(argv);
 }
 
@@ -177,6 +218,7 @@ interface SetupCliOptions {
   agent?: string;
   napcatUrl?: string;
   napcatToken?: string;
+  adminPassword?: string;
   wsPort: number;
   webuiPort: number;
   yes: boolean;
@@ -283,6 +325,14 @@ async function doctor(configPath: string): Promise<void> {
   report(true, "configuration", `${Object.keys(config.projects).length} project(s)`);
   for (const warning of warnings) console.log(`  warning: ${warning}`);
 
+  if (!config.admin.enabled) {
+    report(true, "admin WebUI", "disabled");
+  } else if (existsSync(adminIndexPath())) {
+    report(true, "admin WebUI", `${adminIndexPath()} (first start creates the admin account)`);
+  } else {
+    console.log("! admin WebUI: static assets missing; run `pnpm build:webui`");
+  }
+
   for (const [id, project] of Object.entries(config.projects)) {
     report(true, `project ${id}`, project.path);
   }
@@ -291,6 +341,16 @@ async function doctor(configPath: string): Promise<void> {
     const store = new SqliteStore(config.storage.database_path);
     try {
       report(store.ping(), "database", config.storage.database_path);
+      const adminUser = store.admin.getUser(ADMIN_USERNAME);
+      report(
+        true,
+        "admin account",
+        adminUser === null
+          ? config.admin.enabled
+            ? "will be created on first start"
+            : "admin disabled"
+          : "configured",
+      );
     } finally {
       store.close();
     }

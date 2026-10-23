@@ -1,9 +1,12 @@
+import type { Stats } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import type { SessionOwnership } from "../conversation/ownership.js";
-import { chatFromKey, textSegment } from "../domain/chat.js";
+import { type ChatRef, chatFromKey, textSegment } from "../domain/chat.js";
+import type { ConversationRecord } from "../domain/conversation.js";
+import type { WorkspaceRecord } from "../domain/workspace.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
@@ -26,6 +29,12 @@ export interface SendImageInput {
   caption?: string;
 }
 
+export interface SendFileInput {
+  sessionId: string;
+  path: string;
+  caption?: string;
+}
+
 export interface PluginMediaOptions {
   config: AppConfig;
   store: StorePort;
@@ -37,7 +46,15 @@ export interface PluginMediaOptions {
   now?: () => number;
 }
 
-/** Handles the OpenCode plugin callback that lets an agent push an image to QQ. */
+interface ResolvedTarget {
+  conversation: ConversationRecord;
+  chat: ChatRef;
+  target: string;
+  info: Stats;
+  workspace: WorkspaceRecord | null;
+}
+
+/** Handles the OpenCode plugin callbacks that let an agent push media to QQ. */
 export class PluginMediaService {
   readonly #config: AppConfig;
   readonly #store: StorePort;
@@ -63,11 +80,114 @@ export class PluginMediaService {
     if (!this.#config.features.images) {
       throw new PluginMediaError(403, "Image sending is disabled by configuration");
     }
-    if (input.sessionId.length === 0 || input.path.trim().length === 0) {
+    const resolved = await this.#resolveTarget(input.sessionId, input.path);
+    if (resolved.info.size > this.#config.security.max_outbound_image_bytes) {
+      throw new PluginMediaError(
+        413,
+        `Image exceeds ${formatBytes(this.#config.security.max_outbound_image_bytes)} limit`,
+      );
+    }
+    const buffer = await readFile(resolved.target);
+    const type = detectImageType(buffer);
+    if (type === null) {
+      throw new PluginMediaError(415, "Only PNG/JPEG/GIF/WebP images can be sent");
+    }
+
+    const caption = input.caption?.trim().slice(0, 500) ?? "";
+    const sent = await this.#sender.sendSegments(resolved.chat, [
+      { type: "image", file: `base64://${buffer.toString("base64")}` },
+      ...(caption.length > 0 ? [textSegment(caption)] : []),
+    ]);
+
+    this.#audit.record({
+      ts: this.#now(),
+      actorQq: resolved.conversation.actorQq,
+      chatKey: resolved.conversation.chatKey,
+      projectId: resolved.conversation.projectId,
+      workspaceId: resolved.workspace?.id ?? resolved.conversation.workspaceId,
+      action: "media.image_sent",
+      detail: {
+        sessionId: input.sessionId,
+        path: resolved.target,
+        bytes: buffer.length,
+        mime: type.mime,
+        messageId: sent.messageId,
+      },
+    });
+    this.#logger.info(
+      {
+        sessionId: input.sessionId,
+        chatKey: resolved.conversation.chatKey,
+        bytes: buffer.length,
+      },
+      "Sent image to QQ via plugin",
+    );
+    return { messageId: sent.messageId ?? "" };
+  }
+
+  async sendFile(input: SendFileInput): Promise<{ messageId: string }> {
+    if (!this.#config.features.files) {
+      throw new PluginMediaError(403, "File sending is disabled by configuration");
+    }
+    const resolved = await this.#resolveTarget(input.sessionId, input.path);
+    if (resolved.info.size > this.#config.security.max_outbound_file_bytes) {
+      throw new PluginMediaError(
+        413,
+        `File exceeds ${formatBytes(this.#config.security.max_outbound_file_bytes)} limit`,
+      );
+    }
+    if (isSensitiveFile(resolved.target)) {
+      throw new PluginMediaError(403, "Refusing to send secrets or repository internals");
+    }
+
+    const name = basename(resolved.target);
+    // NapCat may run in a different container and cannot read host paths.
+    // The OneBot/NapCat resource parser accepts `base64://` for uploads, so
+    // send the bytes instead of a host absolute path.
+    const buffer = await readFile(resolved.target);
+    await this.#sender.sendFile(resolved.chat, `base64://${buffer.toString("base64")}`, name);
+
+    const caption = input.caption?.trim().slice(0, 500) ?? "";
+    if (caption.length > 0) {
+      await this.#sender.send(resolved.chat, caption).catch((error) => {
+        this.#logger.debug(
+          { err: error, chatKey: resolved.conversation.chatKey },
+          "File caption failed",
+        );
+      });
+    }
+
+    this.#audit.record({
+      ts: this.#now(),
+      actorQq: resolved.conversation.actorQq,
+      chatKey: resolved.conversation.chatKey,
+      projectId: resolved.conversation.projectId,
+      workspaceId: resolved.workspace?.id ?? resolved.conversation.workspaceId,
+      action: "media.file_sent",
+      detail: {
+        sessionId: input.sessionId,
+        path: resolved.target,
+        bytes: resolved.info.size,
+        name,
+      },
+    });
+    this.#logger.info(
+      {
+        sessionId: input.sessionId,
+        chatKey: resolved.conversation.chatKey,
+        bytes: resolved.info.size,
+      },
+      "Sent file to QQ via plugin",
+    );
+    return { messageId: "" };
+  }
+
+  async #resolveTarget(sessionId: string, requestedPath: string): Promise<ResolvedTarget> {
+    if (sessionId.length === 0 || requestedPath.trim().length === 0) {
       throw new PluginMediaError(400, "sessionId and path are required");
     }
 
-    const owner = this.#ownership.resolve(input.sessionId);
+    const owner = this.#ownership.resolve(sessionId);
     if (owner === null) {
       throw new PluginMediaError(404, "Session is not owned by this bridge");
     }
@@ -89,56 +209,29 @@ export class PluginMediaService {
     try {
       target = await this.#workspaces.resolveInside(
         workspacePath,
-        isAbsolute(input.path) ? input.path : resolve(workspacePath, input.path),
+        isAbsolute(requestedPath) ? requestedPath : resolve(workspacePath, requestedPath),
       );
     } catch {
       throw new PluginMediaError(403, "Path is outside the workspace or uses a symlink escape");
     }
 
-    let info: Awaited<ReturnType<typeof stat>>;
+    let info: Stats;
     try {
       info = await stat(target);
     } catch {
-      throw new PluginMediaError(404, "Image file does not exist");
+      throw new PluginMediaError(404, "File does not exist");
     }
     if (!info.isFile()) throw new PluginMediaError(400, "Path is not a regular file");
-    if (info.size > this.#config.security.max_outbound_image_bytes) {
-      throw new PluginMediaError(
-        413,
-        `Image exceeds ${formatBytes(this.#config.security.max_outbound_image_bytes)} limit`,
-      );
-    }
-    const buffer = await readFile(target);
-    const type = detectImageType(buffer);
-    if (type === null) {
-      throw new PluginMediaError(415, "Only PNG/JPEG/GIF/WebP images can be sent");
-    }
-
-    const caption = input.caption?.trim().slice(0, 500) ?? "";
-    const sent = await this.#sender.sendSegments(chat, [
-      { type: "image", file: `base64://${buffer.toString("base64")}` },
-      ...(caption.length > 0 ? [textSegment(caption)] : []),
-    ]);
-
-    this.#audit.record({
-      ts: this.#now(),
-      actorQq,
-      chatKey: conversation.chatKey,
-      projectId: conversation.projectId,
-      workspaceId: workspace?.id ?? conversation.workspaceId,
-      action: "media.image_sent",
-      detail: {
-        sessionId: input.sessionId,
-        path: target,
-        bytes: buffer.length,
-        mime: type.mime,
-        messageId: sent.messageId,
-      },
-    });
-    this.#logger.info(
-      { sessionId: input.sessionId, chatKey: conversation.chatKey, bytes: buffer.length },
-      "Sent image to QQ via plugin",
-    );
-    return { messageId: sent.messageId ?? "" };
+    return { conversation, chat, target, info, workspace };
   }
+}
+
+function isSensitiveFile(target: string): boolean {
+  const normalized = target.replaceAll("\\", "/").toLowerCase();
+  const name = basename(normalized);
+  const segments = normalized.split("/");
+  if (segments.includes(".git") || segments.includes(".ssh")) return true;
+  if (name === ".env" || (name.startsWith(".env.") && name !== ".env.example")) return true;
+  if (name === "id_rsa" || name === "id_ed25519") return true;
+  return /\.(pem|key|p12|pfx)$/.test(name);
 }

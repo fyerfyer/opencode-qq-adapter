@@ -27,11 +27,12 @@ OpenCode V2 service
 - YAML 定义用户、群、项目、权限策略和预算。
 - 危险操作通过 QQ 审批：允许一次 / 本会话总是允许 / 拒绝。
 - 入站图片：QQ 发图，agent 能看图。
-- 出站图片：agent 调用 `qq_send_image` 把 workspace 内图片发回 QQ。
+- 出站图片/文件：agent 调用 `qq_send_image` / `qq_send_file` 把 workspace 内媒体发回 QQ。
 - shared workspace 锁：同一项目跨 QQ 会话串行执行；bridge 重启后自动恢复遗留锁。
 - 群聊 `per_user` / `shared` / `readonly` 模式、@bot、群 allowlist。
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
+- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、审计、用量和 YAML 编辑。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
 
 ## 前置条件
@@ -93,6 +94,7 @@ opencode-qq setup \
 --agent <existing>   使用已有的 OpenCode agent ID
 --napcat-url <url>    已有 NapCat 的 WS 地址
 --napcat-token <tok>  NapCat access token
+--admin-password <p>  首次 /admin 登录密码（默认自动生成）
 --yes                 非交互
 --force               覆盖已有配置（会先备份）
 --skip-plugin         不安装 OpenCode 插件
@@ -218,6 +220,50 @@ curl -s http://127.0.0.1:8787/health | jq
 请用 qq_send_image 把 chart.png 发给我，并附一句说明。
 ```
 
+## WebUI
+
+bridge 启动后，本机打开：
+
+```text
+http://127.0.0.1:8787/admin
+```
+
+管理台默认只监听 loopback，使用单管理员密码登录。`opencode-qq setup` 会生成一个首次登录密码，写入权限 `0600` 的 `.env` 并打印在 setup 摘要里；bridge 第一次启动时用它创建管理员。没有走 setup 时，首次启动会生成随机密码并打印到 bridge 日志。如果错过了：
+
+```bash
+opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
+```
+
+也可以用 `OPENCODE_QQ_ADMIN_PASSWORD`（或 `setup --admin-password`）在**首次**创建管理员时指定密码；账号已存在后该变量不再生效。
+
+管理台提供：
+
+- 概览：OneBot / OpenCode / SQLite / 事件流状态、活跃 run、今日用量、待审批和审计。
+- 用户与群：角色、项目 allowlist、群模式、@bot、默认项目和可收紧的个人限制。
+- 项目与策略：项目路径、默认策略、agent/model、workspace 模式，以及 permission/shell 规则。
+- 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session。
+- Prompt：编辑 OpenCode 全局 `agents/*.md`，保存前自动备份，可预览/恢复历史版本。
+- 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
+- 审计 / 用量：事件明细和按天 token / cost 汇总。
+- 插件：当前版本提供空壳页面，Plugin SDK 落地后挂载 `/admin/plugins/:id`。
+
+安全边界：
+
+- 默认 `admin.allow_remote: false`，非 loopback 请求会被拒绝。
+- 管理员密码用 scrypt 哈希存入 SQLite；浏览器只保留 HttpOnly session cookie。
+- 所有写操作要求 CSRF token 和同源 Origin 校验。
+- WebUI 不编辑 `.env`；密钥仍通过环境变量注入。
+- 如果确实需要局域网访问，请显式开启 `admin.allow_remote`，并放在 TLS 反向代理后。
+
+```yaml
+admin:
+  enabled: true
+  allow_remote: false
+  trust_proxy: false
+  session_hours: 12
+  login_attempts: 5
+```
+
 ## 从源码开发
 
 ```bash
@@ -229,6 +275,16 @@ cp config/config.example.yaml config/config.yaml
 pnpm setup -- --force
 pnpm dev
 ```
+
+管理前端是 `packages/webui` 下的 Vite + React + shadcn/ui SPA：
+
+```bash
+pnpm dev:webui       # http://127.0.0.1:5173/admin/，/admin/api 代理到 8787
+pnpm build:webui     # 构建到 dist/admin，由 bridge 的 Hono 托管
+pnpm build           # tsc + build:webui
+```
+
+`pnpm dev` 不会自动重建前端；改前端时同时开 `pnpm dev:webui`，或者改完后执行一次 `pnpm build:webui` 再刷新 `http://127.0.0.1:8787/admin`。
 
 `pnpm setup` 使用仓库内的 `config/config.yaml`，方便开发时直接修改。也可以手动编辑：
 
@@ -253,7 +309,7 @@ docker logs -f opencode-qq-napcat
 | --- | --- |
 | `6099` | NapCat WebUI |
 | `3001` | NapCat 正向 WebSocket（bridge 连接） |
-| `8787` | bridge health / internal HTTP |
+| `8787` | bridge health / internal HTTP / `/admin` WebUI |
 
 生产构建：
 
@@ -313,7 +369,7 @@ OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/READM
 | `!reject <id>` | 拒绝审批 |
 | `!audit N` | 查看最近 N 条审计记录（owner/admin） |
 
-普通文本会作为 prompt 发送给 OpenCode。最终回答会做 Markdown 降级和长消息分段；群里默认 @ 发起人并引用原消息。超过 `qq.progress_delay_ms` 的任务会先收到一条会随后删除的“正在处理”提示。
+普通文本会作为 prompt 发送给 OpenCode。最终回答会做 Markdown 降级和长消息分段；群里默认 @ 发起人并引用原消息。默认只发送最终回答；如需长任务占位提示，可启用 `qq.progress_ack`。
 
 ## 图片与文件
 
@@ -347,9 +403,25 @@ agent 调用 qq_send_image
 
 只允许发送 workspace 内文件，拒绝 symlink 逃逸；默认单张最大 20 MB。图片以 `base64://` 发送，因此 bridge 与 NapCat 分容器时不需要共享路径。
 
-### 文件
+### 出站文件
 
-目前没有暴露 `qq_send_file` agent 工具。底层 `OneBotPort` 已支持 `upload_private_file` / `upload_group_file`，可以作为后续扩展点。
+```text
+agent 调用 qq_send_file
+  → OpenCode 插件
+  → POST /internal/plugin/send-file
+  → bridge 校验 session、workspace、文件类型
+  → NapCat upload_private_file / upload_group_file
+```
+
+用于 Markdown 报告、生成文档、压缩包等。默认启用，限制为：
+
+- 单文件最大 50 MB（`security.max_outbound_file_bytes`）
+- 只允许 workspace 内文件，拒绝 symlink 逃逸
+- 拒绝 `.env`、`.env.*`、`.git`、`.ssh`、私钥等敏感文件
+- 文件以 `base64://` 上传，因此 bridge 和 NapCat 分容器时不需要共享目录
+- 文件发送后可以再发一条 caption 文本
+
+`qq-code` agent 的提示词会要求：用户要文件时写文件并调用 `qq_send_file`，不要在聊天里粘贴整个文件内容。
 
 ## 工作区
 
@@ -497,6 +569,7 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 | `NAPCAT_WS_URL` | 否 | NapCat 正向 WS 地址 |
 | `QQ_BRIDGE_INTERNAL_TOKEN` | 是 | 插件回调鉴权 |
 | `QQ_ADMIN_TOTP_SECRET` | 否 | owner 2FA 的 Base32 TOTP secret |
+| `OPENCODE_QQ_ADMIN_PASSWORD` | 否 | `/admin` 首次创建管理员时使用的密码 |
 | `LOG_LEVEL` | 否 | 覆盖日志级别 |
 | `OPENCODE_QQ_CONFIG` | 否 | 覆盖配置文件路径 |
 | `OPENCODE_QQ_ENV_FILE` | 否 | 覆盖 `.env` 路径 |
@@ -521,20 +594,20 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 热加载：
 
 - 私聊 owner 发送 `!reload`，或给进程发送 `SIGHUP`。
-- 立即生效：`users`、`groups`、`projects`、`policies`、`security`、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
-- 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`logging.pretty`。
+- 立即生效：`users`、`groups`、`projects`、`policies`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
+- 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`admin.enabled`、`logging.pretty`。
 - 校验失败时保留旧配置，不会中断正在运行的任务。
 
 长任务反馈：
 
 ```yaml
 qq:
-  progress_ack: true
+  progress_ack: false       # 默认关闭，只发送最终回答
   progress_delay_ms: 3000
   progress_interval_ms: 30000
 ```
 
-超过延迟仍未完成时发送一条 `⏳ 正在处理…`，之后按间隔更新为 `⏳ 仍在处理…（已 N 秒）`，最终回答发出后尝试删除。设置 `progress_ack: false` 可关闭，`progress_interval_ms: 0` 可只保留首条提示。
+默认不发送“正在处理”占位消息。开启后，超过延迟仍未完成时发送一条 `⏳ 正在处理…`，之后按间隔更新为 `⏳ 仍在处理…（已 N 秒）`，最终回答发出后尝试删除；`progress_interval_ms: 0` 可只保留首条提示。
 
 ### 为什么 QQ 回复比 OpenCode TUI 慢
 
@@ -570,9 +643,11 @@ opencode-qq setup                          # 首次安装向导（npm 安装）
 opencode-qq start                          # 启动 bridge
 opencode-qq doctor                         # 检查配置、SQLite、OpenCode、OneBot
 opencode-qq config validate                # 校验配置和项目目录
+opencode-qq admin reset-password           # 重置 WebUI 管理员密码并踢出旧会话
 
 pnpm dev                                   # 源码开发模式，tsx watch
-pnpm build && pnpm start                   # 生产构建并启动
+pnpm dev:webui                             # 前端 Vite dev server
+pnpm build && pnpm start                   # 生产构建（含 WebUI）并启动
 pnpm doctor                                # 源码环境检查
 ```
 
@@ -692,7 +767,9 @@ src/                    bridge 本体
   qq/                   Markdown 降级、分段、发送
   store/                SQLite
   observability/        日志、health、审计、owner 告警
+  admin/                /admin API、鉴权、配置/Prompt 编辑
   internal-http/        Hono HTTP
+packages/webui/         Vite + React + shadcn/ui 管理前端
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）
 deploy/systemd/         systemd 常驻服务
 tests/                  单元 / 契约 / 集成测试

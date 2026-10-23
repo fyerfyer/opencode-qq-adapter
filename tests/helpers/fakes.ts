@@ -116,6 +116,12 @@ export class FakeAgent implements AgentPort {
     return this.sessions.get(sessionId) ?? null;
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    this.sessions.delete(sessionId);
+    this.messages.delete(sessionId);
+    this.pendingPermissions.delete(sessionId);
+  }
+
   async prompt(input: AgentPromptInput): Promise<AgentPromptReceipt> {
     this.prompts.push(input);
     const created = Date.now();

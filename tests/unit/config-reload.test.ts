@@ -111,6 +111,16 @@ describe("config hot reload", () => {
     }
   });
 
+  it("applies admin settings but flags admin.enabled for restart", async () => {
+    const { current, next } = await configs();
+    next.admin.session_hours = 24;
+    next.admin.enabled = !current.admin.enabled;
+    const result = applyHotConfig(current, next);
+    expect(result.applied).toContain("admin");
+    expect(result.restartRequired).toContain("admin.enabled");
+    expect(current.admin.session_hours).toBe(24);
+  });
+
   it("applies non-service OpenCode fields and flags service changes", async () => {
     const { current, next } = await configs();
     const oldBaseUrl = current.opencode.service.base_url;

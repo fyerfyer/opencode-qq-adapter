@@ -111,6 +111,12 @@ export class OpenCodeAgent implements AgentPort {
     }
   }
 
+  async deleteSession(sessionId: string): Promise<void> {
+    const client = await this.#service.getClient();
+    await client.session.remove({ sessionID: sessionId });
+    this.#logger.info({ sessionId }, "OpenCode session deleted");
+  }
+
   async prompt(input: AgentPromptInput): Promise<AgentPromptReceipt> {
     const client = await this.#getHealthyClient();
     const inbox = await client.session.prompt({

@@ -18,7 +18,10 @@ export function formatApprovalPrompt(approval: ApprovalRecord, timeoutSec: numbe
   lines.push(
     "",
     "回复 1 允许一次 / 2 本会话总是允许 / 3 拒绝",
-    `或发送：!approve ${approval.shortId} once|always|reject`,
+    "或发送以下任一命令：",
+    `!approve ${approval.shortId} once`,
+    `!approve ${approval.shortId} always`,
+    `!approve ${approval.shortId} reject`,
     `超时：${timeoutSec} 秒后自动拒绝`,
   );
   return lines.join("\n");
@@ -34,7 +37,7 @@ export function formatApprovalList(approvals: ApprovalRecord[], now = Date.now()
       `  剩余 ${remaining}s · 发起人 ${approval.actorQq}`,
     );
   }
-  lines.push("", "发送 !approve <id> once|always|reject 进行处理。");
+  lines.push("", "发送 !approve <id> once（或 always / reject）进行处理。");
   return lines.join("\n");
 }
 

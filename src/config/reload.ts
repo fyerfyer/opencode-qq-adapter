@@ -17,6 +17,7 @@ const IN_PLACE_SECTIONS = [
   "qq",
   "notifications",
   "workspaces",
+  "admin",
   "logging",
 ] as const;
 const RESTART_SECTIONS = ["onebot", "server", "storage"] as const;
@@ -48,6 +49,7 @@ export function applyHotConfig(
   }
 
   const prettyChanged = current.logging.pretty !== next.logging.pretty;
+  const adminEnabledChanged = current.admin.enabled !== next.admin.enabled;
 
   for (const section of IN_PLACE_SECTIONS) {
     if (!sameJson(current[section], next[section])) {
@@ -75,6 +77,9 @@ export function applyHotConfig(
 
   if (prettyChanged) {
     restartRequired.push("logging.pretty");
+  }
+  if (adminEnabledChanged) {
+    restartRequired.push("admin.enabled");
   }
 
   return { applied: [...new Set(applied)], restartRequired: [...new Set(restartRequired)] };

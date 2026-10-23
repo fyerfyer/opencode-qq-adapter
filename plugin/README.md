@@ -1,8 +1,14 @@
 # opencode-qq-plugin
 
-OpenCode plugin that adds the `qq_send_image` tool. The agent calls it with a
-path inside its workspace; the plugin forwards the request to the bridge, which
-validates the path and sends the image to the QQ chat that owns the session.
+OpenCode plugin that adds the `qq_send_image` and `qq_send_file` tools. The
+agent calls one with a path inside its workspace; the plugin forwards the
+request to the bridge, which validates the path and sends the image/file to the
+QQ chat that owns the session.
+
+`qq_send_file` is intended for Markdown reports, generated documents, archives,
+and similar files. It refuses `.env` files, secrets, `.git` internals, and
+symlink escapes. File sending is enabled by `features.files: true` and limited
+by `security.max_outbound_file_bytes` (default 50 MB).
 
 Two variants are included:
 

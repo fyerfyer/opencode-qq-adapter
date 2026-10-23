@@ -137,6 +137,32 @@ describe("Plugin media HTTP", () => {
     expect(sent?.segments[1]).toMatchObject({ type: "text", text: "chart" });
   });
 
+  it("authenticates and uploads a workspace file to QQ", async () => {
+    const { app, projectPath, store, onebot } = await start();
+    await writeFile(join(projectPath, "report.md"), "# report\n");
+    onebot.emit(messageEvent(3, "make a report file"));
+    await waitFor(
+      () => typeof store.conversations.get("private:20000")?.sessionId === "string",
+      3000,
+      "session",
+    );
+    const sessionId = store.conversations.get("private:20000")?.sessionId ?? "";
+    const response = await fetch(`http://127.0.0.1:${app.httpPort}/internal/plugin/send-file`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer test-internal-token",
+      },
+      body: JSON.stringify({ sessionId, path: "report.md", caption: "report" }),
+    });
+    expect(response.status).toBe(200);
+    expect(onebot.uploads.at(-1)).toMatchObject({
+      kind: "private",
+      name: "report.md",
+    });
+    expect(onebot.texts()).toContain("report");
+  });
+
   it("rejects unknown sessions", async () => {
     const { app } = await start();
     const response = await fetch(`http://127.0.0.1:${app.httpPort}/internal/plugin/send-image`, {

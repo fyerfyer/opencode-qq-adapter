@@ -66,6 +66,15 @@ export class MessageSender {
     return this.#onebot.sendPrivate(chat.userId, segments);
   }
 
+  /** Upload a file to the chat. OneBot has separate private/group upload APIs. */
+  async sendFile(chat: ChatRef, file: string, name: string): Promise<void> {
+    if (chat.type === "group" && chat.groupId !== undefined) {
+      await this.#onebot.uploadGroupFile(chat.groupId, file, name);
+      return;
+    }
+    await this.#onebot.uploadPrivateFile(chat.userId, file, name);
+  }
+
   #prepare(text: string): string[] {
     const formatted = this.#config.strip_markdown ? markdownToPlain(text) : text.trim();
     if (formatted.length === 0) return [];

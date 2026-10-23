@@ -9,7 +9,7 @@ const shellRuleSchema = z
   })
   .strict();
 
-const policySchema = z
+export const policySchema = z
   .object({
     read: effectSchema.optional(),
     glob: effectSchema.optional(),
@@ -24,7 +24,7 @@ const policySchema = z
   })
   .strict();
 
-const limitsSchema = z
+export const limitsSchema = z
   .object({
     prompts_per_minute: z.number().int().positive().optional(),
     runs_per_hour: z.number().int().positive().optional(),
@@ -34,7 +34,7 @@ const limitsSchema = z
   .strict()
   .prefault({});
 
-const userSchema = z
+export const userSchema = z
   .object({
     role: z.enum(["owner", "admin", "member"]).default("member"),
     projects: z.array(z.string().min(1)).default(["*"]),
@@ -44,7 +44,7 @@ const userSchema = z
   })
   .strict();
 
-const groupSchema = z
+export const groupSchema = z
   .object({
     enabled: z.boolean().default(true),
     mode: z.enum(["per_user", "shared", "readonly"]).default("per_user"),
@@ -56,7 +56,7 @@ const groupSchema = z
   })
   .strict();
 
-const projectSchema = z
+export const projectSchema = z
   .object({
     path: z.string().min(1),
     description: z.string().optional(),
@@ -116,6 +116,11 @@ const securitySchema = z
       .int()
       .positive()
       .default(20 * 1024 * 1024),
+    max_outbound_file_bytes: z
+      .number()
+      .int()
+      .positive()
+      .default(50 * 1024 * 1024),
     max_queued_prompts: z.number().int().nonnegative().default(3),
     /** Allow inbound image URLs that resolve to loopback/private addresses. */
     allow_private_image_urls: z.boolean().default(false),
@@ -221,7 +226,7 @@ const loggingSchema = z
 const featuresSchema = z
   .object({
     images: z.boolean().default(true),
-    files: z.boolean().default(false),
+    files: z.boolean().default(true),
     worktrees: z.boolean().default(false),
     forms: z.boolean().default(false),
     metrics: z.boolean().default(false),
@@ -236,7 +241,7 @@ const qqSchema = z
     reply_to_message: z.boolean().default(true),
     mention_sender_in_group: z.boolean().default(true),
     /** Send a short "working" message for runs that exceed progress_delay_ms. */
-    progress_ack: z.boolean().default(true),
+    progress_ack: z.boolean().default(false),
     progress_delay_ms: z.number().int().min(0).max(600000).default(3000),
     /** Refresh the transient progress message at this interval; 0 disables. */
     progress_interval_ms: z.number().int().min(0).max(600000).default(30000),
@@ -290,6 +295,21 @@ const notificationsSchema = z
   .strict()
   .prefault({});
 
+export const adminSchema = z
+  .object({
+    /** Serve the local management UI at /admin on the internal HTTP server. */
+    enabled: z.boolean().default(true),
+    /** Refuse non-loopback clients unless explicitly enabled. */
+    allow_remote: z.boolean().default(false),
+    /** Trust X-Forwarded-For / X-Forwarded-Proto when behind a local reverse proxy. */
+    trust_proxy: z.boolean().default(false),
+    session_hours: z.number().int().min(1).max(720).default(12),
+    /** Failed login attempts allowed per client IP in a five-minute window. */
+    login_attempts: z.number().int().min(1).max(100).default(5),
+  })
+  .strict()
+  .prefault({});
+
 export const configSchema = z
   .object({
     version: z.literal(1),
@@ -327,6 +347,7 @@ export const configSchema = z
     policies: z.record(z.string().min(1), policySchema).prefault({}),
     workspaces: workspacesSchema,
     notifications: notificationsSchema,
+    admin: adminSchema,
     logging: loggingSchema,
     features: featuresSchema,
     qq: qqSchema,

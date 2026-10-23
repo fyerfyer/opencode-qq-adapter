@@ -1,3 +1,4 @@
+import type { AdminSessionInput, AdminSessionRecord, AdminUserRecord } from "../domain/admin.js";
 import type { ApprovalRecord, ApprovalUpdate } from "../domain/approval.js";
 import type { AuditEntry, AuditRecord, DailyUsage } from "../domain/audit.js";
 import type {
@@ -52,6 +53,7 @@ export interface StorePort {
     activeForChat(chatKey: string): RunRecord | null;
     activeForSession(sessionId: string): RunRecord | null;
     listRecent(chatKey: string, limit: number): RunRecord[];
+    listRecentAll(limit: number): RunRecord[];
     listByStatus(status: RunStatus): RunRecord[];
     /** Mark runs left active by a previous process as interrupted. Returns affected rows. */
     recoverActive(finishedAt: number): number;
@@ -78,6 +80,7 @@ export interface StorePort {
     getDaily(day: string, actorQq: number, projectId: string): DailyUsage;
     getActorDaily(day: string, actorQq: number): DailyUsage;
     getProjectDaily(day: string, projectId: string): DailyUsage;
+    listDaily(day: string): DailyUsage[];
     recordEvent(ts: number, actorQq: number, projectId: string, kind: string): void;
     countEvents(actorQq: number, kind: string, since: number): number;
     pruneEvents(before: number): number;
@@ -86,6 +89,17 @@ export interface StorePort {
     /** Returns true when the message has not been seen before. */
     mark(messageId: string, now: number): boolean;
     prune(before: number): number;
+  };
+  admin: {
+    getUser(username: string): AdminUserRecord | null;
+    createUser(record: AdminUserRecord): void;
+    updatePassword(username: string, passwordHash: string, mustChange: boolean, now: number): void;
+    createSession(record: AdminSessionInput): void;
+    getSession(tokenHash: string): AdminSessionRecord | null;
+    touchSession(tokenHash: string, lastSeenAt: number, expiresAt: number): void;
+    deleteSession(tokenHash: string): void;
+    deleteSessions(username?: string): number;
+    pruneSessions(now: number): number;
   };
   ping(): boolean;
   close(): void;

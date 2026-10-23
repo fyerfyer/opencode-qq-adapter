@@ -127,13 +127,20 @@ export function mapMessage(message: {
   };
   content?: Array<{ type: string; text?: string }>;
 }): AgentMessage {
-  const text =
-    message.type === "assistant"
-      ? (message.content ?? [])
-          .filter((part) => part.type === "text" && typeof part.text === "string")
-          .map((part) => part.text)
-          .join("")
-      : (message.text ?? "");
+  let text = message.text ?? "";
+  if (message.type === "assistant") {
+    const parts = message.content ?? [];
+    if (parts.length > 0) {
+      // OpenCode text parts can contain narration before a tool call. Only the
+      // parts after the last tool call belong to the final answer.
+      const lastTool = parts.findLastIndex((part) => part.type === "tool");
+      const finalParts = lastTool >= 0 ? parts.slice(lastTool + 1) : parts;
+      text = finalParts
+        .filter((part) => part.type === "text" && typeof part.text === "string")
+        .map((part) => part.text)
+        .join("");
+    }
+  }
   return {
     id: message.id,
     type: message.type,

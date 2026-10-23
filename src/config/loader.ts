@@ -48,6 +48,19 @@ export async function loadConfig(
     ]);
   }
 
+  return parseConfigSource(source, absolutePath, options);
+}
+
+/**
+ * Validate an in-memory configuration source without touching the filesystem.
+ * Used by the admin editor so a bad save never replaces a working config.
+ */
+export async function parseConfigSource(
+  source: string,
+  configPath: string,
+  options: LoadConfigOptions = {},
+): Promise<LoadedConfig> {
+  const absolutePath = resolve(configPath);
   let raw: unknown;
   try {
     raw = parseYaml(source);
@@ -128,6 +141,7 @@ const NULLABLE_SECTIONS = new Set([
   "cleanup",
   "notifications",
   "owner_alerts",
+  "admin",
   "logging",
   "features",
   "qq",
