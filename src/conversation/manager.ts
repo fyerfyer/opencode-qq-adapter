@@ -5,6 +5,7 @@ import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
 import type { AuditTrail } from "../observability/audit.js";
+import type { PluginHost } from "../plugins/host.js";
 import type { QuotaService } from "../policy/quota.js";
 import type { AgentPort, AgentSession } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
@@ -30,6 +31,7 @@ export class ConversationManager {
   readonly #quota: QuotaService | undefined;
   readonly #audit: AuditTrail | undefined;
   readonly #workspaces: WorkspaceManager;
+  readonly #plugins: PluginHost | undefined;
   readonly #recoveredRuns: number;
 
   constructor(
@@ -42,6 +44,7 @@ export class ConversationManager {
       quota?: QuotaService;
       audit?: AuditTrail;
       workspaces: WorkspaceManager;
+      plugins?: PluginHost;
       onRunFailed?: (active: ActiveRun, error: string) => void;
     },
   ) {
@@ -53,6 +56,7 @@ export class ConversationManager {
     this.#quota = options.quota;
     this.#audit = options.audit;
     this.#workspaces = options.workspaces;
+    this.#plugins = options.plugins;
     this.#queue = new ChatRunQueue({
       maxQueued: config.security.max_queued_prompts,
       logger,
@@ -74,7 +78,7 @@ export class ConversationManager {
         });
       },
       onRunFailed: (active, error) => options.onRunFailed?.(active, error),
-      onFinished: (active, status, usage) => {
+      onFinished: (active, status, usage, error) => {
         if (usage !== null && active.record.actorQq !== null) {
           this.#quota?.recordRunUsage(active.record.actorQq, active.record.projectId, {
             inputTokens: usage.tokens.input,
@@ -82,6 +86,9 @@ export class ConversationManager {
             costUsd: usage.cost,
           });
         }
+        void this.#plugins?.afterRun(active, status, usage, error).catch((hookError) => {
+          this.#logger.warn({ err: hookError, runId: active.record.id }, "Plugin afterRun failed");
+        });
         this.#audit?.record({
           ts: Date.now(),
           actorQq: active.record.actorQq,
@@ -126,11 +133,56 @@ export class ConversationManager {
   }
 
   async submit(
-    message: IncomingMessage,
+    inputMessage: IncomingMessage,
     projectId: string,
     permissions: PermissionRuleset = [],
   ): Promise<SubmitResult> {
+    let message = inputMessage;
+    if (this.#plugins !== undefined) {
+      const injected = await this.#plugins.beforePrompt(inputMessage, projectId);
+      if (injected.modified) {
+        message = { ...inputMessage, text: injected.text };
+        this.#logger.debug(
+          { chatKey: message.chat.chatKey, plugins: injected.plugins },
+          "Plugin prompt context injected",
+        );
+      }
+    }
+
     const now = Date.now();
+    if (message.text.length > this.#config.security.max_prompt_chars) {
+      const rejected: RunRecord = {
+        id: ulid(now),
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        sessionId: null,
+        actorQq: message.userId,
+        status: "rejected",
+        startedAt: now,
+        finishedAt: now,
+        stopReason: "prompt_too_long_after_plugin",
+        error: null,
+        usageJson: null,
+      };
+      this.#store.runs.create(rejected);
+      this.#audit?.record({
+        ts: now,
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "run.rejected",
+        detail: { runId: rejected.id, reason: "prompt_too_long_after_plugin" },
+      });
+      await this.#sender.reply(
+        message.chat,
+        message.id,
+        `插件注入上下文后消息过长（${message.text.length} 字），上限为 ${this.#config.security.max_prompt_chars} 字。`,
+      );
+      return { accepted: false, runId: rejected.id, queued: false };
+    }
+
     const run: RunRecord = {
       id: ulid(now),
       chatKey: message.chat.chatKey,

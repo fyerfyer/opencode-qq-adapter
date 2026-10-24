@@ -268,7 +268,24 @@ export interface MetaInfo {
   defaultProject: string | null;
   plugins: {
     enabled: boolean;
-    plugins: unknown[];
+    total: number;
+    loaded: number;
+    failed: number;
+    plugins: PluginInfo[];
     message: string;
   };
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  apiVersion: number;
+  description: string | null;
+  status: "disabled" | "loaded" | "failed" | "stopped";
+  error: string | null;
+  capabilities: string[];
+  commands: string[];
+  source: string;
+  loadedAt: number | null;
 }

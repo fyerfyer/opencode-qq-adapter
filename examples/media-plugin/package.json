@@ -1,0 +1,32 @@
+{
+  "name": "@opencode-qq/media-plugin",
+  "version": "0.1.0",
+  "description": "Example QQ plugin: send an image and a generated file from the plugin data directory",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "assets"
+  ],
+  "opencodeQq": {
+    "id": "media-demo",
+    "name": "Media demo",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Demonstrates messages.sendImage/sendFile with data-directory confinement",
+    "capabilities": [
+      "commands",
+      "messages"
+    ],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.2.0"
+    },
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opencode-qq/plugin-sdk": "workspace:*"
+  }
+}

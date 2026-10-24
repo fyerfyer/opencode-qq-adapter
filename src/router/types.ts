@@ -7,6 +7,7 @@ import type { IncomingMessage } from "../domain/message.js";
 import type { InboundMediaService } from "../media/inbound.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { OwnerNotifier } from "../observability/notifier.js";
+import type { PluginHost } from "../plugins/host.js";
 import type { PolicyEngine } from "../policy/engine.js";
 import type { QuotaService } from "../policy/quota.js";
 import type { AgentPort } from "../ports/agent.js";
@@ -37,6 +38,7 @@ export interface RouterDeps {
   workspaces: WorkspaceManager;
   sudo: SudoService;
   notifier: OwnerNotifier;
+  plugins?: PluginHost;
   logger: Logger;
   reloadConfig?: () => Promise<ConfigReloadResult>;
 }

@@ -1,0 +1,17 @@
+{
+  "name": "@fixture/hello",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "hello-fixture",
+    "name": "Hello fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Plugin host fixture",
+    "capabilities": ["commands", "hooks", "messages", "events", "sessions"],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.2.0"
+    },
+    "entry": "./index.ts"
+  }
+}

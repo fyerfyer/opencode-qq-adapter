@@ -1,0 +1,36 @@
+{
+  "name": "@opencode-qq/plugin-sdk",
+  "version": "0.1.0",
+  "description": "Experimental plugin SDK for opencode-qq-adapter",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/sdk.d.ts",
+      "import": "./dist/sdk.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm build"
+  },
+  "keywords": [
+    "opencode",
+    "qq",
+    "plugin",
+    "sdk",
+    "napcat"
+  ],
+  "engines": {
+    "node": ">=22.11"
+  }
+}

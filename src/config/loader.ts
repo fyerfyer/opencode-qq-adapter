@@ -137,6 +137,7 @@ const NULLABLE_SECTIONS = new Set([
   "groups",
   "projects",
   "policies",
+  "plugins",
   "workspaces",
   "cleanup",
   "notifications",
@@ -182,9 +183,19 @@ async function resolveAndValidate(
   config.workspaces.root = resolvePath(baseDir, config.workspaces.root);
   config.storage.database_path = resolvePath(baseDir, config.storage.database_path);
   config.storage.inbox_dir = resolvePath(baseDir, config.storage.inbox_dir);
+  config.storage.plugins_dir = resolvePath(baseDir, config.storage.plugins_dir);
   config.security.allowed_roots = config.security.allowed_roots.map((root) =>
     resolvePath(baseDir, root),
   );
+
+  for (const [id, plugin] of Object.entries(config.plugins)) {
+    if (plugin.path === undefined) continue;
+    plugin.path = resolvePath(baseDir, plugin.path);
+    if (checkPaths) {
+      const pathError = await verifyPluginPath(plugin.path);
+      if (pathError) errors.push(`plugins.${id}.path: ${pathError}`);
+    }
+  }
 
   const projectIds = new Set(Object.keys(config.projects));
   if (projectIds.size === 0) {
@@ -352,6 +363,16 @@ async function verifyDirectory(path: string): Promise<string | undefined> {
   try {
     const info = await stat(path);
     if (!info.isDirectory()) return `'${path}' is not a directory`;
+    return undefined;
+  } catch (error) {
+    return `'${path}' is not accessible: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+async function verifyPluginPath(path: string): Promise<string | undefined> {
+  try {
+    const info = await stat(path);
+    if (!info.isDirectory() && !info.isFile()) return `'${path}' is not a file or directory`;
     return undefined;
   } catch (error) {
     return `'${path}' is not accessible: ${error instanceof Error ? error.message : String(error)}`;

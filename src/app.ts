@@ -20,12 +20,14 @@ import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { isMessageEvent, type OneBotEvent } from "./onebot/protocol.js";
 import { toIncomingMessage } from "./onebot/segments.js";
 import { OpenCodeAgent } from "./opencode/agent.js";
+import { PluginHost } from "./plugins/host.js";
 import { PolicyEngine } from "./policy/engine.js";
 import { QuotaService } from "./policy/quota.js";
 import type { AgentPort } from "./ports/agent.js";
 import type { OneBotPort } from "./ports/onebot.js";
 import type { StorePort } from "./ports/store.js";
 import { MessageSender } from "./qq/sender.js";
+import { CORE_COMMAND_NAMES } from "./router/commands.js";
 import { MessageRouter } from "./router/router.js";
 import { SudoService } from "./security/sudo.js";
 import { SqliteStore } from "./store/sqlite.js";
@@ -41,6 +43,7 @@ export interface AppDependencies {
   agent?: AgentPort;
   sender?: MessageSender;
   workspaces?: WorkspaceManager;
+  plugins?: PluginHost;
   media?: InboundMediaService;
   pluginMedia?: PluginMediaService;
   notifier?: OwnerNotifier;
@@ -61,6 +64,7 @@ export class App {
   readonly audit: AuditTrail;
   readonly quota: QuotaService;
   readonly workspaces: WorkspaceManager;
+  readonly plugins: PluginHost;
   readonly ownership: SessionOwnership;
   readonly media: InboundMediaService;
   readonly pluginMedia: PluginMediaService;
@@ -95,6 +99,20 @@ export class App {
     this.workspaces =
       dependencies.workspaces ??
       new WorkspaceManager({ config, store: this.store, logger: this.logger });
+    let conversationsRef: ConversationManager | null = null;
+    this.plugins =
+      dependencies.plugins ??
+      new PluginHost({
+        config,
+        logger: this.logger,
+        audit: this.audit,
+        sender,
+        conversations: {
+          getConversation: (chatKey) => conversationsRef?.getConversation(chatKey) ?? null,
+        },
+        reservedCommands: CORE_COMMAND_NAMES,
+        coreVersion: VERSION,
+      });
     this.ownership = new SessionOwnership(this.store, this.agent, this.logger);
     this.media =
       dependencies.media ??
@@ -112,11 +130,13 @@ export class App {
         quota: this.quota,
         audit: this.audit,
         workspaces: this.workspaces,
+        plugins: this.plugins,
         onRunFailed: (active, error) => {
           void this.notifier.runFailed(active, error);
         },
       },
     );
+    conversationsRef = this.conversations;
     this.approvals = new ApprovalBroker({
       config,
       store: this.store,
@@ -151,6 +171,7 @@ export class App {
       workspaces: this.workspaces,
       sudo: this.sudo,
       notifier: this.notifier,
+      plugins: this.plugins,
       logger: this.logger,
       reloadConfig: () => this.reloadConfig(),
     });
@@ -176,6 +197,7 @@ export class App {
         agent: this.agent,
         conversations: this.conversations,
         audit: this.audit,
+        plugins: this.plugins,
         logger: this.logger,
         reloadConfig: () => this.reloadConfig(),
         ...(initialAdminPassword !== undefined && initialAdminPassword.length > 0
@@ -217,6 +239,7 @@ export class App {
       await this.http.start();
       if (adminBootstrap !== null) this.#announceAdmin(adminBootstrap);
       await this.agent.start();
+      await this.plugins.start();
       this.approvals.start();
       await this.onebot.start();
     } catch (error) {
@@ -294,6 +317,14 @@ export class App {
     const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
     this.admin.updateSettings();
     this.logger.level = this.config.logging.level;
+    const warnings = [...loaded.warnings];
+    const pluginReport = await this.plugins.reload();
+    if (pluginReport.failed > 0) {
+      warnings.push(`${pluginReport.failed} 个插件加载失败；发送 !plugins 查看详情`);
+    }
+    await this.plugins
+      .configReloaded({ applied, restartRequired })
+      .catch((error) => this.logger.warn({ err: error }, "Plugin config reload hooks failed"));
     this.audit.record({
       ts: Date.now(),
       actorQq: null,
@@ -301,17 +332,17 @@ export class App {
       projectId: null,
       workspaceId: null,
       action: "config.reloaded",
-      detail: { applied, restartRequired, warnings: loaded.warnings },
+      detail: { applied, restartRequired, warnings, plugins: pluginReport },
     });
     this.logger.info(
-      { applied, restartRequired, warnings: loaded.warnings },
+      { applied, restartRequired, warnings, plugins: pluginReport },
       "Configuration reloaded",
     );
     return {
       ok: true,
       applied,
       restartRequired,
-      warnings: loaded.warnings,
+      warnings,
     };
   }
 
@@ -334,6 +365,9 @@ export class App {
     });
     await this.conversations.shutdown().catch((error) => {
       this.logger.warn({ err: error }, "Conversation manager shutdown failed");
+    });
+    await this.plugins.stop().catch((error) => {
+      this.logger.warn({ err: error }, "Plugin host shutdown failed");
     });
     await this.onebot.stop().catch((error) => {
       this.logger.warn({ err: error }, "OneBot shutdown failed");

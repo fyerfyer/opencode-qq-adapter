@@ -238,4 +238,94 @@ security:
     const loaded = await loadConfig(valid, { env: {} });
     expect(loaded.config.security.admin_2fa.enabled).toBe(true);
   });
+
+  it("resolves local plugin paths and the plugin data directory", async () => {
+    const root = await workspace();
+    await mkdir(join(root, "my-plugin"), { recursive: true });
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+plugins:
+  my-plugin:
+    path: ./my-plugin
+    options:
+      greeting: hi
+storage:
+  plugins_dir: ./plugin-data
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: true });
+    expect(loaded.config.plugins["my-plugin"]?.path).toBe(join(root, "my-plugin"));
+    expect(loaded.config.plugins["my-plugin"]?.options).toEqual({ greeting: "hi" });
+    expect(loaded.config.storage.plugins_dir).toBe(join(root, "plugin-data"));
+  });
+
+  it("rejects malformed plugin entries", async () => {
+    const root = await workspace();
+    const base = `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+`;
+    const both = await writeConfig(
+      root,
+      `${base}plugins:
+  my-plugin:
+    package: "@scope/plugin"
+    path: ./my-plugin
+`,
+    );
+    await expect(loadConfig(both, { env: {} })).rejects.toMatchObject({ code: "schema" });
+
+    const neither = await writeConfig(
+      root,
+      `${base}plugins:
+  my-plugin:
+    options: {}
+`,
+    );
+    await expect(loadConfig(neither, { env: {} })).rejects.toMatchObject({ code: "schema" });
+
+    const badId = await writeConfig(
+      root,
+      `${base}plugins:
+  MyPlugin:
+    package: "@scope/plugin"
+`,
+    );
+    await expect(loadConfig(badId, { env: {} })).rejects.toMatchObject({ code: "schema" });
+  });
+
+  it("reports a missing local plugin path during path validation", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+plugins:
+  missing-plugin:
+    path: ./does-not-exist
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: true })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
 });

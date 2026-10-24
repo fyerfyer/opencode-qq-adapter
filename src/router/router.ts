@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "../domain/message.js";
 import { parseCommand } from "../domain/message.js";
+import type { PluginRole } from "../plugins/sdk.js";
 import { createCommands } from "./commands.js";
 import { errorMessage } from "./format.js";
 import type { CommandContext, CommandHandler, RouterDeps } from "./types.js";
@@ -49,20 +50,38 @@ export class MessageRouter {
     }
 
     if (command !== undefined) {
-      await this.#dispatch(command.name, {
-        message,
-        args: command.args,
-        rawArgs: command.rawArgs,
-      });
+      await this.#dispatch(
+        command.name,
+        {
+          message,
+          args: command.args,
+          rawArgs: command.rawArgs,
+        },
+        decision.actor.role,
+      );
       return;
     }
 
     await this.#handlePrompt(message);
   }
 
-  async #dispatch(name: string, context: CommandContext): Promise<void> {
+  async #dispatch(name: string, context: CommandContext, actorRole: PluginRole): Promise<void> {
     const handler = this.#commands.get(name);
     if (handler === undefined) {
+      const handledByPlugin =
+        this.#deps.plugins !== undefined &&
+        (await this.#deps.plugins.dispatchCommand({
+          name,
+          message: context.message,
+          args: context.args,
+          rawArgs: context.rawArgs,
+          actor: actorRole,
+          groupMode:
+            context.message.chat.type === "group" && context.message.chat.groupId !== undefined
+              ? this.#deps.policy.groupMode(context.message.chat.groupId)
+              : null,
+        }));
+      if (handledByPlugin) return;
       await this.#deps.sender.reply(
         context.message.chat,
         context.message.id,

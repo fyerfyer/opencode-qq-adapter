@@ -6,6 +6,8 @@
       "tests/**/*.ts",
       "scripts/**/*.ts",
       "plugin/**/*.ts",
+      "packages/plugin-sdk/**/*.json",
+      "examples/**/*.{ts,json}",
       "packages/webui/src/**/*.{ts,tsx}",
       "packages/webui/*.ts",
       "*.json",

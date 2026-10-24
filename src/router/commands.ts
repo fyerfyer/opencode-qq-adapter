@@ -3,6 +3,33 @@ import type { AuditRecord } from "../domain/audit.js";
 import { formatDiff, formatProjects, formatStatus, formatWorkspace, HELP_TEXT } from "./format.js";
 import type { CommandHandler, RouterDeps } from "./types.js";
 
+/** Built-in names that plugins may not shadow. Keep this list in sync with createCommands. */
+export const CORE_COMMAND_NAMES = new Set([
+  "ping",
+  "help",
+  "whoami",
+  "projects",
+  "use",
+  "cd",
+  "new",
+  "status",
+  "stop",
+  "diff",
+  "ws",
+  "workspace",
+  "sudo",
+  "approvals",
+  "approve",
+  "reject",
+  "reload",
+  "audit",
+  "model",
+  "agent",
+  "sessions",
+  "switch",
+  "plugins",
+]);
+
 export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
   const commands = new Map<string, CommandHandler>();
 
@@ -11,7 +38,35 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
   });
 
   commands.set("help", async ({ message }) => {
-    await deps.sender.reply(message.chat, message.id, HELP_TEXT);
+    const pluginHelp = deps.plugins?.helpText() ?? "";
+    await deps.sender.reply(
+      message.chat,
+      message.id,
+      pluginHelp.length > 0 ? `${HELP_TEXT}\n\n${pluginHelp}` : HELP_TEXT,
+    );
+  });
+
+  commands.set("plugins", async ({ message }) => {
+    if (deps.plugins === undefined) {
+      await deps.sender.reply(message.chat, message.id, "插件宿主未启用。");
+      return;
+    }
+    const status = deps.plugins.status();
+    if (status.plugins.length === 0) {
+      await deps.sender.reply(message.chat, message.id, status.message);
+      return;
+    }
+    const lines = [`插件（${status.loaded}/${status.total} 已加载）：`];
+    for (const plugin of status.plugins) {
+      const mark = plugin.status === "loaded" ? "✓" : plugin.status === "disabled" ? "-" : "✗";
+      const commands =
+        plugin.commands.length > 0
+          ? ` · ${plugin.commands.map((name) => `!${name}`).join(", ")}`
+          : "";
+      const error = plugin.error !== null ? `\n  ${plugin.error.slice(0, 200)}` : "";
+      lines.push(`${mark} ${plugin.id} v${plugin.version} (${plugin.status})${commands}${error}`);
+    }
+    await deps.sender.reply(message.chat, message.id, lines.join("\n"));
   });
 
   commands.set("whoami", async ({ message }) => {

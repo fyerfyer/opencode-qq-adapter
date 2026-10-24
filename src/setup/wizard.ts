@@ -265,6 +265,7 @@ export function generateConfigObject(options: {
     storage: {
       database_path: join(options.dataDir, "opencode-qq.db"),
       inbox_dir: join(options.dataDir, "inbox"),
+      plugins_dir: join(options.dataDir, "plugins"),
       inbox_ttl_hours: 24,
     },
   };

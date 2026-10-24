@@ -41,6 +41,7 @@ export const HELP_TEXT = [
   "!reject ID — 拒绝审批",
   "!audit N — 最近 N 条审计（owner/admin）",
   "!reload — 热加载配置（owner，仅私聊）",
+  "!plugins — 查看插件加载状态",
   "!help — 显示本帮助",
   "",
   "直接发送文字或图片即可让 OpenCode 处理；危险操作会通过审批消息确认。",

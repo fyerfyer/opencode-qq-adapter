@@ -32,7 +32,8 @@ OpenCode V2 service
 - 群聊 `per_user` / `shared` / `readonly` 模式、@bot、群 allowlist。
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
-- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、审计、用量和 YAML 编辑。
+- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、插件、审计、用量和 YAML 编辑。
+- QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
 
 ## 前置条件
@@ -245,7 +246,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - Prompt：编辑 OpenCode 全局 `agents/*.md`，保存前自动备份，可预览/恢复历史版本。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
-- 插件：当前版本提供空壳页面，Plugin SDK 落地后挂载 `/admin/plugins/:id`。
+- 插件：查看加载状态、命令、能力、数据来源和失败原因；插件代码仍只从 YAML 启用。
 
 安全边界：
 
@@ -318,7 +319,83 @@ pnpm build
 pnpm start
 ```
 
-## 插件安装
+## QQ 插件 SDK
+
+项目有两类“插件”，不要混淆：
+
+- **OpenCode 插件**（`plugin/`）：运行在 OpenCode 进程里，只负责 `qq_send_image` / `qq_send_file`。
+- **QQ 插件**（本文）：运行在 bridge 进程里，用来注册 QQ 命令、注入 prompt 上下文、监听 run 完成、发送媒体和保存插件数据。
+
+QQ 插件只从 YAML 显式加载，是可信代码，没有沙箱：
+
+```yaml
+plugins:
+  hello:
+    path: ../examples/hello-plugin
+    options:
+      greeting: "你好"
+      injectContext: false
+  notes:
+    path: ../examples/notes-plugin
+    options:
+      maxNotes: 50
+```
+
+`path` 相对于配置文件解析；也可以用 `package: "@scope/plugin"` 从 npm 包加载。配置 key 必须与插件 manifest 的 `opencodeQq.id` 一致。插件数据默认位于 `storage.plugins_dir/<plugin-id>/`。
+
+插件可以声明并使用这些能力：
+
+| 能力 | 用途 |
+| --- | --- |
+| `commands` | 注册 `!command`，核心统一做用户/角色/群模式检查 |
+| `hooks` | `beforePrompt`、`afterRun`、`onConfigReload` |
+| `messages` | 发送文本、图片、文件（受数据目录和大小限制） |
+| `sessions` | 只读查看当前会话绑定 |
+| `events` | 订阅 `run.finished` / `config.reloaded` |
+| `admin` | 预留：插件管理页面 |
+
+最小示例：
+
+```ts
+import { defineCommand, definePlugin } from "@opencode-qq/plugin-sdk";
+
+export default definePlugin({
+  setup(context) {
+    context.commands.register(
+      defineCommand({
+        name: "hello",
+        description: "插件连通性示例",
+        handler: (command) => `你好，${command.message.senderName}`,
+      }),
+    );
+    context.hooks.register({
+      beforePrompt: (prompt) => ({ append: `[project=${prompt.projectId}]` }),
+    });
+  },
+});
+```
+
+加载后：
+
+```text
+!plugins        # 查看插件状态、命令和失败原因
+!hello
+!note add ...   # notes 示例插件
+!sticker        # media-demo 示例插件发送图片
+```
+
+示例位于 [`examples/`](examples)，SDK 源码和文档位于 [`packages/plugin-sdk`](packages/plugin-sdk)。开发流程：
+
+```bash
+pnpm install
+pnpm build:sdk
+pnpm typecheck:examples
+pnpm test
+```
+
+插件加载失败只会标记该插件为 `failed`，不会影响核心和其它插件；发送 `!plugins` 或打开 `/admin` 的“插件”页可以查看错误。
+
+## OpenCode 图片插件安装
 
 `opencode-qq setup` 会自动安装 V2 插件。手动安装方式：
 
@@ -363,6 +440,7 @@ OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/READM
 | `!agent list` | 列出 primary agents |
 | `!agent <ID>` | 切换当前会话 agent |
 | `!reload` | 热加载配置（owner，仅私聊） |
+| `!plugins` | 查看已加载插件的状态、命令和错误 |
 | `!sudo <TOTP>` | 为 owner 危险操作开启短窗口（仅私聊） |
 | `!approvals` | 查看当前会话待审批请求 |
 | `!approve <id> once\|always\|reject` | 处理审批 |
@@ -594,7 +672,7 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 热加载：
 
 - 私聊 owner 发送 `!reload`，或给进程发送 `SIGHUP`。
-- 立即生效：`users`、`groups`、`projects`、`policies`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
+- 立即生效：`users`、`groups`、`projects`、`policies`、`plugins`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
 - 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`admin.enabled`、`logging.pretty`。
 - 校验失败时保留旧配置，不会中断正在运行的任务。
 
@@ -768,8 +846,11 @@ src/                    bridge 本体
   store/                SQLite
   observability/        日志、health、审计、owner 告警
   admin/                /admin API、鉴权、配置/Prompt 编辑
+  plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
   internal-http/        Hono HTTP
+packages/plugin-sdk/    @opencode-qq/plugin-sdk
 packages/webui/         Vite + React + shadcn/ui 管理前端
+examples/               示例 QQ 插件（hello / notes / media-demo）
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）
 deploy/systemd/         systemd 常驻服务
 tests/                  单元 / 契约 / 集成测试

@@ -12,6 +12,7 @@ import type { AuditEntry } from "../domain/audit.js";
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
+import type { PluginHost, PluginHostStatus } from "../plugins/host.js";
 import type { AgentPort, AgentSession } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import {
@@ -51,6 +52,7 @@ export interface AdminServiceOptions {
   agent: AgentPort;
   conversations: ConversationManager;
   audit: AuditTrail;
+  plugins?: PluginHost;
   logger: Logger;
   reloadConfig: () => Promise<ConfigReloadResult>;
   initialPassword?: string;
@@ -85,6 +87,7 @@ export class AdminService {
   readonly #agent: AgentPort;
   readonly #conversations: ConversationManager;
   readonly #audit: AuditTrail;
+  readonly #plugins: PluginHost | undefined;
   readonly #logger: Logger;
   readonly #reloadConfig: () => Promise<ConfigReloadResult>;
 
@@ -97,6 +100,7 @@ export class AdminService {
     this.#agent = options.agent;
     this.#conversations = options.conversations;
     this.#audit = options.audit;
+    this.#plugins = options.plugins;
     this.#logger = options.logger;
     this.#reloadConfig = options.reloadConfig;
     this.auth = new AdminAuth({
@@ -469,12 +473,17 @@ export class AdminService {
     return this.#store.usage.listDaily(day);
   }
 
-  plugins(): Record<string, unknown> {
+  plugins(): PluginHostStatus {
+    if (this.#plugins !== undefined) {
+      return this.#plugins.status();
+    }
     return {
       enabled: false,
+      total: 0,
+      loaded: 0,
+      failed: 0,
       plugins: [],
-      message:
-        "Plugin SDK 尚未启用。当前版本只提供核心管理壳；插件页面将在 SDK 落地后挂载到 /admin/plugins/:id。",
+      message: "插件宿主未启用。",
     };
   }
 

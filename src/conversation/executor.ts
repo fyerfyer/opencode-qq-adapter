@@ -27,7 +27,12 @@ export interface RunHooks {
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
   onStarted?(active: ActiveRun): void;
-  onFinished?(active: ActiveRun, status: RunStatus, usage: RunUsage | null): void;
+  onFinished?(
+    active: ActiveRun,
+    status: RunStatus,
+    usage: RunUsage | null,
+    error: string | null,
+  ): void;
   onRunFailed?(active: ActiveRun, error: string): void;
 }
 
@@ -200,7 +205,7 @@ export class RunExecutor {
       this.#finish(record.id, "completed", {
         usageJson: usage ? JSON.stringify(usage) : undefined,
       });
-      this.#hooks.onFinished?.(active, "completed", usage);
+      this.#hooks.onFinished?.(active, "completed", usage, null);
       this.#store.conversations.setSession(chatKey, record.sessionId, session.agent, session.model);
       this.#logger.info(
         {
@@ -220,13 +225,13 @@ export class RunExecutor {
         error instanceof WorkspaceLockAbortedError
       ) {
         this.#finish(record.id, "interrupted", { stopReason: "user" });
-        this.#hooks.onFinished?.(active, "interrupted", active.usage);
+        this.#hooks.onFinished?.(active, "interrupted", active.usage, null);
         this.#logger.info({ runId: record.id, chatKey }, "Run interrupted by user");
         return;
       }
       const friendly = friendlyError(error);
       this.#finish(record.id, "failed", { error: friendly });
-      this.#hooks.onFinished?.(active, "failed", active.usage);
+      this.#hooks.onFinished?.(active, "failed", active.usage, friendly);
       this.#hooks.onRunFailed?.(active, friendly);
       this.#logger.error(
         { err: error, runId: record.id, chatKey, phases, durationMs: Date.now() - started },

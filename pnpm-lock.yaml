@@ -79,6 +79,26 @@ importers:
         specifier: ^8.18.3
         version: 8.22.0
 
+  examples/hello-plugin:
+    dependencies:
+      '@opencode-qq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
+  examples/media-plugin:
+    dependencies:
+      '@opencode-qq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
+  examples/notes-plugin:
+    dependencies:
+      '@opencode-qq/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
+  packages/plugin-sdk: {}
+
   packages/webui:
     dependencies:
       class-variance-authority:

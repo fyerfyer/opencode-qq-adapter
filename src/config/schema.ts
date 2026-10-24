@@ -253,10 +253,42 @@ const storageSchema = z
   .object({
     database_path: z.string().min(1).default("var/opencode-qq.db"),
     inbox_dir: z.string().min(1).default("var/inbox"),
+    /** Per-plugin persistent data directories live under this root. */
+    plugins_dir: z.string().min(1).default("var/plugins"),
     /** Delete downloaded inbound images that were not used after this many hours. */
     inbox_ttl_hours: z.number().int().positive().default(24),
   })
   .strict()
+  .prefault({});
+
+export const pluginConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** npm package name; mutually exclusive with `path`. */
+    package: z.string().min(1).optional(),
+    /** Local package/directory/file; resolved relative to the config file. */
+    path: z.string().min(1).optional(),
+    /** Plugin-owned options, validated by the plugin's options schema. */
+    options: z.record(z.string(), z.unknown()).default({}),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.package === undefined) === (value.path === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["package"],
+        message: "exactly one of package or path is required",
+      });
+    }
+  });
+
+export const pluginsSchema = z
+  .record(
+    z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,63}$/, "plugin IDs must be lowercase letters, digits or dashes"),
+    pluginConfigSchema,
+  )
   .prefault({});
 
 const workspacesSchema = z
@@ -345,6 +377,7 @@ export const configSchema = z
       )
       .prefault({}),
     policies: z.record(z.string().min(1), policySchema).prefault({}),
+    plugins: pluginsSchema,
     workspaces: workspacesSchema,
     notifications: notificationsSchema,
     admin: adminSchema,
@@ -360,4 +393,5 @@ export type ProjectConfig = z.infer<typeof projectSchema>;
 export type UserConfig = z.infer<typeof userSchema>;
 export type GroupConfig = z.infer<typeof groupSchema>;
 export type PolicyConfig = z.infer<typeof policySchema>;
+export type PluginConfig = z.infer<typeof pluginConfigSchema>;
 export type PermissionEffect = z.infer<typeof effectSchema>;

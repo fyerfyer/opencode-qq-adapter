@@ -1,0 +1,13 @@
+{
+  "name": "@fixture/bad-options",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "bad-options-fixture",
+    "name": "Bad options fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "capabilities": [],
+    "entry": "./index.ts"
+  }
+}

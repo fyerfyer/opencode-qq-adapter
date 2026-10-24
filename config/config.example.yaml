@@ -114,6 +114,19 @@ projects:
   #   workspace: shared
   #   allowed_users: ["10001"]
 
+# QQ plugin SDK (experimental). Plugins are trusted code loaded only from this
+# file, never from QQ or the WebUI. Paths are relative to this config file.
+# Each key must match the plugin manifest id.
+plugins: {}
+# hello:
+#   path: ../examples/hello-plugin
+#   options:
+#     greeting: "你好"
+# notes:
+#   path: ../examples/notes-plugin
+#   options:
+#     maxNotes: 50
+
 policies:
   readonly:
     read: allow
@@ -215,4 +228,5 @@ qq:
 storage:
   database_path: var/opencode-qq.db
   inbox_dir: var/inbox
+  plugins_dir: var/plugins
   inbox_ttl_hours: 24

@@ -1,0 +1,16 @@
+{
+  "name": "@fixture/incompatible",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "incompatible-fixture",
+    "name": "Incompatible fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "capabilities": ["commands"],
+    "engines": {
+      "opencodeQq": ">=9.0.0"
+    },
+    "entry": "./index.ts"
+  }
+}
