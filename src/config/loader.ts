@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import semver from "semver";
 import { parse as parseYaml } from "yaml";
@@ -302,7 +303,7 @@ async function resolveAndValidate(
     if (project.policy !== "" && config.policies[project.policy] === undefined) {
       warnings.push(`projects.${id}.policy '${project.policy}' is not defined in policies`);
     }
-    if (project.workspace !== "shared") {
+    if (project.workspace === "per_user" || project.workspace === "worktree") {
       warnings.push(
         `projects.${id}.workspace '${project.workspace}' is not implemented yet; shared mode will be used`,
       );
@@ -351,6 +352,8 @@ async function resolveAndValidate(
 }
 
 function resolvePath(baseDir: string, value: string): string {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/")) return resolve(homedir(), value.slice(2));
   return isAbsolute(value) ? resolve(value) : resolve(baseDir, value);
 }
 

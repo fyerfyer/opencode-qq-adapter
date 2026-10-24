@@ -1,6 +1,7 @@
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
+import type { PluginConversationProfile } from "../plugins/sdk.js";
 
 export interface TokenTotals {
   input: number;
@@ -18,7 +19,11 @@ export interface RunUsage {
 export interface ActiveRun {
   record: RunRecord;
   message: IncomingMessage;
+  /** User text before plugin prompt injection. */
+  rawText: string;
   permissions: PermissionRuleset;
+  /** Plugin-selected directory/agent/model for this run. */
+  profile: PluginConversationProfile | null;
   abort: AbortController;
   stopRequested: boolean;
   interrupted: boolean;
@@ -27,12 +32,16 @@ export interface ActiveRun {
   usage: RunUsage | null;
   workspaceId: string | null;
   workspacePath: string | null;
+  /** Final assistant text once the run completes. */
+  replyText: string | null;
 }
 
 export interface PendingRun {
   record: RunRecord;
   message: IncomingMessage;
+  rawText: string;
   permissions: PermissionRuleset;
+  profile: PluginConversationProfile | null;
 }
 
 export interface ChatState {

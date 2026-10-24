@@ -1,0 +1,17 @@
+{
+  "name": "@fixture/profile",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "profile-fixture",
+    "name": "Profile fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Conversation profile and reply plan fixture",
+    "capabilities": ["commands", "hooks", "sessions"],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.2.0"
+    },
+    "entry": "./index.ts"
+  }
+}

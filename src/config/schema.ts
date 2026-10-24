@@ -61,7 +61,7 @@ export const projectSchema = z
     path: z.string().min(1),
     description: z.string().optional(),
     policy: z.string().min(1).default("standard"),
-    workspace: z.enum(["shared", "per_user", "worktree"]).default("shared"),
+    workspace: z.enum(["shared", "per_user", "worktree", "none"]).default("shared"),
     agent: z.string().min(1).nullable().default(null),
     model: z.string().min(1).nullable().default(null),
     allowed_users: z.array(z.string().min(1)).optional(),

@@ -1,0 +1,65 @@
+# Roleplay M1 configuration snippet.
+#
+# This is a fragment, not a complete bridge config. Merge these sections into
+# your config.yaml, or keep a separate file and copy the relevant blocks.
+#
+# Create the persona root before starting the bridge so config validation sees
+# it:
+#   mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
+
+version: 1
+
+# If your config sets security.allowed_roots, include the persona root's parent:
+security:
+  allowed_roots:
+    - ~/.local/share/opencode-qq
+
+projects:
+  roleplay:
+    path: ~/.local/share/opencode-qq/plugins/roleplay/personas
+    description: Roleplay personas (read-only)
+    policy: roleplay
+    workspace: none
+    agent: qq-rp
+    model: null
+    allowed_users: ["10001"]
+
+policies:
+  roleplay:
+    read: allow
+    glob: deny
+    grep: deny
+    edit: deny
+    shell: deny
+    webfetch: deny
+    websearch: deny
+    external_directory: deny
+
+plugins:
+  roleplay:
+    # Use an absolute path, or install @opencode-qq/roleplay and use its package
+    # name instead of path.
+    path: /absolute/path/to/opencode-qq-adapter/packages/roleplay
+    options:
+      project_id: roleplay
+      agent: qq-rp
+      model: null
+      # default_persona: blue-fat-fish
+      # Project to restore on !rp off when there was no previous project.
+      # fallback_project: demo
+      install_agent: true
+      # Defaults to <storage.plugins_dir>/roleplay/personas. Keep this aligned
+      # with projects.roleplay.path if you override it.
+      # personas_dir: ~/.local/share/opencode-qq/plugins/roleplay/personas
+      # Optional: pin a cheap/fast roleplay model, for example:
+      # model: opencode-go/deepseek-v4.1-flash
+      max_segments: 4
+      max_chars_per_segment: 180
+      delay_per_char_ms: 28
+      max_delay_ms: 2500
+      worldbook_scan_depth: 6
+      worldbook_max_entries: 4
+      worldbook_max_chars: 1200
+      memory_top_k: 6
+      memory_max_chars: 800
+      memory_exclude_recent: 10

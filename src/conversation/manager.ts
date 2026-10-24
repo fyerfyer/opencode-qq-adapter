@@ -6,6 +6,7 @@ import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { PluginHost } from "../plugins/host.js";
+import type { PluginConversationProfile } from "../plugins/sdk.js";
 import type { QuotaService } from "../policy/quota.js";
 import type { AgentPort, AgentSession } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
@@ -66,6 +67,7 @@ export class ConversationManager {
       workspaces: this.#workspaces,
       bindSession: (sessionId, active) => this.#queue.bindSession(sessionId, active),
       unbindSession: (sessionId) => this.#queue.unbindSession(sessionId),
+      formatReply: async (active, text) => (await this.#plugins?.formatReply(active, text)) ?? null,
       onStarted: (active) => {
         this.#audit?.record({
           ts: Date.now(),
@@ -138,8 +140,11 @@ export class ConversationManager {
     permissions: PermissionRuleset = [],
   ): Promise<SubmitResult> {
     let message = inputMessage;
+    let profile: PluginConversationProfile | null = null;
     if (this.#plugins !== undefined) {
-      const injected = await this.#plugins.beforePrompt(inputMessage, projectId);
+      const resolved = await this.#plugins.resolveProfile(inputMessage, projectId);
+      profile = resolved.profile;
+      const injected = await this.#plugins.beforePrompt(inputMessage, projectId, profile);
       if (injected.modified) {
         message = { ...inputMessage, text: injected.text };
         this.#logger.debug(
@@ -218,7 +223,10 @@ export class ConversationManager {
     }
 
     this.#store.runs.create(run);
-    const queued = this.#queue.enqueue(run, message, permissions);
+    const queued = this.#queue.enqueue(run, message, permissions, {
+      rawText: inputMessage.text,
+      profile,
+    });
     return { accepted: true, runId: run.id, queued };
   }
 

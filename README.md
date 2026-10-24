@@ -34,6 +34,7 @@ OpenCode V2 service
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
 - 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、插件、审计、用量和 YAML 编辑。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
+- 可选 Roleplay 插件：Character Card V2/V3、私聊人设、世界书、原文记忆和分段延迟回复。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
 
 ## 前置条件
@@ -394,6 +395,38 @@ pnpm test
 ```
 
 插件加载失败只会标记该插件为 `failed`，不会影响核心和其它插件；发送 `!plugins` 或打开 `/admin` 的“插件”页可以查看错误。
+
+## Roleplay（实验）
+
+`packages/roleplay` 提供私聊角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书和原文记忆、把回复拆成多条短消息并加打字延迟。
+
+当前 M1 边界：
+
+- 只支持私聊，一个 chat 同时激活一个角色；
+- 记忆只做原文检索，不做 LLM 事实/情节抽取；
+- 不做群聊主动插话、多角色同场、WebUI、TTS；
+- 开场白目前使用角色卡的 `first_mes`，时间段问候尚未实现。
+
+配置片段见 [`config/roleplay.example.yaml`](config/roleplay.example.yaml)，完整说明见 [`packages/roleplay/README.md`](packages/roleplay/README.md)。
+
+```bash
+pnpm build:sdk
+pnpm build:roleplay
+mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
+```
+
+在 `config.yaml` 中增加 `projects.roleplay`、`policies.roleplay` 和 `plugins.roleplay` 后：
+
+```text
+!card import /path/to/card.png blue-fat-fish
+!persona use blue-fat-fish
+!rp status
+!memory
+!forget confirm
+!rp off
+```
+
+`install_agent` 默认会在 `~/.config/opencode/agents/qq-rp.md` 写入固定的引擎 agent；已有用户文件不会被覆盖。首次安装后需要重启或 reload OpenCode 才能看到新 agent。角色卡会被渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。
 
 ## OpenCode 图片插件安装
 
@@ -849,6 +882,7 @@ src/                    bridge 本体
   plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk
+packages/roleplay/       @opencode-qq/roleplay（私聊角色扮演，实验）
 packages/webui/         Vite + React + shadcn/ui 管理前端
 examples/               示例 QQ 插件（hello / notes / media-demo）
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）

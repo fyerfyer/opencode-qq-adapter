@@ -35,7 +35,7 @@ describe("Plugin SDK testing harness", () => {
             return { append: "harness-context" };
           },
           afterRun() {
-            void context.storage.writeText("after.txt", "done");
+            return context.storage.writeText("after.txt", "done");
           },
         });
         context.events.on("run.finished", async () => {
@@ -72,6 +72,7 @@ describe("Plugin SDK testing harness", () => {
         runId: "run_1",
         chat: { type: "private", userId: 1, chatKey: "private:1" },
         userId: 1,
+        senderName: "Tester",
         projectId: "demo",
         workspaceId: null,
         sessionId: null,
@@ -80,11 +81,14 @@ describe("Plugin SDK testing harness", () => {
         error: null,
         durationMs: 10,
         promptText: "hello",
+        userText: "hello",
+        replyText: "done",
       });
       await harness.emit("run.finished", {
         runId: "run_1",
         chat: { type: "private", userId: 1, chatKey: "private:1" },
         userId: 1,
+        senderName: "Tester",
         projectId: "demo",
         workspaceId: null,
         sessionId: null,
@@ -93,6 +97,8 @@ describe("Plugin SDK testing harness", () => {
         error: null,
         durationMs: 10,
         promptText: "hello",
+        userText: "hello",
+        replyText: "done",
       });
       expect(await harness.context.storage.readText("after.txt")).toBe("done");
       expect(await harness.context.storage.readText("event.txt")).toBe("done");

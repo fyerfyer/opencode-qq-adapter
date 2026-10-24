@@ -54,6 +54,13 @@ export interface AppDependencies {
   promptRoot?: string;
 }
 
+function groupIdFromChatKey(chatKey: string): number | undefined {
+  const match = /^group:(\d+)/.exec(chatKey);
+  if (match?.[1] === undefined) return undefined;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
 export class App {
   readonly config: AppConfig;
   readonly logger: Logger;
@@ -109,6 +116,42 @@ export class App {
         sender,
         conversations: {
           getConversation: (chatKey) => conversationsRef?.getConversation(chatKey) ?? null,
+        },
+        sessionActions: {
+          setProject: ({ chatKey, projectId, actorQq, groupId }) => {
+            const actor = this.policy.actor(actorQq);
+            if (actor === null) return { ok: false, reason: "未授权用户。" };
+            const allowed = this.policy.canUseProject(actor, actorQq, projectId, groupId);
+            if (!allowed.allowed) return { ok: false, reason: "没有该项目的访问权限。" };
+            return (
+              conversationsRef?.setProject(chatKey, projectId, actorQq) ?? {
+                ok: false,
+                reason: "会话管理器尚未就绪。",
+              }
+            );
+          },
+          reset: ({ chatKey, actorQq }) => {
+            const actor = this.policy.actor(actorQq);
+            if (actor === null) return { ok: false, reason: "未授权用户。" };
+            const conversation = conversationsRef?.getConversation(chatKey);
+            if (conversation === null || conversation === undefined) {
+              return { ok: false, reason: "还没有会话。" };
+            }
+            const groupId = groupIdFromChatKey(chatKey);
+            const allowed = this.policy.canUseProject(
+              actor,
+              actorQq,
+              conversation.projectId,
+              groupId,
+            );
+            if (!allowed.allowed) return { ok: false, reason: "没有该项目的访问权限。" };
+            return (
+              conversationsRef?.resetSession(chatKey) ?? {
+                ok: false,
+                reason: "会话管理器尚未就绪。",
+              }
+            );
+          },
         },
         reservedCommands: CORE_COMMAND_NAMES,
         coreVersion: VERSION,

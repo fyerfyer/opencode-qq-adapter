@@ -92,9 +92,9 @@ The config key must match `opencodeQq.id`. Only explicitly configured plugins ar
 | API | Capability | Purpose |
 | --- | --- | --- |
 | `ctx.commands` | `commands` | Register `!command` handlers |
-| `ctx.hooks` | `hooks` | `beforePrompt`, `afterRun`, `onConfigReload` |
+| `ctx.hooks` | `hooks` | `resolveConversationProfile`, `beforePrompt`, `formatReply`, `afterRun`, `onConfigReload` |
 | `ctx.messages` | `messages` | Send text / image / file |
-| `ctx.sessions` | `sessions` | Read the current conversation binding |
+| `ctx.sessions` | `sessions` | Read the conversation binding; guarded `setProject` / `reset` |
 | `ctx.events` | `events` | Subscribe to `run.finished` / `config.reloaded` |
 | `ctx.storage` / `ctx.dataDir` | — | Isolated JSON/text files |
 | `ctx.logger` | — | Plugin-prefixed structured logging |
@@ -120,6 +120,42 @@ context.commands.register({
 ```
 
 Core command names are reserved. Duplicate names/aliases between plugins also fail the load.
+
+## Run profile and reply plan
+
+A plugin can select a read-only directory and agent/model for a run, and can split the final reply into QQ-sized segments:
+
+```ts
+context.hooks.register({
+  resolveConversationProfile({ projectId }) {
+    if (projectId !== "roleplay") return undefined;
+    return {
+      directory: "/absolute/path/inside/project/root",
+      agent: "qq-rp",
+      model: "provider/model",
+      workspace: "none",
+    };
+  },
+  formatReply({ text }) {
+    return {
+      segments: [
+        { text: text.slice(0, 80) },
+        { text: text.slice(80), delayMs: 900 },
+      ],
+    };
+  },
+});
+```
+
+Rules:
+
+- `directory` is only accepted for projects configured with `workspace: none`.
+- The core resolves both paths with `realpath`; the run directory must stay inside the configured project root.
+- A profile cannot widen permissions; the core still compiles the ruleset from YAML policy.
+- `formatReply` may return at most 8 non-empty segments; delays are clamped to 5 seconds and the total text to 8,000 characters.
+- The first plugin returning a valid profile/plan wins. Invalid plans fall back to the original reply.
+
+`afterRun` receives both `userText` (before injection) and `replyText` (the final assistant text), which is what transcript-memory plugins should store.
 
 ## Media and paths
 
@@ -149,4 +185,4 @@ console.log(harness.sent);
 await harness.dispose();
 ```
 
-The harness exercises registration, options validation, commands, hooks, events and storage without starting QQ or OpenCode. Media sends are recorded.
+The harness exercises registration, options validation, commands, hooks, events, and storage without starting QQ or OpenCode. Media sends are recorded. Profile and reply hooks can be exercised with `harness.resolveProfile(context)` and `harness.formatReply(context)`; `harness.sessionCalls` records guarded project and session mutations.

@@ -104,6 +104,15 @@ describe("WorkspaceManager", () => {
     await expect(manager.resolveInside(projectPath, "sub/ok.txt")).resolves.toBe(inside);
   });
 
+  it("does not create a shared workspace for lock-free projects", async () => {
+    const { config, manager } = await setup();
+    const demo = config.projects.demo;
+    if (demo === undefined) throw new Error("demo project missing");
+    config.projects.demo = { ...demo, workspace: "none" };
+    expect(manager.status("demo").workspace).toBeNull();
+    await expect(manager.diff("demo")).resolves.toEqual({ isGit: false, text: "" });
+  });
+
   it("reports a non-git workspace as such", async () => {
     const { manager } = await setup();
     const diff = await manager.diff("demo");

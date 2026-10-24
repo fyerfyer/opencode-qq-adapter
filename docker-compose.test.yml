@@ -27,5 +27,7 @@ services:
       - NAPCAT_UID=${NAPCAT_UID:-1000}
       - NAPCAT_GID=${NAPCAT_GID:-1000}
       - TZ=${TZ:-Asia/Shanghai}
+      # Optional quick-login account. Leave empty to show the QR code.
+      - ACCOUNT=${NAPCAT_PEER_ACCOUNT:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"

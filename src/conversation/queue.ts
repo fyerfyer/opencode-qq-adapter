@@ -2,6 +2,7 @@ import type { Logger } from "pino";
 import type { RunRecord } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
+import type { PluginConversationProfile } from "../plugins/sdk.js";
 import type { AgentEvent } from "../ports/agent.js";
 import { applyAgentEvent } from "./events.js";
 import { type ActiveRun, type ChatState, type PendingRun, RunStoppedError } from "./types.js";
@@ -37,10 +38,17 @@ export class ChatRunQueue {
     record: RunRecord,
     message: IncomingMessage,
     permissions: PermissionRuleset = [],
+    options: { rawText?: string; profile?: PluginConversationProfile | null } = {},
   ): boolean {
     const state = this.#state(record.chatKey);
     const queued = state.active !== null;
-    state.pending.push({ record, message, permissions });
+    state.pending.push({
+      record,
+      message,
+      rawText: options.rawText ?? message.text,
+      permissions,
+      profile: options.profile ?? null,
+    });
     this.#drain(record.chatKey);
     return queued;
   }
@@ -155,7 +163,9 @@ export class ChatRunQueue {
     const active: ActiveRun = {
       record: { ...next.record, status: "running" },
       message: next.message,
+      rawText: next.rawText,
       permissions: next.permissions,
+      profile: next.profile,
       abort: new AbortController(),
       stopRequested: false,
       interrupted: false,
@@ -164,6 +174,7 @@ export class ChatRunQueue {
       usage: null,
       workspaceId: null,
       workspacePath: null,
+      replyText: null,
     };
     state.active = active;
     state.draining = true;

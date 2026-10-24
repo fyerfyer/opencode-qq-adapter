@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Logger } from "pino";
 import type { AppConfig, PluginConfig } from "../config/schema.js";
 import type { ActiveRun, RunUsage } from "../conversation/types.js";
@@ -17,6 +17,7 @@ import type {
   PluginConfigReloadContext,
   PluginContext,
   PluginConversation,
+  PluginConversationProfile,
   PluginDefinition,
   PluginDisposer,
   PluginEventMap,
@@ -24,11 +25,15 @@ import type {
   PluginLogger,
   PluginManifest,
   PluginMessage,
+  PluginProfileContext,
   PluginPromptContext,
   PluginPromptPatch,
+  PluginReplyContext,
+  PluginReplyPlan,
   PluginRole,
   PluginRunContext,
   PluginRunStatus,
+  PluginSessionMutationResult,
 } from "./sdk.js";
 import { PluginDataStorage } from "./storage.js";
 
@@ -45,12 +50,25 @@ export interface PluginConversationSource {
   getConversation(chatKey: string): ConversationRecord | null;
 }
 
+/** Guarded conversation mutations implemented by the core. */
+export interface PluginSessionActions {
+  setProject(input: {
+    chatKey: string;
+    projectId: string;
+    actorQq: number;
+    groupId?: number;
+  }): PluginSessionMutationResult;
+  reset(input: { chatKey: string; actorQq: number }): PluginSessionMutationResult;
+}
+
 export interface PluginHostOptions {
   config: AppConfig;
   logger: Logger;
   audit: AuditTrail;
   sender: MessageSender;
   conversations: PluginConversationSource;
+  /** Optional; plugins receive a no-op when the bridge does not provide it. */
+  sessionActions?: PluginSessionActions;
   /** Built-in command names that plugins may not shadow. */
   reservedCommands: Iterable<string>;
   coreVersion: string;
@@ -132,6 +150,11 @@ export interface PluginPromptResult {
   plugins: string[];
 }
 
+export interface PluginProfileResult {
+  profile: PluginConversationProfile | null;
+  plugins: string[];
+}
+
 /**
  * Loads trusted, explicitly configured plugins and exposes a narrow runtime API.
  *
@@ -144,6 +167,7 @@ export class PluginHost {
   readonly #audit: AuditTrail;
   readonly #sender: MessageSender;
   readonly #conversations: PluginConversationSource;
+  readonly #sessionActions: PluginSessionActions | undefined;
   readonly #reserved: Set<string>;
   readonly #coreVersion: string;
   readonly #now: () => number;
@@ -157,6 +181,7 @@ export class PluginHost {
     this.#audit = options.audit;
     this.#sender = options.sender;
     this.#conversations = options.conversations;
+    this.#sessionActions = options.sessionActions;
     this.#reserved = new Set([...options.reservedCommands].map((name) => name.toLowerCase()));
     this.#coreVersion = options.coreVersion;
     this.#now = options.now ?? Date.now;
@@ -294,7 +319,43 @@ export class PluginHost {
     return true;
   }
 
-  async beforePrompt(message: IncomingMessage, projectId: string): Promise<PluginPromptResult> {
+  /** Resolve a plugin-provided run profile before prompt injection and queueing. */
+  async resolveProfile(message: IncomingMessage, projectId: string): Promise<PluginProfileResult> {
+    const hooks = this.#loadedHooks("resolveConversationProfile");
+    if (hooks.length === 0) return { profile: null, plugins: [] };
+
+    const base: PluginProfileContext = {
+      message: toPluginMessage(message),
+      projectId,
+      conversation: this.#conversationSnapshot(message.chat.chatKey),
+    };
+    for (const { instance, hook } of hooks) {
+      const handler = hook.definition.resolveConversationProfile;
+      if (handler === undefined) continue;
+      try {
+        const raw = await withTimeout(
+          Promise.resolve(handler(base)),
+          HOOK_TIMEOUT_MS,
+          `resolveConversationProfile hook of ${instance.id}`,
+        );
+        if (!isRecord(raw)) continue;
+        const profile = await this.#normalizeProfile(raw, projectId, instance.id);
+        if (profile !== null) return { profile, plugins: [instance.id] };
+      } catch (error) {
+        this.#logger.warn(
+          { err: error, pluginId: instance.id, projectId },
+          "Plugin resolveConversationProfile hook failed; continuing",
+        );
+      }
+    }
+    return { profile: null, plugins: [] };
+  }
+
+  async beforePrompt(
+    message: IncomingMessage,
+    projectId: string,
+    profile: PluginConversationProfile | null = null,
+  ): Promise<PluginPromptResult> {
     const hooks = this.#loadedHooks("beforePrompt");
     if (hooks.length === 0) {
       return { text: message.text, modified: false, plugins: [] };
@@ -304,6 +365,7 @@ export class PluginHost {
       message: toPluginMessage(message),
       projectId,
       conversation: this.#conversationSnapshot(message.chat.chatKey),
+      profile,
     };
     const prepends: string[] = [];
     const appends: string[] = [];
@@ -344,6 +406,38 @@ export class PluginHost {
     return { text, modified: text !== message.text, plugins: [...new Set(plugins)] };
   }
 
+  /** Let a plugin shape the final reply into ordered segments. */
+  async formatReply(active: ActiveRun, text: string): Promise<PluginReplyPlan | null> {
+    const hooks = this.#loadedHooks("formatReply");
+    if (hooks.length === 0) return null;
+    const context: PluginReplyContext = {
+      message: toPluginMessage(active.message),
+      projectId: active.record.projectId,
+      conversation: this.#conversationSnapshot(active.message.chat.chatKey),
+      profile: active.profile ?? null,
+      text,
+    };
+    for (const { instance, hook } of hooks) {
+      const handler = hook.definition.formatReply;
+      if (handler === undefined) continue;
+      try {
+        const raw = await withTimeout(
+          Promise.resolve(handler(context)),
+          HOOK_TIMEOUT_MS,
+          `formatReply hook of ${instance.id}`,
+        );
+        const plan = normalizeReplyPlan(raw);
+        if (plan !== null) return plan;
+      } catch (error) {
+        this.#logger.warn(
+          { err: error, pluginId: instance.id, runId: active.record.id },
+          "Plugin formatReply hook failed; sending the original reply",
+        );
+      }
+    }
+    return null;
+  }
+
   async afterRun(
     active: ActiveRun,
     status: RunStatus,
@@ -355,6 +449,7 @@ export class PluginHost {
       runId: active.record.id,
       chat: toPluginChat(active.message.chat),
       userId: active.message.userId,
+      senderName: active.message.senderName,
       projectId: active.record.projectId,
       workspaceId: active.workspaceId,
       sessionId: active.record.sessionId,
@@ -363,6 +458,8 @@ export class PluginHost {
       error,
       durationMs: Math.max(0, this.#now() - active.record.startedAt),
       promptText: active.message.text,
+      userText: active.rawText ?? active.message.text,
+      replyText: active.replyText ?? null,
     };
 
     for (const { instance, hook } of this.#loadedHooks("afterRun")) {
@@ -694,6 +791,15 @@ export class PluginHost {
 
     const sessions = {
       get: (chatKey: string) => this.#conversationSnapshot(chatKey),
+      setProject: (
+        chatKey: string,
+        projectId: string,
+        actor: { qq: number; role: PluginRole },
+      ): PluginSessionMutationResult => this.#setProject(chatKey, projectId, actor.qq),
+      reset: (
+        chatKey: string,
+        actor: { qq: number; role: PluginRole },
+      ): PluginSessionMutationResult => this.#resetSession(chatKey, actor.qq),
     };
 
     return {
@@ -708,6 +814,118 @@ export class PluginHost {
       sessions,
       events,
     };
+  }
+
+  async #normalizeProfile(
+    raw: Record<string, unknown>,
+    projectId: string,
+    pluginId: string,
+  ): Promise<PluginConversationProfile | null> {
+    const project = this.#config.projects[projectId];
+    if (project === undefined) return null;
+
+    const workspace = raw.workspace;
+    if (workspace !== undefined && workspace !== "inherit" && workspace !== "none") {
+      this.#logger.warn(
+        { pluginId, projectId, workspace },
+        "Plugin profile has an invalid workspace mode; ignoring",
+      );
+      return null;
+    }
+
+    const directory =
+      typeof raw.directory === "string" && raw.directory.trim().length > 0
+        ? raw.directory.trim()
+        : undefined;
+    if ((directory !== undefined || workspace === "none") && project.workspace !== "none") {
+      this.#logger.warn(
+        { pluginId, projectId },
+        "Plugin profile requested a lock-free directory for a normal workspace project; ignoring",
+      );
+      return null;
+    }
+
+    let resolvedDirectory: string | undefined;
+    if (directory !== undefined) {
+      try {
+        const root = await realpath(resolve(project.path));
+        const target = await realpath(resolve(directory));
+        const rel = relative(root, target);
+        if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+          this.#logger.warn(
+            { pluginId, projectId, directory: target },
+            "Plugin profile directory escapes the project root; ignoring",
+          );
+          return null;
+        }
+        resolvedDirectory = target;
+      } catch (error) {
+        this.#logger.warn(
+          { err: error, pluginId, projectId, directory },
+          "Plugin profile directory is not accessible; ignoring",
+        );
+        return null;
+      }
+    }
+
+    const agent =
+      typeof raw.agent === "string" && raw.agent.trim().length > 0 && raw.agent.length <= 200
+        ? raw.agent.trim()
+        : undefined;
+    const model =
+      typeof raw.model === "string" && raw.model.trim().length > 0 && raw.model.length <= 200
+        ? raw.model.trim()
+        : undefined;
+
+    return {
+      ...(resolvedDirectory !== undefined ? { directory: resolvedDirectory } : {}),
+      ...(agent !== undefined ? { agent } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(workspace === "none" || project.workspace === "none"
+        ? { workspace: "none" as const }
+        : {}),
+    };
+  }
+
+  #setProject(chatKey: string, projectId: string, actorQq: number): PluginSessionMutationResult {
+    if (this.#sessionActions === undefined) {
+      return { ok: false, reason: "当前 bridge 未提供会话变更能力。" };
+    }
+    const groupId = groupIdFromChatKey(chatKey);
+    const result = this.#sessionActions.setProject({
+      chatKey,
+      projectId,
+      actorQq,
+      ...(groupId !== undefined ? { groupId } : {}),
+    });
+    this.#audit.record({
+      ts: this.#now(),
+      actorQq,
+      chatKey,
+      projectId,
+      workspaceId: null,
+      action: result.ok ? "plugin.session_project" : "plugin.session_project_denied",
+      detail: { projectId, ...(result.reason ? { reason: result.reason } : {}) },
+    });
+    return result;
+  }
+
+  #resetSession(chatKey: string, actorQq: number): PluginSessionMutationResult {
+    if (this.#sessionActions === undefined) {
+      return { ok: false, reason: "当前 bridge 未提供会话变更能力。" };
+    }
+    const conversation = this.#conversations.getConversation(chatKey);
+    const result = this.#sessionActions.reset({ chatKey, actorQq });
+    this.#audit.record({
+      ts: this.#now(),
+      actorQq,
+      chatKey,
+      projectId: conversation?.projectId ?? null,
+      workspaceId: conversation?.workspaceId ?? null,
+      action: result.ok ? "plugin.session_reset" : "plugin.session_reset_denied",
+      detail: { ...(result.reason ? { reason: result.reason } : {}) },
+    });
+    return result;
   }
 
   #loadedHooks<K extends keyof PluginHooksDefinition>(
@@ -899,6 +1117,33 @@ function validateCommand(command: PluginCommandDefinition): string[] {
     }
   }
   return names;
+}
+
+function normalizeReplyPlan(value: unknown): PluginReplyPlan | null {
+  if (!isRecord(value) || !Array.isArray(value.segments)) return null;
+  if (value.segments.length === 0 || value.segments.length > 8) return null;
+  const segments: PluginReplyPlan["segments"] = [];
+  let total = 0;
+  for (const item of value.segments) {
+    if (!isRecord(item) || typeof item.text !== "string") return null;
+    const text = item.text.trim();
+    if (text.length === 0) return null;
+    total += text.length;
+    if (total > 8000) return null;
+    const delayMs =
+      typeof item.delayMs === "number" && Number.isFinite(item.delayMs)
+        ? Math.max(0, Math.min(5000, Math.floor(item.delayMs)))
+        : 0;
+    segments.push({ text, ...(delayMs > 0 ? { delayMs } : {}) });
+  }
+  return { segments };
+}
+
+function groupIdFromChatKey(chatKey: string): number | undefined {
+  const match = /^group:(\d+)/.exec(chatKey);
+  if (match?.[1] === undefined) return undefined;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) ? value : undefined;
 }
 
 function isPromptPatch(value: unknown): value is PluginPromptPatch {

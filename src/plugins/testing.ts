@@ -6,6 +6,7 @@ import type {
   PluginCommandContext,
   PluginCommandDefinition,
   PluginContext,
+  PluginConversationProfile,
   PluginDefinition,
   PluginDisposer,
   PluginEventMap,
@@ -14,8 +15,11 @@ import type {
   PluginImageInput,
   PluginLogger,
   PluginMessage,
+  PluginProfileContext,
   PluginPromptContext,
   PluginPromptPatch,
+  PluginReplyContext,
+  PluginReplyPlan,
   PluginRunContext,
   PluginSendResult,
 } from "./sdk.js";
@@ -44,13 +48,23 @@ export interface RunCommandOptions {
   rawArgs?: string;
 }
 
+export interface HarnessSessionCall {
+  action: "setProject" | "reset";
+  chatKey: string;
+  projectId?: string;
+  actorQq: number;
+}
+
 export interface PluginHarness<TOptions = Record<string, unknown>> {
   readonly context: PluginContext<TOptions>;
   readonly commands: Map<string, PluginCommandDefinition>;
   readonly hooks: PluginHooksDefinition[];
   readonly sent: HarnessSend[];
+  readonly sessionCalls: HarnessSessionCall[];
   runCommand(name: string, options?: RunCommandOptions): Promise<string | undefined>;
+  resolveProfile(context: PluginProfileContext): Promise<PluginConversationProfile | null>;
   beforePrompt(context: PluginPromptContext): Promise<PluginPromptPatch | undefined>;
+  formatReply(context: PluginReplyContext): Promise<PluginReplyPlan | null>;
   afterRun(context: PluginRunContext): Promise<void>;
   emit<K extends keyof PluginEventMap>(type: K, event: PluginEventMap[K]): Promise<void>;
   dispose(): Promise<void>;
@@ -79,6 +93,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     handler: (event: unknown) => void | Promise<void>;
   }> = [];
   const sent: HarnessSend[] = [];
+  const sessionCalls: HarnessSessionCall[] = [];
   const disposers: PluginDisposer[] = [];
 
   const commandsApi = {
@@ -153,7 +168,17 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     commands: commandsApi,
     hooks: hooksApi,
     messages,
-    sessions: { get: () => null },
+    sessions: {
+      get: () => null,
+      setProject: (chatKey, projectId, actor) => {
+        sessionCalls.push({ action: "setProject", chatKey, projectId, actorQq: actor.qq });
+        return { ok: true };
+      },
+      reset: (chatKey, actor) => {
+        sessionCalls.push({ action: "reset", chatKey, actorQq: actor.qq });
+        return { ok: true };
+      },
+    },
     events: eventsApi,
   };
 
@@ -166,6 +191,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     commands,
     hooks,
     sent,
+    sessionCalls,
     async runCommand(name: string, overrides: RunCommandOptions = {}): Promise<string | undefined> {
       const command = findCommand(commands, name);
       if (command === undefined) throw new Error(`unknown harness command: ${name}`);
@@ -188,6 +214,15 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
       }
       return typeof result === "string" ? result : undefined;
     },
+    async resolveProfile(
+      profileContext: PluginProfileContext,
+    ): Promise<PluginConversationProfile | null> {
+      for (const hook of hooks) {
+        const profile = await hook.resolveConversationProfile?.(profileContext);
+        if (profile !== undefined && profile !== null) return profile;
+      }
+      return null;
+    },
     async beforePrompt(promptContext: PluginPromptContext): Promise<PluginPromptPatch | undefined> {
       let prepend = "";
       let append = "";
@@ -201,6 +236,13 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
         ...(prepend.length > 0 ? { prepend } : {}),
         ...(append.length > 0 ? { append } : {}),
       };
+    },
+    async formatReply(replyContext: PluginReplyContext): Promise<PluginReplyPlan | null> {
+      for (const hook of hooks) {
+        const plan = await hook.formatReply?.(replyContext);
+        if (plan !== undefined && plan !== null) return plan;
+      }
+      return null;
     },
     async afterRun(runContext: PluginRunContext): Promise<void> {
       for (const hook of hooks) await hook.afterRun?.(runContext);

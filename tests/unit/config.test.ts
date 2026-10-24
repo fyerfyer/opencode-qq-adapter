@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadConfig } from "../../src/config/loader.js";
@@ -42,6 +42,25 @@ default_project: demo
     expect(loaded.config.security.max_queued_prompts).toBe(3);
     expect(loaded.config.opencode.service.mode).toBe("external");
     expect(loaded.warnings.some((warning) => warning.includes("self_id"))).toBe(false);
+  });
+
+  it("expands a leading tilde in project paths", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+users: {}
+projects:
+  demo:
+    path: ~/qq-test-project
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: false });
+    expect(loaded.config.projects.demo?.path).toBe(join(homedir(), "qq-test-project"));
   });
 
   it("reports missing environment variables", async () => {

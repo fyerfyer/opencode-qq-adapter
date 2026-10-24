@@ -80,6 +80,23 @@ export interface PluginConversation {
   model: string | null;
 }
 
+/**
+ * Optional per-run overrides selected by a plugin. The core validates
+ * `directory` against the configured project root before using it.
+ */
+export interface PluginConversationProfile {
+  directory?: string;
+  agent?: string;
+  model?: string;
+  workspace?: "inherit" | "none";
+}
+
+export interface PluginProfileContext {
+  message: PluginMessage;
+  projectId: string;
+  conversation: PluginConversation | null;
+}
+
 export interface PluginSendResult {
   messageId: string;
 }
@@ -149,6 +166,7 @@ export interface PluginPromptContext {
   message: PluginMessage;
   projectId: string;
   conversation: PluginConversation | null;
+  profile: PluginConversationProfile | null;
 }
 
 export interface PluginPromptPatch {
@@ -177,6 +195,7 @@ export interface PluginRunContext {
   runId: string;
   chat: PluginChat;
   userId: number;
+  senderName: string;
   projectId: string;
   workspaceId: string | null;
   sessionId: string | null;
@@ -184,7 +203,30 @@ export interface PluginRunContext {
   usage: PluginRunUsage | null;
   error: string | null;
   durationMs: number;
+  /** Prompt text after plugin injection (legacy). */
   promptText: string;
+  /** Raw user text before plugin injection. */
+  userText: string;
+  /** Final assistant text sent to QQ, when the run completed. */
+  replyText: string | null;
+}
+
+export interface PluginReplyContext {
+  message: PluginMessage;
+  projectId: string;
+  conversation: PluginConversation | null;
+  profile: PluginConversationProfile | null;
+  text: string;
+}
+
+export interface PluginReplySegment {
+  text: string;
+  /** Delay before this segment is sent. The first segment normally uses 0. */
+  delayMs?: number;
+}
+
+export interface PluginReplyPlan {
+  segments: PluginReplySegment[];
 }
 
 export interface PluginConfigReloadContext {
@@ -193,10 +235,18 @@ export interface PluginConfigReloadContext {
 }
 
 export interface PluginHooksDefinition {
+  /** Select a per-run directory/agent/model before the prompt is queued. */
+  resolveConversationProfile?(
+    context: PluginProfileContext,
+  ): PluginConversationProfile | void | Promise<PluginConversationProfile | void>;
   /** Called for every prompt before it enters the run queue. */
   beforePrompt?(
     context: PluginPromptContext,
   ): PluginPromptPatch | void | Promise<PluginPromptPatch | void>;
+  /** Optionally split or delay the final reply before the core sends it. */
+  formatReply?(
+    context: PluginReplyContext,
+  ): PluginReplyPlan | void | Promise<PluginReplyPlan | void>;
   /** Called once a run reaches a terminal state. Failures are isolated. */
   afterRun?(context: PluginRunContext): void | Promise<void>;
   /** Called after the core configuration has been hot-reloaded. */
@@ -219,9 +269,19 @@ export interface PluginEvents {
   ): () => void;
 }
 
-/** Read-only view of the current conversation binding. */
+/** Result of a plugin-initiated conversation mutation. */
+export interface PluginSessionMutationResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/** Read-only view of the current conversation binding plus guarded mutations. */
 export interface PluginSessions {
   get(chatKey: string): PluginConversation | null;
+  /** Switch the chat to a project, resetting the session when the project changes. */
+  setProject(chatKey: string, projectId: string, actor: PluginActor): PluginSessionMutationResult;
+  /** Clear the OpenCode session while keeping the project/persona binding. */
+  reset(chatKey: string, actor: PluginActor): PluginSessionMutationResult;
 }
 
 /** Small filesystem helper rooted at the plugin data directory. */

@@ -80,6 +80,15 @@ export class WorkspaceManager {
   }
 
   status(projectId: string): WorkspaceStatus {
+    const project = this.#config.projects[projectId];
+    if (project?.workspace === "none") {
+      return {
+        workspace: null,
+        lockedByChatKey: null,
+        lockedByRunId: null,
+        leaseExpiresAt: null,
+      };
+    }
     const workspace = this.#ensureShared(projectId);
     return {
       workspace,
@@ -158,6 +167,8 @@ export class WorkspaceManager {
   }
 
   async diff(projectId: string): Promise<WorkspaceDiff> {
+    const project = this.#config.projects[projectId];
+    if (project?.workspace === "none") return { isGit: false, text: "" };
     const path = this.pathFor(projectId);
     try {
       const inside = await execFileAsync(

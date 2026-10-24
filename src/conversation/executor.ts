@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import { projectModels } from "../config/loader.js";
 import type { AppConfig } from "../config/schema.js";
@@ -5,6 +6,7 @@ import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
 import type { WorkspaceLease } from "../domain/workspace.js";
+import type { PluginReplyPlan } from "../plugins/sdk.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
@@ -26,6 +28,7 @@ export interface RunHooks {
   workspaces: WorkspaceManager;
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
+  formatReply?(active: ActiveRun, text: string): Promise<PluginReplyPlan | null>;
   onStarted?(active: ActiveRun): void;
   onFinished?(
     active: ActiveRun,
@@ -85,27 +88,35 @@ export class RunExecutor {
         throw new Error(`Project '${record.projectId}' no longer exists in configuration`);
       }
 
-      lease = await this.#hooks.workspaces.acquire(
-        record.projectId,
-        chatKey,
-        record.id,
-        active.abort.signal,
-      );
-      phases.lockMs = Date.now() - phaseStart;
+      let directory: string;
+      if (project.workspace === "none") {
+        directory = active.profile?.directory ?? project.path;
+        active.workspacePath = directory;
+        phases.lockMs = Date.now() - phaseStart;
+      } else {
+        lease = await this.#hooks.workspaces.acquire(
+          record.projectId,
+          chatKey,
+          record.id,
+          active.abort.signal,
+        );
+        phases.lockMs = Date.now() - phaseStart;
+        active.workspaceId = lease.id;
+        active.workspacePath = lease.path;
+        record.workspaceId = lease.id;
+        this.#store.runs.setWorkspace(record.id, lease.id);
+        this.#store.conversations.setWorkspace(chatKey, lease.id);
+        directory = lease.path;
+      }
       phaseStart = Date.now();
-      active.workspaceId = lease.id;
-      active.workspacePath = lease.path;
-      record.workspaceId = lease.id;
-      this.#store.runs.setWorkspace(record.id, lease.id);
-      this.#store.conversations.setWorkspace(chatKey, lease.id);
 
       const conversation = this.#ensureConversation(
         chatKey,
         record.projectId,
-        lease.id,
+        lease?.id ?? null,
         message.userId,
       );
-      const ensured = await this.#ensureSession(conversation, lease.path, message, active);
+      const ensured = await this.#ensureSession(conversation, directory, message, active);
       const session = ensured.session;
       const updated = ensured.conversation;
       record.sessionId = session.id;
@@ -134,9 +145,10 @@ export class RunExecutor {
         );
         const recreated = await this.#createSession(
           updated,
-          lease.path,
+          directory,
           message,
           active.permissions,
+          active.profile,
         );
         this.#hooks.unbindSession(session.id);
         record.sessionId = recreated.id;
@@ -200,7 +212,13 @@ export class RunExecutor {
           ? result.text
           : "任务已完成，但 OpenCode 没有返回可发送的文本输出。";
 
-      await this.#sender.reply(message.chat, message.id, finalText);
+      active.replyText = finalText;
+      const plan = await this.#hooks.formatReply?.(active, finalText);
+      if (plan !== null && plan !== undefined) {
+        await this.#sendReplyPlan(message, active, plan);
+      } else {
+        await this.#sender.reply(message.chat, message.id, finalText);
+      }
       const usage = result.usage ?? active.usage;
       this.#finish(record.id, "completed", {
         usageJson: usage ? JSON.stringify(usage) : undefined,
@@ -253,6 +271,32 @@ export class RunExecutor {
         this.#hooks.workspaces.release(lease);
       }
       await this.#cleanupProgress(message, progress);
+    }
+  }
+
+  async #sendReplyPlan(
+    message: IncomingMessage,
+    active: ActiveRun,
+    plan: PluginReplyPlan,
+  ): Promise<void> {
+    const sent: string[] = [];
+    try {
+      for (const [index, segment] of plan.segments.entries()) {
+        if (active.stopRequested) throw new RunStoppedError();
+        if (index > 0 && segment.delayMs !== undefined && segment.delayMs > 0) {
+          await delay(segment.delayMs);
+          if (active.stopRequested) throw new RunStoppedError();
+        }
+        if (index === 0) {
+          await this.#sender.reply(message.chat, message.id, segment.text);
+        } else {
+          await this.#sender.send(message.chat, segment.text, { mention: false });
+        }
+        sent.push(segment.text);
+      }
+    } catch (error) {
+      active.replyText = sent.length > 0 ? sent.join("\n") : null;
+      throw error;
     }
   }
 
@@ -332,7 +376,7 @@ export class RunExecutor {
   #ensureConversation(
     chatKey: string,
     projectId: string,
-    workspaceId: string,
+    workspaceId: string | null,
     actorQq: number,
   ): ConversationRecord {
     const existing = this.#store.conversations.get(chatKey);
@@ -389,7 +433,13 @@ export class RunExecutor {
         );
       }
     }
-    const session = await this.#createSession(conversation, directory, message, active.permissions);
+    const session = await this.#createSession(
+      conversation,
+      directory,
+      message,
+      active.permissions,
+      active.profile,
+    );
     return { session, conversation: { ...conversation, sessionId: session.id } };
   }
 
@@ -398,14 +448,15 @@ export class RunExecutor {
     directory: string,
     message: IncomingMessage,
     permissions: PermissionRuleset,
+    profile: ActiveRun["profile"],
   ): Promise<Awaited<ReturnType<AgentPort["createSession"]>>> {
     const project = this.#config.projects[conversation.projectId];
     if (project === undefined) {
       throw new Error(`Project '${conversation.projectId}' no longer exists`);
     }
     const resolved = projectModels(this.#config, project);
-    const agent = conversation.agent ?? resolved.agent;
-    const model = conversation.model ?? resolved.model;
+    const agent = profile?.agent ?? conversation.agent ?? resolved.agent;
+    const model = profile?.model ?? conversation.model ?? resolved.model;
     const session = await this.#agent.createSession({
       directory,
       title: `${conversation.projectId} · QQ ${message.userId}`,
