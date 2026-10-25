@@ -67,7 +67,7 @@ describe("roleplay memory documents", () => {
 
   it("writes private docs atomically and keeps history", async () => {
     const { root, store } = await setup();
-    const ref = { personaId: "p", scope: "private:1", actorQq: 1 };
+    const ref = { namespace: "p", scope: "private:1", actorQq: 1 };
     const first = normalizeDocument("", "user").replace("## 基本信息", "## 基本信息\n- 称呼：鱼片");
     const written = await store.writeUser(ref, first);
     expect(written.path).toBe(join(root, "p", "private_1", "memory.md"));
@@ -87,7 +87,7 @@ describe("roleplay memory documents", () => {
 
   it("stores shared scene and per-user docs under one group directory", async () => {
     const { root, store } = await setup();
-    const ref = { personaId: "p", scope: "group:9", actorQq: 2 };
+    const ref = { namespace: "p", scope: "group:9", actorQq: 2 };
     await store.writeScene(ref, normalizeDocument("", "scene"));
     await store.appendManual(ref, "这是群友二号的记忆");
     const bundle = await store.load(ref);
@@ -106,7 +106,7 @@ describe("roleplay memory documents", () => {
 
   it("removes sections and whole scopes", async () => {
     const { root, store } = await setup();
-    const ref = { personaId: "p", scope: "private:1", actorQq: 1 };
+    const ref = { namespace: "p", scope: "private:1", actorQq: 1 };
     await store.writeUser(
       ref,
       normalizeDocument("", "user").replace("## 喜好", "## 喜好\n- 白米饭"),

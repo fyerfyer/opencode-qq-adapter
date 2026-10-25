@@ -88,6 +88,39 @@ function command(
   };
 }
 
+function activeRun(projectId = "demo"): ActiveRun {
+  const now = Date.now();
+  return {
+    record: {
+      id: "run_reply_plan",
+      chatKey: "private:20000",
+      projectId,
+      workspaceId: null,
+      sessionId: "ses_reply_plan",
+      actorQq: 20000,
+      status: "running",
+      startedAt: now,
+      finishedAt: null,
+      stopReason: null,
+      error: null,
+      usageJson: null,
+    },
+    message: makeIncomingMessage({ text: "prompt" }),
+    rawText: "prompt",
+    permissions: [],
+    profile: null,
+    abort: new AbortController(),
+    stopRequested: false,
+    interrupted: false,
+    agentError: null,
+    partialText: "",
+    usage: null,
+    workspaceId: null,
+    workspacePath: null,
+    replyText: null,
+  };
+}
+
 describe("PluginHost", () => {
   it("loads a valid plugin, registers commands and executes aliases", async () => {
     const { host, onebot } = await makeHost({ "hello-fixture": { path: fixture("hello") } });
@@ -212,6 +245,66 @@ describe("PluginHost", () => {
       type: string;
     };
     expect(event.type).toBe("run.finished");
+  });
+
+  it("resolves ordered text and image reply segments", async () => {
+    const { host } = await makeHost({
+      "reply-media-fixture": { path: fixture("reply-media"), options: { mode: "mixed" } },
+    });
+    const plan = await host.formatReply(activeRun(), "final text");
+    expect(plan?.suppress).toBeUndefined();
+    expect(plan?.segments.map((segment) => segment.kind)).toEqual(["text", "text", "image"]);
+    const image = plan?.segments[2];
+    expect(image?.kind).toBe("image");
+    if (image?.kind === "image") {
+      expect(image.dataUri.startsWith("base64://")).toBe(true);
+      expect(image.caption).toBe("图注");
+      expect(image.mime).toBe("image/png");
+      expect(image.bytes).toBeGreaterThan(0);
+    }
+  });
+
+  it("supports image-only and suppressed reply plans", async () => {
+    const { host } = await makeHost({
+      "reply-media-fixture": { path: fixture("reply-media"), options: { mode: "image" } },
+    });
+    const imageOnly = await host.formatReply(activeRun(), "final");
+    expect(imageOnly?.segments.map((segment) => segment.kind)).toEqual(["image"]);
+
+    const suppressedHost = await makeHost({
+      "reply-media-fixture": {
+        path: fixture("reply-media"),
+        options: { mode: "suppress" },
+      },
+    });
+    const suppressed = await suppressedHost.host.formatReply(activeRun(), "final");
+    expect(suppressed).toEqual({ segments: [], suppress: true });
+  });
+
+  it("drops invalid or outside images without leaking the plan", async () => {
+    for (const mode of ["escape", "invalid"] as const) {
+      const { host } = await makeHost({
+        "reply-media-fixture": { path: fixture("reply-media"), options: { mode } },
+      });
+      const plan = await host.formatReply(activeRun(), "final");
+      expect(plan?.segments.map((segment) => segment.kind)).toEqual(["text", "text"]);
+    }
+  });
+
+  it("caps images per reply", async () => {
+    const { host } = await makeHost({
+      "reply-media-fixture": { path: fixture("reply-media"), options: { mode: "many" } },
+    });
+    const plan = await host.formatReply(activeRun(), "final");
+    expect(plan?.segments.filter((segment) => segment.kind === "image")).toHaveLength(2);
+  });
+
+  it("keeps legacy text-only reply plans working", async () => {
+    const { host } = await makeHost({
+      "reply-media-fixture": { path: fixture("reply-media"), options: { mode: "legacy" } },
+    });
+    const plan = await host.formatReply(activeRun(), "final");
+    expect(plan?.segments).toEqual([{ kind: "text", text: "legacy" }]);
   });
 
   it("reloads plugin config and notifies onConfigReload hooks", async () => {

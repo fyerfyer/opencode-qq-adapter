@@ -100,6 +100,19 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
+  packages/memory:
+    dependencies:
+      better-sqlite3:
+        specifier: ^12.4.1
+        version: 12.11.1
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/plugin-sdk: {}
 
   packages/roleplay:
@@ -107,6 +120,9 @@ importers:
       '@character-foundry/character-foundry':
         specifier: ^0.6.0
         version: 0.6.0(@types/node@22.20.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@opencode-qq/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@opencode-qq/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk

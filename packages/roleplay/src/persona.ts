@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseCard } from "@character-foundry/character-foundry/loader";
+import { parseCard, type ExtractedAsset } from "@character-foundry/character-foundry/loader";
 import type { CCv3Data } from "@character-foundry/character-foundry/schemas";
+import { normalizeEmotionName } from "./stickers.js";
 import { normalizeWorldbook, type WorldbookEntry } from "./worldbook.js";
 
 const PERSONA_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -24,12 +25,15 @@ export interface ImportCardInput {
   /** Optional stable id. Defaults to a slug of the card name or a content hash. */
   id?: string;
   now?: number;
+  /** Optional plugin dataDir/stickers root for extracted CCv3 emotion assets. */
+  stickerRoot?: string;
 }
 
 export interface ImportedPersona {
   persona: PersonaRecord;
   card: CCv3Data;
   worldbook: WorldbookEntry[];
+  stickerCount: number;
 }
 
 function slugify(name: string): string {
@@ -93,7 +97,7 @@ export function renderWorldbookMarkdown(entries: WorldbookEntry[]): string {
     lines.push(`## ${entry.name}`);
     lines.push(
       `关键词：${entry.keys.length > 0 ? entry.keys.join("、") : "（常驻）"}`,
-      `优先级：${entry.priority} · 触发：${entry.constant ? "常驻" : entry.selective ? "主+次关键词" : "关键词"}`,
+      `优先级：${entry.priority} · 触发：${entry.constant ? "常驻" : entry.selective ? "主+次关键词" : "关键词"} · 匹配：${entry.matchWholeWords === true ? "整词" : "子串"} · 位置：${entry.position}`,
       "",
       entry.content,
       "",
@@ -154,6 +158,10 @@ export async function importCard(input: ImportCardInput): Promise<ImportedPerson
     const ext = mainAsset.ext.replace(/^\./, "") || "png";
     await writeFile(join(dir, `avatar.${ext}`), Buffer.from(mainAsset.data), { mode: 0o600 });
   }
+  const stickerCount =
+    input.stickerRoot === undefined
+      ? 0
+      : await writeEmotionAssets(parsed.assets, id, input.stickerRoot);
 
   const persona: PersonaRecord = {
     id,
@@ -168,7 +176,62 @@ export async function importCard(input: ImportCardInput): Promise<ImportedPerson
     encoding: "utf8",
     mode: 0o600,
   });
-  return { persona, card, worldbook };
+  return { persona, card, worldbook, stickerCount };
+}
+
+/**
+ * Copy CCv3 emotion assets into `<dataDir>/stickers/<persona>/<emotion>/`.
+ * Returns the number of written files (0 when the card has no emotion assets).
+ */
+export async function writeEmotionAssets(
+  assets: ExtractedAsset[],
+  personaId: string,
+  stickerRoot: string,
+): Promise<number> {
+  let count = 0;
+  for (const asset of assets) {
+    if (asset.type !== "emotion") continue;
+    const emotion = normalizeEmotionName(asset.name);
+    if (emotion === null) continue;
+    const ext = normalizeImageExtension(asset.ext);
+    if (ext === null) continue;
+    const dir = join(stickerRoot, personaId, emotion);
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    const base = sanitizeAssetName(asset.name) || emotion;
+    let name = `${base}.${ext}`;
+    let suffix = 2;
+    while (await exists(join(dir, name))) {
+      name = `${base}-${suffix}.${ext}`;
+      suffix += 1;
+    }
+    await writeFile(join(dir, name), Buffer.from(asset.data), { mode: 0o600 });
+    count += 1;
+  }
+  return count;
+}
+
+function normalizeImageExtension(value: string): string | null {
+  const ext = value.trim().toLowerCase().replace(/^\./, "");
+  return ["png", "jpg", "jpeg", "gif", "webp"].includes(ext) ? ext : null;
+}
+
+function sanitizeAssetName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readPersonaRecord(dir: string): Promise<PersonaRecord | null> {

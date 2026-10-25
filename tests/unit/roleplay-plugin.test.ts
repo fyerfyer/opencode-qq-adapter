@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import roleplay from "../../packages/roleplay/src/index.js";
 import { getPersona, importCard } from "../../packages/roleplay/src/persona.js";
 import type {
@@ -23,6 +23,8 @@ const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const dispose of disposers.reverse()) await dispose();
   disposers.length = 0;
+  vi.unstubAllGlobals();
+  delete process.env.JEV_TEST_KEY;
 });
 
 function fakeMemoryAgent() {
@@ -161,6 +163,177 @@ describe("roleplay plugin", () => {
     expect(prompt?.prepend).toContain("[长期记忆]");
     expect(prompt?.prepend).toContain("称呼：鱼片");
     expect(prompt?.prepend).toContain("喜欢吃白米饭");
+  });
+
+  it("reports worldbook matches through !worldbook check", async () => {
+    const { harness } = await setup();
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const result = await harness.runCommand("worldbook", {
+      args: ["check", "我想吃白饭"],
+    });
+    expect(result).toContain("白饭执念");
+    expect(result).toContain("当前消息");
+    expect(result).toContain("最终：");
+  });
+
+  it("strips emotion tags and appends a sticker segment", async () => {
+    const { harness, dataDir } = await setup();
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    await mkdir(join(dataDir, "stickers", "blue-fat-fish", "happy"), { recursive: true });
+    await writeFile(
+      join(dataDir, "stickers", "blue-fat-fish", "happy", "1.gif"),
+      Buffer.from("GIF89a", "ascii"),
+    );
+
+    const prompt = await harness.beforePrompt({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+    });
+    expect(prompt?.prepend).toContain("可用表情：happy");
+
+    const plan = await harness.formatReply({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "你好呀[emotion:happy]",
+    });
+    expect(plan?.segments).toHaveLength(2);
+    expect(plan?.segments[0]).toMatchObject({ text: "你好呀" });
+    expect(plan?.segments[1]).toMatchObject({
+      image: { path: "stickers/blue-fat-fish/happy/1.gif" },
+      delayMs: 600,
+    });
+    expect(JSON.stringify(plan)).not.toContain("[emotion:");
+  });
+
+  it("falls back to text when an emotion has no asset", async () => {
+    const { harness } = await setup();
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const plan = await harness.formatReply({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "只有文字[emotion:happy]",
+    });
+    expect(plan?.segments).toEqual([{ text: "只有文字" }]);
+
+    const empty = await harness.formatReply({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "[emotion:happy]",
+    });
+    expect(empty).toEqual({ segments: [], suppress: true, replyText: null });
+  });
+
+  it("uses Jev to choose an emotion sticker when there is no model tag", async () => {
+    const fetch = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            answers: {
+              emotion: { choice: "sad", confidence: 0.81, probabilities: { sad: 0.9 } },
+              sticker_ok: { noul: 0.86 },
+            },
+            usage: { input_tokens: 400, output_tokens: 50, cost: 0.00002 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    process.env.JEV_TEST_KEY = "test-key";
+    const { harness, dataDir } = await setup({
+      sticker_judge: "jev",
+      jev_base_url: "https://jev.test/v1",
+      jev_endpoint: "decisions",
+      jev_model: "jev-test",
+      jev_api_key_env: "JEV_TEST_KEY",
+      jev_min_confidence: 0.55,
+      jev_min_sticker_ok: 0.7,
+    });
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    await mkdir(join(dataDir, "stickers", "blue-fat-fish", "sad"), { recursive: true });
+    await writeFile(join(dataDir, "stickers", "blue-fat-fish", "sad", "1.gif"), "GIF89a");
+
+    const plan = await harness.formatReply({
+      message: message("我今天被老板骂了"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "（叹气）别理那个老板，先坐下吃饭。",
+    });
+    expect(plan?.segments.map((segment) => ("text" in segment ? "text" : "image"))).toEqual([
+      "text",
+      "image",
+    ]);
+    expect(plan?.segments.at(-1)).toMatchObject({
+      image: { path: "stickers/blue-fat-fish/sad/1.gif" },
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://jev.test/v1/decisions");
+    delete process.env.JEV_TEST_KEY;
+  });
+
+  it("does not send a sticker when Jev confidence is low or the request fails", async () => {
+    const lowConfidence = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            answers: {
+              emotion: { choice: "sad", confidence: 0.2 },
+              sticker_ok: { noul: 0.9 },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", lowConfidence);
+    process.env.JEV_TEST_KEY = "test-key";
+    const low = await setup({
+      sticker_judge: "jev",
+      jev_api_key_env: "JEV_TEST_KEY",
+      jev_min_confidence: 0.55,
+    });
+    await low.harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    await mkdir(join(low.dataDir, "stickers", "blue-fat-fish", "sad"), { recursive: true });
+    await writeFile(join(low.dataDir, "stickers", "blue-fat-fish", "sad", "1.gif"), "GIF89a");
+    const lowPlan = await low.harness.formatReply({
+      message: message("我今天被老板骂了"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "别理那个老板。",
+    });
+    expect(lowPlan?.segments.every((segment) => "text" in segment)).toBe(true);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    const failed = await setup({
+      sticker_judge: "jev",
+      jev_api_key_env: "JEV_TEST_KEY",
+      jev_min_confidence: 0.55,
+    });
+    await failed.harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    await mkdir(join(failed.dataDir, "stickers", "blue-fat-fish", "sad"), { recursive: true });
+    await writeFile(join(failed.dataDir, "stickers", "blue-fat-fish", "sad", "1.gif"), "GIF89a");
+    const failedPlan = await failed.harness.formatReply({
+      message: message("我今天被老板骂了"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "别理那个老板。",
+    });
+    expect(failedPlan?.segments.every((segment) => "text" in segment)).toBe(true);
+    delete process.env.JEV_TEST_KEY;
   });
 
   it("supports manual memory, diff, history and section deletion", async () => {

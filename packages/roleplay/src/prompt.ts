@@ -16,6 +16,8 @@ export interface PromptContextInput {
   turnCount: number;
   /** Optional scene label, e.g. a group chat. */
   scene?: string;
+  /** Available sticker emotions; omitted when no assets exist. */
+  emotions?: string[];
   worldbook: WorldbookEntry[];
   memories: MemorySnippet[];
   /** Markdown memory document for the current user. */
@@ -43,11 +45,23 @@ export function buildContextBlock(input: PromptContextInput): string {
       ...(input.scene !== undefined && input.scene.trim().length > 0
         ? [`场景：${input.scene.trim()}`]
         : []),
+      ...(input.emotions !== undefined && input.emotions.length > 0
+        ? [`可用表情：${input.emotions.join("、")}`]
+        : []),
     ].join("\n"),
   ];
 
   const userMax = input.sectionMaxChars?.user ?? input.maxChars;
   const userDoc = docForPrompt(input.userDoc ?? "", userMax);
+  const before = input.worldbook.filter((entry) => entry.position === "before_char");
+  const after = input.worldbook.filter((entry) => entry.position === "after_char");
+  const splitPosition = before.length > 0 && after.length > 0;
+  const beforeSection = renderWorldbookSection(
+    before,
+    input.maxChars,
+    splitPosition ? "[世界书 · 前置]" : "[世界书]",
+  );
+  if (beforeSection.length > 0) sections.push(beforeSection);
   if (userDoc.length > 0) {
     sections.push(`[长期记忆]\n${userDoc}`);
   }
@@ -58,15 +72,12 @@ export function buildContextBlock(input: PromptContextInput): string {
     sections.push(`[群聊场景]\n${sceneDoc}`);
   }
 
-  if (input.worldbook.length > 0) {
-    sections.push(
-      renderSection(
-        "[世界书]",
-        input.worldbook.map((entry) => `- ${entry.content}`),
-        input.maxChars,
-      ),
-    );
-  }
+  const afterSection = renderWorldbookSection(
+    after,
+    input.maxChars,
+    splitPosition ? "[世界书 · 后置]" : "[世界书]",
+  );
+  if (afterSection.length > 0) sections.push(afterSection);
 
   const rawMax = input.sectionMaxChars?.raw ?? input.maxChars;
   if (input.memories.length > 0) {
@@ -93,6 +104,19 @@ export function buildContextBlock(input: PromptContextInput): string {
   const suffix = "\n[/检索上下文]";
   const head = block.slice(0, Math.max(0, input.maxChars - suffix.length - 1));
   return `${head.trimEnd()}…${suffix}`.slice(0, input.maxChars);
+}
+
+function renderWorldbookSection(
+  entries: WorldbookEntry[],
+  maxChars: number,
+  header: string,
+): string {
+  if (entries.length === 0) return "";
+  return renderSection(
+    header,
+    entries.map((entry) => `- ${entry.content}`),
+    maxChars,
+  );
 }
 
 function renderSection(header: string, lines: string[], maxChars: number): string {

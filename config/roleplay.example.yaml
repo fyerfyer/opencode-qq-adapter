@@ -71,6 +71,35 @@ plugins:
       worldbook_scan_depth: 6
       worldbook_max_entries: 4
       worldbook_max_chars: 1200
+      # Extra recursion passes: 0 disables, 1 lets selected entry content
+      # activate another entry once. Shared budget still applies.
+      worldbook_recursion_steps: 1
+      # Per-entry match_whole_words is read from the card. This only sets the
+      # fallback for entries without the field (Chinese still uses substring).
+      worldbook_match_whole_words: false
+
+      # Stickers live in <storage.plugins_dir>/roleplay/stickers/<persona>/<emotion>/
+      # or _global/<emotion>/. Max one sticker per reply.
+      sticker_enabled: true
+      sticker_delay_ms: 600
+      sticker_cooldown_ms: 30000
+      # tag | jev | hybrid | off. `jev` sends the current user message and
+      # character reply to a Jev decision endpoint, then thresholds on
+      # confidence + sticker_ok. `hybrid` tries a model tag first.
+      sticker_judge: jev
+      # TypeSafe direct:
+      jev_base_url: https://api.typesafe.ai/v1
+      jev_endpoint: systemone
+      jev_model: jev-latest
+      # OpenRouter/relay example:
+      # jev_base_url: https://openrouter.ai/api
+      # jev_endpoint: alpha/decisions
+      # jev_model: typesafe/jev-1.14
+      # Secret is read from the environment, never from YAML.
+      jev_api_key_env: TYPESAFE_API_KEY
+      jev_min_confidence: 0.45
+      jev_min_sticker_ok: 0.8
+      jev_timeout_ms: 2800
 
       # Long-term memory lives in Markdown documents under
       # <storage.plugins_dir>/roleplay/memory/<persona>/<scope>/.

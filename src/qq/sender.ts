@@ -66,6 +66,32 @@ export class MessageSender {
     return this.#onebot.sendPrivate(chat.userId, segments);
   }
 
+  /** Send an image, optionally as a quote reply and with a caption. */
+  async sendImage(
+    chat: ChatRef,
+    file: string,
+    caption = "",
+    options: { messageId?: string; mention?: boolean } = {},
+  ): Promise<OneBotSendResult> {
+    const segments: OutgoingSegment[] = [];
+    if (
+      chat.type === "group" &&
+      options.mention !== false &&
+      this.#config.mention_sender_in_group &&
+      chat.userId > 0
+    ) {
+      segments.push(atSegment(chat.userId), textSegment(" "));
+    }
+    segments.push({ type: "image", file });
+    const text = caption.trim().slice(0, 500);
+    if (text.length > 0) segments.push(textSegment(text));
+
+    if (options.messageId !== undefined && this.#config.reply_to_message) {
+      return this.#onebot.reply(chat, options.messageId, segments);
+    }
+    return this.sendSegments(chat, segments);
+  }
+
   /** Upload a file to the chat. OneBot has separate private/group upload APIs. */
   async sendFile(chat: ChatRef, file: string, name: string): Promise<void> {
     if (chat.type === "group" && chat.groupId !== undefined) {

@@ -256,14 +256,39 @@ export interface PluginReplyContext {
   text: string;
 }
 
-export interface PluginReplySegment {
+export interface PluginReplyTextSegment {
   text: string;
   /** Delay before this segment is sent. The first segment normally uses 0. */
   delayMs?: number;
 }
 
+export interface PluginReplyImageInput {
+  /**
+   * Path relative to the plugin data directory. Absolute paths are accepted
+   * only when they resolve inside the same directory.
+   */
+  path: string;
+  caption?: string;
+}
+
+export interface PluginReplyImageSegment {
+  image: PluginReplyImageInput;
+  /** Delay before this segment is sent. The first segment normally uses 0. */
+  delayMs?: number;
+}
+
+export type PluginReplySegment = PluginReplyTextSegment | PluginReplyImageSegment;
+
 export interface PluginReplyPlan {
   segments: PluginReplySegment[];
+  /** When true, the core sends nothing for this reply. */
+  suppress?: boolean;
+  /**
+   * Text exposed to `afterRun` hooks (e.g. after stripping hidden emotion tags).
+   * Omit to keep the original final assistant text. `null` means no text was
+   * visible to the user (image-only or suppressed replies).
+   */
+  replyText?: string | null;
 }
 
 export interface PluginConfigReloadContext {

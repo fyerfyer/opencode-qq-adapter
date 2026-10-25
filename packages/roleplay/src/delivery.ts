@@ -10,6 +10,22 @@ export interface ReplySegment {
   delayMs?: number;
 }
 
+export interface ReplyImageSegment {
+  image: {
+    path: string;
+    caption?: string;
+  };
+  delayMs?: number;
+}
+
+export type ReplyPlanSegment = ReplySegment | ReplyImageSegment;
+
+export interface StickerPlanInput {
+  /** Path relative to the plugin data directory. */
+  path: string;
+  delayMs?: number;
+}
+
 /**
  * Roleplay replies are prose, not Markdown. Strip the formatting that QQ would
  * otherwise render literally without changing the words.
@@ -95,4 +111,23 @@ export function planReply(input: string, options: DeliveryOptions): ReplySegment
     );
     return { text, ...(delayMs > 0 ? { delayMs } : {}) };
   });
+}
+
+/** Append at most one sticker after the text bubbles. */
+export function planReplyWithSticker(
+  input: string,
+  options: DeliveryOptions,
+  sticker: StickerPlanInput | null,
+): ReplyPlanSegment[] {
+  const text = planReply(input, options);
+  if (sticker === null) return text;
+  const delayMs =
+    sticker.delayMs !== undefined && sticker.delayMs > 0
+      ? Math.min(5000, Math.max(0, Math.floor(sticker.delayMs)))
+      : undefined;
+  const image: ReplyImageSegment = {
+    image: { path: sticker.path },
+    ...(delayMs !== undefined ? { delayMs } : {}),
+  };
+  return text.length === 0 ? [image] : [...text, image];
 }

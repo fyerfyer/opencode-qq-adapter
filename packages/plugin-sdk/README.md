@@ -142,7 +142,10 @@ context.hooks.register({
       segments: [
         { text: text.slice(0, 80) },
         { text: text.slice(80), delayMs: 900 },
+        { image: { path: "stickers/happy/1.gif", caption: "……" }, delayMs: 400 },
       ],
+      // Optional: text after stripping plugin-private tags.
+      replyText: text,
     };
   },
 });
@@ -154,9 +157,12 @@ Rules:
 - The core resolves both paths with `realpath`; the run directory must stay inside the configured project root.
 - A profile cannot widen permissions; the core still compiles the ruleset from YAML policy.
 - `formatReply` may return at most 8 non-empty segments; delays are clamped to 5 seconds and the total text to 8,000 characters.
+- Image paths are relative to the plugin data directory. The core resolves `realpath`, rejects escapes, validates PNG/JPEG/GIF/WebP magic bytes and `security.max_outbound_image_bytes`, and caps images with `qq.max_reply_images` (default 2).
+- Ordered segments are sent sequentially; `!stop` is checked between segments. A failed image is logged and skipped without aborting later text.
+- Set `suppress: true` to send nothing for this reply. Set `replyText` to the visible text that `afterRun` should record (for example after stripping an `[emotion:...]` tag); omit it to keep the original assistant text, or use `null` for image-only/suppressed replies.
 - The first plugin returning a valid profile/plan wins. Invalid plans fall back to the original reply.
 
-`afterRun` receives both `userText` (before injection) and `replyText` (the final assistant text), which is what transcript-memory plugins should store.
+`afterRun` receives both `userText` (before injection) and `replyText` (the final assistant text or the plan's visible text), which is what transcript-memory plugins should store.
 
 ## Background utility runs
 

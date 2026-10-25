@@ -6,12 +6,12 @@ import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionRuleset } from "../domain/permission.js";
 import type { WorkspaceLease } from "../domain/workspace.js";
-import type { PluginReplyPlan } from "../plugins/sdk.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
 import { WorkspaceLockAbortedError, type WorkspaceManager } from "../workspace/manager.js";
 import { friendlyError, isSessionMissing } from "./errors.js";
+import type { ResolvedReplyPlan } from "./reply-plan.js";
 import { collectResponse, toPromptFiles } from "./response.js";
 import { type ActiveRun, RunStoppedError, type RunUsage } from "./types.js";
 
@@ -28,7 +28,7 @@ export interface RunHooks {
   workspaces: WorkspaceManager;
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
-  formatReply?(active: ActiveRun, text: string): Promise<PluginReplyPlan | null>;
+  formatReply?(active: ActiveRun, text: string): Promise<ResolvedReplyPlan | null>;
   onStarted?(active: ActiveRun): void;
   onFinished?(
     active: ActiveRun,
@@ -277,27 +277,53 @@ export class RunExecutor {
   async #sendReplyPlan(
     message: IncomingMessage,
     active: ActiveRun,
-    plan: PluginReplyPlan,
+    plan: ResolvedReplyPlan,
   ): Promise<void> {
-    const sent: string[] = [];
-    try {
-      for (const [index, segment] of plan.segments.entries()) {
-        if (active.stopRequested) throw new RunStoppedError();
-        if (index > 0 && segment.delayMs !== undefined && segment.delayMs > 0) {
-          await delay(segment.delayMs);
-          if (active.stopRequested) throw new RunStoppedError();
+    if (plan.suppress === true) {
+      active.replyText = plan.replyText ?? null;
+      return;
+    }
+    let sentAny = false;
+    for (const [index, segment] of plan.segments.entries()) {
+      if (active.stopRequested) throw new RunStoppedError();
+      if (index > 0 && segment.delayMs !== undefined && segment.delayMs > 0) {
+        try {
+          await delay(segment.delayMs, undefined, { signal: active.abort.signal });
+        } catch {
+          throw new RunStoppedError();
         }
-        if (index === 0) {
+        if (active.stopRequested) throw new RunStoppedError();
+      }
+      if (segment.kind === "text") {
+        if (!sentAny) {
           await this.#sender.reply(message.chat, message.id, segment.text);
         } else {
           await this.#sender.send(message.chat, segment.text, { mention: false });
         }
-        sent.push(segment.text);
+        sentAny = true;
+      } else {
+        try {
+          await this.#sender.sendImage(
+            message.chat,
+            segment.dataUri,
+            segment.caption ?? "",
+            sentAny ? { mention: false } : { messageId: message.id },
+          );
+          sentAny = true;
+        } catch (error) {
+          this.#logger.warn(
+            {
+              err: error,
+              runId: active.record.id,
+              pluginId: segment.pluginId,
+              bytes: segment.bytes,
+            },
+            "Failed to send plugin reply image; continuing",
+          );
+        }
       }
-    } catch (error) {
-      active.replyText = sent.length > 0 ? sent.join("\n") : null;
-      throw error;
     }
+    if (plan.replyText !== undefined) active.replyText = plan.replyText;
   }
 
   #startProgress(message: IncomingMessage): ProgressState {

@@ -118,7 +118,7 @@ export class MemoryService {
     const ts = input.ts ?? this.#now();
     if (input.userText.trim().length > 0) {
       this.#transcript.addMessage({
-        personaId: input.personaId,
+        namespace: input.personaId,
         chatKey: input.chatKey,
         scope: input.scope,
         role: "user",
@@ -131,7 +131,7 @@ export class MemoryService {
     }
     if (input.replyText !== null && input.replyText.trim().length > 0) {
       this.#transcript.addMessage({
-        personaId: input.personaId,
+        namespace: input.personaId,
         chatKey: input.chatKey,
         scope: input.scope,
         role: "assistant",
@@ -190,7 +190,7 @@ export class MemoryService {
     actorQq: number;
   }): Promise<{ shared: boolean; userDoc: string; sceneDoc: string }> {
     const bundle = await this.#documents.load({
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
     });
@@ -208,7 +208,7 @@ export class MemoryService {
     allActors?: boolean;
   }): Promise<MemoryView> {
     const ref = {
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
     };
@@ -239,14 +239,14 @@ export class MemoryService {
     const inFlight = this.#jobs.get(input.scope);
     if (inFlight !== undefined) await inFlight;
     const ref = {
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
     };
     const content = input.content.replace(/\s+/g, " ").trim();
     const written = await this.#documents.appendManual(ref, content);
     this.#transcript.addMemoryEvent({
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
       action: "manual_add",
@@ -273,7 +273,7 @@ export class MemoryService {
       (this.#generation.get(input.scope) ?? 0) + 1,
     );
     await this.#documents.forgetAll({
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
     });
@@ -294,7 +294,7 @@ export class MemoryService {
     if (inFlight !== undefined) await inFlight;
     const removed = await this.#documents.forgetSection(
       {
-        personaId: input.personaId,
+        namespace: input.personaId,
         scope: input.scope,
         actorQq: input.actorQq,
       },
@@ -302,7 +302,7 @@ export class MemoryService {
     );
     if (removed) {
       this.#transcript.addMemoryEvent({
-        personaId: input.personaId,
+        namespace: input.personaId,
         scope: input.scope,
         actorQq: input.actorQq,
         action: "manual_delete",
@@ -347,14 +347,14 @@ export class MemoryService {
       query.length === 0
         ? []
         : this.#transcript.search({
-            personaId: input.personaId,
+            namespace: input.personaId,
             scope: input.scope,
             query,
             limit,
           });
     return this.#documents
       .load({
-        personaId: input.personaId,
+        namespace: input.personaId,
         scope: input.scope,
         actorQq: input.actorQq,
       })
@@ -363,7 +363,7 @@ export class MemoryService {
         const userDocs =
           bundle.shared && input.allActors === true
             ? await this.#documents.loadAllUserDocs({
-                personaId: input.personaId,
+                namespace: input.personaId,
                 scope: input.scope,
                 actorQq: input.actorQq,
               })
@@ -422,7 +422,7 @@ export class MemoryService {
       } catch (error) {
         this.#retryAfter.set(key, this.#now() + FAILURE_RETRY_MS);
         this.#logger.warn(
-          { err: error, personaId: input.personaId, scope: input.scope },
+          { err: error, namespace: input.personaId, scope: input.scope },
           "Roleplay memory consolidation failed; will retry later",
         );
         return {
@@ -449,13 +449,13 @@ export class MemoryService {
       lastId > 0
         ? this.#transcript.messagesAfter({
             chatKey: input.chatKey,
-            personaId: input.personaId,
+            namespace: input.personaId,
             afterId: lastId,
             limit: 40,
           })
         : this.#transcript.messagesTail({
             chatKey: input.chatKey,
-            personaId: input.personaId,
+            namespace: input.personaId,
             limit: 40,
           });
     if (messages.length === 0) {
@@ -463,7 +463,7 @@ export class MemoryService {
     }
 
     const ref: MemoryDocRef = {
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
     };
@@ -471,7 +471,7 @@ export class MemoryService {
     const userMessages = bundle.shared
       ? this.#transcript.messagesTailForActor({
           chatKey: input.chatKey,
-          personaId: input.personaId,
+          namespace: input.personaId,
           actorQq: input.actorQq,
           limit: 40,
         })
@@ -534,7 +534,7 @@ export class MemoryService {
 
     const sourceMessageId = messages.at(-1)?.id ?? lastId;
     this.#transcript.addMemoryEvent({
-      personaId: input.personaId,
+      namespace: input.personaId,
       scope: input.scope,
       actorQq: input.actorQq,
       action: "consolidate",
@@ -559,7 +559,7 @@ export class MemoryService {
     }
     this.#logger.info(
       {
-        personaId: input.personaId,
+        namespace: input.personaId,
         scope: input.scope,
         changed,
         userOps: parsed.userOperations.length,

@@ -1,6 +1,6 @@
 # @opencode-qq/roleplay
 
-Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Memory is a human-readable Markdown document per persona/scope, consolidated by a background LLM; raw messages stay in SQLite for FTS and evidence.
+Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Worldbook selection supports one optional recursion pass, per-entry whole-word matching, and a debug command. Replies can append one emotion sticker. Memory is a human-readable Markdown document per persona/scope, consolidated by a background LLM; raw messages stay in SQLite for FTS and evidence. Reusable transcript/document primitives live in `@opencode-qq/memory`; roleplay policy stays here.
 
 ## What it does
 
@@ -8,9 +8,78 @@ Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Memory is a huma
 - Stores each persona in a self-contained directory with `AGENTS.md`, card JSON, worldbook, greetings, and user notes.
 - Runs OpenCode through a dedicated tool-free `qq-rp` primary agent.
 - Injects worldbook matches, the Markdown memory document, and retrieved raw transcript snippets into each turn.
+- Supports worldbook lite: keyword/secondary-key/constant activation, one optional recursion pass, ASCII whole-word matching, and `!worldbook check <text>`.
+- Extracts CCv3 `emotion` assets (or manual `stickers/<emotion>/` files) and appends at most one sticker per reply.
+- Uses Jev (System One decision model) to choose an emotion from the visible reply, with confidence/sticker-ok thresholds.
 - Consolidates memory in the background through a hidden, tool-free `qq-rp-utility` agent using section-level JSON operations.
 - Splits replies into 1-4 QQ bubbles with typing delays.
 - Supports private chats, group `per_user`, group `shared`, and group `readonly`.
+
+## Worldbook lite+
+
+The plugin reads Character Book entries with `keys`, `secondary_keys`, `constant`, `selective`, `case_sensitive`, `priority`, `insertion_order`, and `position`.
+
+```text
+worldbook_recursion_steps: 1   # extra passes; 0 disables; 1 = selected content triggers one more scan
+worldbook_match_whole_words: false
+```
+
+- Constants are selected first, then priority / insertion order.
+- Recursion only uses **selected** entry content and shares the same `maxEntries` / `maxChars` budget. It stops when a pass adds nothing.
+- `match_whole_words` is read per entry (`extensions.match_whole_words`). ASCII word keys use ASCII word boundaries; multi-word and CJK/mixed keys stay substring. This is intentionally not exact SillyTavern compatibility.
+- `position` only controls ordering: `before_char` goes before memory, `after_char` after memory. The character card still lives in `AGENTS.md`, so the plugin cannot truly insert before/after character definitions.
+- `!worldbook check <text>` prints matched keys, the source (current message / recent message / recursive entry), selected entries, and budget drops.
+
+## Stickers
+
+Emotion tags are optional and stripped before QQ delivery and memory storage:
+
+```text
+（把饭碗搂紧）……就半碗。[emotion:shy]
+```
+
+Assets live under the plugin data directory:
+
+```text
+<storage.plugins_dir>/roleplay/stickers/
+  <persona-id>/
+    happy/1.gif
+    shy/1.gif
+  _global/
+    happy/1.gif
+```
+
+- CCv3 `assets` with `type: "emotion"` are copied during `!card import`.
+- A persona emotion overrides the `_global` fallback for that emotion.
+- One sticker per reply, random selection, avoiding the same file consecutively for the same chat/persona.
+- Missing asset: the tag is removed and the text is sent normally.
+- Empty text with no asset: the reply is suppressed.
+- `sticker_enabled: false` disables selection but still strips tags.
+
+### Jev emotion judge
+
+The model tag is optional. For reliable automatic stickers, set `sticker_judge: jev`: the plugin sends only the current user message and the visible character reply to a Jev-style decision endpoint, asks one `Choice` question (`emotion`, including `none`) and one `Noul` question (`sticker_ok`), then thresholds `confidence` and `sticker_ok`.
+
+```yaml
+sticker_judge: jev          # off | tag | jev | hybrid
+sticker_cooldown_ms: 30000  # minimum gap between automatic stickers; 0 disables
+jev_base_url: https://api.typesafe.ai/v1
+jev_endpoint: systemone     # decisions for OpenRouter/compatible relays
+jev_model: jev-latest
+jev_api_key_env: TYPESAFE_API_KEY
+jev_min_confidence: 0.45
+jev_min_sticker_ok: 0.8
+jev_timeout_ms: 2500
+```
+
+- `jev` is Jev-led; a model tag is ignored. If the key is missing, the plugin falls back to a valid model tag; if Jev fails or confidence is low, it sends text only.
+- `sticker_cooldown_ms` limits automatic stickers to at most one per window; `0` disables the cooldown. `!sticker test` bypasses it.
+- `hybrid` tries a valid tag first, then Jev.
+- `tag` keeps the original tag-only behavior; `off` disables stickers but still strips tags.
+- The key is read from the environment variable named by `jev_api_key_env`; never put it in YAML.
+- Only the current user message and visible assistant reply are sent (no system prompt, memory, or worldbook). `jev_timeout_ms` is kept under the core 4s reply-hook budget; failures degrade to text.
+- Jev input is roughly 600-700 tokens per turn for this prompt; output tokens are free on Jev. Check your provider's current pricing and data policy.
+- For OpenRouter/compatible relays, use e.g. `jev_base_url: https://openrouter.ai/api`, `jev_endpoint: alpha/decisions`, `jev_model: typesafe/jev-1.14`, and an `OPENROUTER_API_KEY` env var.
 
 ## Memory model
 
@@ -55,6 +124,7 @@ User documents use these sections:
 - The code validates section names and lengths, protects `手动记忆`, writes atomically (temp file + rename), and keeps the last `memory_history_limit` versions.
 - Raw messages are searched with an exact-phrase pass, then CJK overlapping trigrams, then `LIKE` for short queries. FTS5 is keyword/trigram retrieval; vector search is intentionally not enabled yet.
 - `sqlite-vec` can be added later as an optional retrieval backend if keyword recall proves insufficient.
+- Worldbook recursion is limited to the plugin's small lite model; sticky/cooldown/delay/probability/minActivations/group/regex/depth are intentionally not implemented yet.
 
 ## Consolidation trigger
 
@@ -135,6 +205,20 @@ plugins:
       worldbook_scan_depth: 6
       worldbook_max_entries: 4
       worldbook_max_chars: 1200
+      worldbook_recursion_steps: 1
+      worldbook_match_whole_words: false
+
+      sticker_enabled: true
+      sticker_delay_ms: 600
+      sticker_cooldown_ms: 30000
+      sticker_judge: jev
+      jev_base_url: https://api.typesafe.ai/v1
+      jev_endpoint: systemone
+      jev_model: jev-latest
+      jev_api_key_env: TYPESAFE_API_KEY
+      jev_min_confidence: 0.45
+      jev_min_sticker_ok: 0.8
+      jev_timeout_ms: 2500
 
       memory_enabled: true
       memory_utility_agent: qq-rp-utility
@@ -169,6 +253,9 @@ Existing user-owned files are never overwritten. After the first install, reload
 !persona list
 !persona use blue-fat-fish
 !rp status
+!worldbook check Bessie 提到了 Rufus
+!sticker list
+!sticker test happy
 !remember 我不喜欢吃香菜
 !memory
 !memory diff
@@ -221,9 +308,9 @@ projects:
 QQ private/group message
   -> bridge authorization and @bot policy
   -> roleplay profile: directory = personas/<id>
-  -> beforePrompt: memory.md + scene.md + raw FTS + worldbook
+  -> beforePrompt: memory.md + scene.md + raw FTS + worldbook + available emotions
   -> OpenCode qq-rp session (AGENTS.md is the system baseline)
-  -> formatReply: sentence groups + delays
+  -> formatReply: strip [emotion:xxx], sentence groups + delays + optional sticker
   -> QQ
   -> afterRun: store raw text, schedule consolidation
                  |
@@ -239,6 +326,8 @@ QQ private/group message
 Stable character data lives in `personas/<id>/AGENTS.md`, so it stays at the front of the prompt. Engine rules live only in the `qq-rp` agent prompt; `AGENTS.md` contains the card and user notes, not a duplicated safety footer. Volatile memory is a bounded user-message prefix at the end of the conversation prefix.
 
 The utility call uses the bridge's `context.agent.complete()` plugin API: an ephemeral OpenCode session in the plugin data directory, every tool denied, a timeout, and the session deleted afterwards. It never touches the user's roleplay session.
+
+The generic SQLite/Markdown/retrieval primitives are in `@opencode-qq/memory`. This plugin supplies the persona/scope mapping, RP section schema, consolidation prompt, commands, and sticker semantics. It is a project-level component, not a core runtime dependency; if a second consumer appears, the package can be promoted to a core `context.memory` API without putting RP vocabulary into `src/`.
 
 ## Privacy and cost
 

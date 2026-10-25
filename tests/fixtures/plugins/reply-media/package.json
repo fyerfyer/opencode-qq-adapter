@@ -1,0 +1,17 @@
+{
+  "name": "@fixture/reply-media",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "reply-media-fixture",
+    "name": "Reply media fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Exercises ordered text/image reply plans",
+    "capabilities": ["hooks"],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.2.0"
+    },
+    "entry": "./index.ts"
+  }
+}

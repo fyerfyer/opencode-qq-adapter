@@ -62,6 +62,32 @@ describe("roleplay prompt context", () => {
     expect(block).toContain("[记忆]");
   });
 
+  it("orders before_char and after_char worldbook entries around memory", () => {
+    const block = buildContextBlock({
+      personaName: "蓝色大肥鱼",
+      userName: "鱼片",
+      now: Date.UTC(2026, 9, 24, 12, 0, 0),
+      turnCount: 3,
+      worldbook: [
+        worldbook,
+        {
+          ...worldbook,
+          name: "机箱生态",
+          content: "她住在机箱里。",
+          position: "after_char",
+        },
+      ],
+      memories,
+      userDoc,
+      sceneDoc,
+      maxChars: 3000,
+    });
+    expect(block.indexOf("[世界书 · 前置]")).toBeLessThan(block.indexOf("[长期记忆]"));
+    expect(block.indexOf("[长期记忆]")).toBeLessThan(block.indexOf("[世界书 · 后置]"));
+    expect(block).toContain("白米饭");
+    expect(block).toContain("机箱里");
+  });
+
   it("includes the greeting only when there is no live transcript yet", () => {
     const block = buildContextBlock({
       personaName: "蓝色大肥鱼",

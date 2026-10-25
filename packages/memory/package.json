@@ -1,0 +1,32 @@
+{
+  "name": "@opencode-qq/memory",
+  "version": "0.1.0",
+  "description": "Reusable transcript and Markdown memory primitives for opencode-qq-adapter plugins",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.11"
+  }
+}

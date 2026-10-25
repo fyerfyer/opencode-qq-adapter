@@ -237,7 +237,7 @@ describe("roleplay memory service", () => {
     expect(await readFile(userPath, "utf8")).toContain("称呼：鱼片");
     expect(await readFile(scenePath, "utf8")).toContain("群里聊了考试");
 
-    await ctx.documents.appendManual({ personaId: "p", scope: "group:9", actorQq: 2 }, "二号群友");
+    await ctx.documents.appendManual({ namespace: "p", scope: "group:9", actorQq: 2 }, "二号群友");
     const view = await ctx.service.view({
       personaId: "p",
       scope: "group:9",

@@ -111,7 +111,7 @@ describe("roleplay package", () => {
     await manager.submit(makeIncomingMessage({ text: "我想吃白饭" }), "demo");
     await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
     expect(agent.prompts[0]?.text).toContain("[检索上下文");
-    expect(agent.prompts[0]?.text).toContain("[世界书]");
+    expect(agent.prompts[0]?.text).toContain("[世界书");
     await waitFor(() => onebot.texts().some((text) => text === "fake answer"), 3000, "answer");
 
     const memory = await plugins.dispatchCommand({

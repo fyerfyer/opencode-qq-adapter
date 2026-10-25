@@ -34,7 +34,7 @@ OpenCode V2 service
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
 - 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、插件、审计、用量和 YAML 编辑。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
-- 可选 Roleplay 插件：Character Card V2/V3、私聊人设、世界书、原文记忆和分段延迟回复。
+- 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包、Markdown 记忆和分段延迟回复。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
 
 ## 前置条件
@@ -400,7 +400,7 @@ pnpm test
 
 `packages/roleplay` 提供角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书与 Markdown 长期记忆、把回复拆成多条短消息并加打字延迟。
 
-当前 0.3 能力：
+当前 0.4 能力：
 
 - 私聊 + 群聊 `per_user` / `shared` / `readonly`；私聊一个 chat 一个角色，`per_user` 群每个成员各自绑定，`shared` 群由 owner/admin 管理；
 - 长期记忆是一份可读、可手改的 `memory.md`（shared 群为 `scene.md` + 每人 `users/<qq>.md`），原文保存在 SQLite 供 FTS5 检索；
@@ -409,11 +409,14 @@ pnpm test
 - 触发条件是每 N 轮或 idle debounce，不再使用硬编码的“记忆关键词”正则；
 - `!remember` 写入手动记忆，`!memory diff|history|search|refresh`，`!forget section|confirm`；
 - 中文原文检索使用 FTS5 trigram OR 查询 + 短查询 LIKE 回退；
-- 群聊记忆详情私聊发送；`shared` 群仅 owner/admin 可查看/清空。
+- 群聊记忆详情私聊发送；`shared` 群仅 owner/admin 可查看/清空；
+- 世界书 lite：常驻/关键词/次关键词、默认 1 轮额外递归、按 entry 的 ASCII 整词匹配、`!worldbook check <text>` 调试；
+- 表情包：`dataDir/stickers/<persona>/<emotion>/`，每条回复最多 1 张；`sticker_judge: jev` 用 Jev 对当前对话做情绪分类；`hybrid`/`tag` 模式仍支持 `[emotion:xxx]` 标签，失败自动降级为纯文本；
+- 通用记忆基础设施抽到 `@opencode-qq/memory`（transcript/FTS、Markdown 文档、retrieval）；roleplay 只保留 persona/scope/section/prompt 策略。
 
 仍不在本阶段：
 
-- 主动消息、群聊旁听、多角色同场、WebUI 记忆编辑器、TTS、表情包管线；
+- 主动消息、群聊旁听、多角色同场、WebUI 记忆编辑器、TTS；
 - 向量/embedding 检索和外部记忆服务；
 - 时间段开场白、备选开场白轮换。
 
@@ -421,6 +424,7 @@ pnpm test
 
 ```bash
 pnpm build:sdk
+pnpm build:memory
 pnpm build:roleplay
 mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
 ```
@@ -431,6 +435,9 @@ mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
 !card import /path/to/card.png blue-fat-fish
 !persona use blue-fat-fish
 !rp status
+!worldbook check Bessie 提到了 Rufus
+!sticker list
+!sticker test happy
 !remember 我不喜欢吃香菜
 !memory
 !memory diff
@@ -904,7 +911,8 @@ src/                    bridge 本体
   plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk
-packages/roleplay/       @opencode-qq/roleplay（私聊角色扮演，实验）
+packages/memory/         @opencode-qq/memory（通用记忆基础设施）
+packages/roleplay/       @opencode-qq/roleplay（角色扮演，实验）
 packages/webui/         Vite + React + shadcn/ui 管理前端
 examples/               示例 QQ 插件（hello / notes / media-demo）
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）

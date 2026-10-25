@@ -1,15 +1,42 @@
-import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import {
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+  type ApplyResult,
+  type MemoryBundle,
+  type MemoryDoc,
+  type MemoryDocKind,
+  type MemoryDocKindConfig,
+  type MemoryDocPaths,
+  type MemoryDocRef,
+  type MemoryDocumentConfig,
+  MemoryDocumentStore as BaseMemoryDocumentStore,
+  type MemoryHistoryEntry,
+  type MemoryOperation,
+  type MemorySection,
+  type ParsedDocument,
+  applyOperations as applyMemoryOperations,
+  defaultSections as defaultMemorySections,
+  defaultTitle as defaultMemoryTitle,
+  docForPrompt as memoryDocForPrompt,
+  isAllowedSection as isAllowedMemorySection,
+  normalizeDocument as normalizeMemoryDocument,
+  parseDocument as parseMemoryDocument,
+  renderDocument as renderMemoryDocument,
+  safeMemorySegment,
+  sceneForPrompt as memorySceneForPrompt,
+} from "@opencode-qq/memory";
+
+export type {
+  ApplyResult,
+  MemoryBundle,
+  MemoryDoc,
+  MemoryDocKind,
+  MemoryDocPaths,
+  MemoryDocRef,
+  MemoryHistoryEntry,
+  MemoryOperation,
+  MemorySection,
+  ParsedDocument,
+};
 
 export const USER_SECTIONS = [
   "基本信息",
@@ -25,97 +52,28 @@ export const SCENE_SECTIONS = ["最近发生", "群友关系", "约定"] as cons
 
 export const MANUAL_SECTION = "手动记忆";
 
-export type MemoryDocKind = "user" | "scene";
-export type MemorySection = string;
+const userKind: MemoryDocKindConfig = {
+  title: "用户记忆",
+  sections: USER_SECTIONS,
+  manualSection: MANUAL_SECTION,
+};
 
-export interface MemoryDocRef {
-  personaId: string;
-  scope: string;
-  actorQq: number;
-}
+const sceneKind: MemoryDocKindConfig = {
+  title: "群聊场景",
+  sections: SCENE_SECTIONS,
+  manualSection: MANUAL_SECTION,
+};
 
-export interface MemoryDoc {
-  path: string;
-  content: string;
-  exists: boolean;
-  updatedAt: number | null;
-}
-
-export interface MemoryBundle {
-  shared: boolean;
-  user: MemoryDoc;
-  scene: MemoryDoc | null;
-}
-
-export interface MemoryOperation {
-  op: "upsert" | "append" | "delete_line" | "delete_section";
-  section: string;
-  content?: string;
-  match?: string;
-  reason?: string;
-}
-
-export interface ApplyResult {
-  content: string;
-  changed: boolean;
-  changes: string[];
-}
-
-export interface MemoryHistoryEntry {
-  path: string;
-  createdAt: number;
-}
-
-export interface MemoryDocumentStoreOptions {
-  root: string;
-  historyLimit?: number;
-  now?: () => number;
-}
-
-interface ParsedDocument {
-  title: string;
-  sections: Map<string, string[]>;
-  order: string[];
-}
-
-interface DocPaths {
-  shared: boolean;
-  baseDir: string;
-  historyDir: string;
-  userPath: string;
-  scenePath: string | null;
-}
-
-/**
- * Filesystem-backed memory documents.
- *
- * A private/per-user scope has one `memory.md`; a shared group has `scene.md`
- * plus `users/<qq>.md`. Writes are atomic, serialized per path, and keep a
- * bounded version history for rollback/audit.
- */
-export class MemoryDocumentStore {
-  readonly #root: string;
-  readonly #historyLimit: number;
-  readonly #now: () => number;
-  readonly #locks = new Map<string, Promise<void>>();
-
-  constructor(options: MemoryDocumentStoreOptions) {
-    this.#root = options.root;
-    this.#historyLimit = Math.max(1, Math.floor(options.historyLimit ?? 20));
-    this.#now = options.now ?? Date.now;
-  }
-
-  isShared(scope: string): boolean {
+/** Roleplay-specific document layout and section policy. */
+export const roleplayDocumentConfig: MemoryDocumentConfig = {
+  user: userKind,
+  scene: sceneKind,
+  isShared(scope) {
     return /^group:\d+$/.test(scope);
-  }
-
-  paths(ref: MemoryDocRef): DocPaths {
-    const baseDir = join(
-      this.#root,
-      safeSegment(ref.personaId),
-      safeSegment(ref.scope),
-    );
-    if (this.isShared(ref.scope)) {
+  },
+  paths(root, ref): MemoryDocPaths {
+    const baseDir = join(root, safeMemorySegment(ref.namespace), safeMemorySegment(ref.scope));
+    if (/^group:\d+$/.test(ref.scope)) {
       return {
         shared: true,
         baseDir,
@@ -131,242 +89,27 @@ export class MemoryDocumentStore {
       userPath: join(baseDir, "memory.md"),
       scenePath: null,
     };
-  }
+  },
+};
 
-  async load(ref: MemoryDocRef): Promise<MemoryBundle> {
-    const paths = this.paths(ref);
-    const user = await this.#readDoc(paths.userPath);
-    const scene = paths.scenePath === null ? null : await this.#readDoc(paths.scenePath);
-    return { shared: paths.shared, user, scene };
-  }
+export interface RoleplayMemoryDocumentStoreOptions {
+  root: string;
+  historyLimit?: number;
+  now?: () => number;
+}
 
-  async loadUser(ref: MemoryDocRef): Promise<MemoryDoc> {
-    return this.#readDoc(this.paths(ref).userPath);
-  }
-
-  async loadScene(ref: MemoryDocRef): Promise<MemoryDoc | null> {
-    const paths = this.paths(ref);
-    return paths.scenePath === null ? null : this.#readDoc(paths.scenePath);
-  }
-
-  async loadAllUserDocs(ref: MemoryDocRef): Promise<MemoryDoc[]> {
-    const paths = this.paths(ref);
-    if (!paths.shared) {
-      const user = await this.#readDoc(paths.userPath);
-      return user.exists ? [user] : [];
-    }
-    const dir = join(paths.baseDir, "users");
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-    const docs: MemoryDoc[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      docs.push(await this.#readDoc(join(dir, entry.name)));
-    }
-    return docs.sort((left, right) => left.path.localeCompare(right.path));
-  }
-
-  async writeUser(ref: MemoryDocRef, content: string): Promise<MemoryDoc> {
-    const paths = this.paths(ref);
-    return this.#writeDoc(
-      paths.userPath,
-      normalizeDocument(content, "user"),
-      paths.historyDir,
-      `user-${ref.actorQq}`,
-    );
-  }
-
-  async writeScene(ref: MemoryDocRef, content: string): Promise<MemoryDoc | null> {
-    const paths = this.paths(ref);
-    if (paths.scenePath === null) return null;
-    return this.#writeDoc(
-      paths.scenePath,
-      normalizeDocument(content, "scene"),
-      paths.historyDir,
-      "scene",
-    );
-  }
-
-  async appendManual(ref: MemoryDocRef, text: string): Promise<MemoryDoc> {
-    const paths = this.paths(ref);
-    const current = await this.#readDoc(paths.userPath);
-    const document = parseDocument(current.content, "user");
-    const section = document.sections.get(MANUAL_SECTION) ?? [];
-    const line = `- ${text.replace(/\s+/g, " ").trim()}`;
-    if (!section.includes(line)) section.push(line);
-    document.sections.set(MANUAL_SECTION, section);
-    return this.#writeDoc(
-      paths.userPath,
-      renderDocument(document, "user"),
-      paths.historyDir,
-      `user-${ref.actorQq}`,
-    );
-  }
-
-  async forgetSection(ref: MemoryDocRef, section: string): Promise<boolean> {
-    if (section === MANUAL_SECTION) return false;
-    if (!isAllowedSection(section, "user")) return false;
-    const paths = this.paths(ref);
-    const current = await this.#readDoc(paths.userPath);
-    if (!current.exists) return false;
-    const document = parseDocument(current.content, "user");
-    if (!document.sections.has(section)) return false;
-    document.sections.delete(section);
-    await this.#writeDoc(
-      paths.userPath,
-      renderDocument(document, "user"),
-      paths.historyDir,
-      `user-${ref.actorQq}`,
-    );
-    return true;
-  }
-
-  async forgetAll(ref: MemoryDocRef): Promise<void> {
-    const paths = this.paths(ref);
-    await rm(paths.baseDir, { recursive: true, force: true });
-  }
-
-  async history(ref: MemoryDocRef, kind: MemoryDocKind): Promise<MemoryHistoryEntry[]> {
-    const paths = this.paths(ref);
-    const prefix = kind === "scene" ? "scene-" : `user-${ref.actorQq}-`;
-    const entries = await readdir(paths.historyDir, { withFileTypes: true }).catch(() => []);
-    const result: MemoryHistoryEntry[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith(".md")) {
-        continue;
-      }
-      const path = join(paths.historyDir, entry.name);
-      const stamp = Number(entry.name.slice(prefix.length, -3));
-      result.push({ path, createdAt: Number.isFinite(stamp) ? stamp : 0 });
-    }
-    return result.sort((left, right) => right.createdAt - left.createdAt);
-  }
-
-  async #readDoc(path: string): Promise<MemoryDoc> {
-    try {
-      const content = await readFile(path, "utf8");
-      return { path, content, exists: true, updatedAt: await mtime(path) };
-    } catch {
-      return { path, content: "", exists: false, updatedAt: null };
-    }
-  }
-
-  async #writeDoc(
-    path: string,
-    content: string,
-    historyDir: string,
-    historyPrefix: string,
-  ): Promise<MemoryDoc> {
-    return this.#withLock(path, async () => {
-      const dir = dirname(path);
-      await mkdir(dir, { recursive: true, mode: 0o700 });
-      await mkdir(historyDir, { recursive: true, mode: 0o700 });
-      await this.#version(path, historyDir, historyPrefix);
-      const temporary = join(
-        dir,
-        `.${basename(path)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
-      );
-      await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
-      await rename(temporary, path);
-      return {
-        path,
-        content,
-        exists: true,
-        updatedAt: this.#now(),
-      };
-    });
-  }
-
-  async #version(path: string, historyDir: string, prefix: string): Promise<void> {
-    const existing = await readFile(path, "utf8").catch(() => null);
-    if (existing === null || existing.trim().length === 0) return;
-    await mkdir(historyDir, { recursive: true, mode: 0o700 });
-    const stamp = this.#now();
-    const target = join(historyDir, `${prefix}-${stamp}.md`);
-    await writeFile(target, existing, { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
-    await this.#pruneHistory(historyDir, prefix);
-  }
-
-  async #pruneHistory(dir: string, prefix: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-    const files = entries
-      .filter((entry) => entry.isFile() && entry.name.startsWith(`${prefix}-`))
-      .map((entry) => entry.name)
-      .sort()
-      .reverse();
-    for (const name of files.slice(this.#historyLimit)) {
-      await unlink(join(dir, name)).catch(() => undefined);
-    }
-  }
-
-  async #withLock<T>(path: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.#locks.get(path) ?? Promise.resolve();
-    let release: (() => void) | undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = previous.then(() => gate);
-    this.#locks.set(path, tail);
-    await previous.catch(() => undefined);
-    try {
-      return await task();
-    } finally {
-      release?.();
-      if (this.#locks.get(path) === tail) this.#locks.delete(path);
-    }
+export class MemoryDocumentStore extends BaseMemoryDocumentStore {
+  constructor(options: RoleplayMemoryDocumentStoreOptions) {
+    super({ ...options, config: roleplayDocumentConfig });
   }
 }
 
 export function parseDocument(content: string, kind: MemoryDocKind): ParsedDocument {
-  const defaults = defaultSections(kind);
-  const title = defaultTitle(kind);
-  const sections = new Map<string, string[]>();
-  const order: string[] = [];
-  let parsedTitle = title;
-  let current: string | null = null;
-
-  for (const line of content.replace(/\r\n/g, "\n").split("\n")) {
-    if (line.startsWith("# ") && parsedTitle === title) {
-      parsedTitle = line.slice(2).trim() || title;
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      current = line.slice(3).trim();
-      if (!sections.has(current)) {
-        sections.set(current, []);
-        order.push(current);
-      }
-      continue;
-    }
-    if (current !== null) {
-      sections.get(current)?.push(line);
-    }
-  }
-
-  for (const section of defaults) {
-    if (!sections.has(section)) {
-      sections.set(section, []);
-      order.push(section);
-    }
-  }
-  return { title: parsedTitle, sections, order };
+  return parseMemoryDocument(content, kind, roleplayDocumentConfig);
 }
 
 export function renderDocument(document: ParsedDocument, kind: MemoryDocKind): string {
-  const defaults = defaultSections(kind);
-  const ordered = [
-    ...defaults.filter((section) => document.sections.has(section)),
-    ...document.order.filter((section) => !defaults.includes(section)),
-  ];
-  const unique = [...new Set(ordered)];
-  const lines: string[] = [`# ${document.title}`, ""];
-  for (const section of unique) {
-    lines.push(`## ${section}`);
-    const body = document.sections.get(section) ?? [];
-    const trimmed = trimBlankEdges(body);
-    if (trimmed.length > 0) lines.push(...trimmed);
-    lines.push("");
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
+  return renderMemoryDocument(document, kind, roleplayDocumentConfig);
 }
 
 export function applyOperations(
@@ -374,94 +117,29 @@ export function applyOperations(
   operations: MemoryOperation[],
   kind: MemoryDocKind,
 ): ApplyResult {
-  const document = parseDocument(content, kind);
-  const changes: string[] = [];
-  for (const operation of operations) {
-    if (!isAllowedSection(operation.section, kind)) continue;
-    if (operation.section === MANUAL_SECTION) continue;
-    const body = document.sections.get(operation.section) ?? [];
-    if (operation.op === "upsert") {
-      document.sections.set(operation.section, lines(operation.content));
-      document.order.push(operation.section);
-      changes.push(`replace ${operation.section}`);
-    } else if (operation.op === "append") {
-      document.sections.set(operation.section, [...body, ...lines(operation.content)]);
-      document.order.push(operation.section);
-      changes.push(`append ${operation.section}`);
-    } else if (operation.op === "delete_line") {
-      const match = operation.match?.trim() ?? "";
-      if (match.length === 0) continue;
-      const next = body.filter((line) => !line.includes(match));
-      if (next.length !== body.length) {
-        document.sections.set(operation.section, next);
-        changes.push(`delete ${operation.section}: ${match}`);
-      }
-    } else if (operation.op === "delete_section") {
-      if (document.sections.delete(operation.section)) {
-        changes.push(`delete section ${operation.section}`);
-      }
-    }
-  }
-  const rendered = renderDocument(document, kind);
-  return { content: rendered, changed: rendered !== content, changes };
+  return applyMemoryOperations(content, operations, kind, roleplayDocumentConfig);
 }
 
 export function normalizeDocument(content: string, kind: MemoryDocKind): string {
-  const document = parseDocument(content, kind);
-  return renderDocument(document, kind);
+  return normalizeMemoryDocument(content, kind, roleplayDocumentConfig);
 }
 
 export function docForPrompt(content: string, maxChars: number): string {
-  if (content.trim().length === 0 || maxChars <= 0) return "";
-  const document = parseDocument(content, "user");
-  const lines: string[] = [];
-  for (const [section, body] of document.sections) {
-    const trimmed = trimBlankEdges(body);
-    if (trimmed.length === 0) continue;
-    lines.push(`## ${section}`, ...trimmed);
-  }
-  const text = lines.join("\n");
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+  return memoryDocForPrompt(content, maxChars, "user", roleplayDocumentConfig);
 }
 
 export function sceneForPrompt(content: string, maxChars: number): string {
-  return docForPrompt(content, maxChars);
+  return memorySceneForPrompt(content, maxChars, roleplayDocumentConfig);
 }
 
 export function defaultTitle(kind: MemoryDocKind): string {
-  return kind === "scene" ? "群聊场景" : "用户记忆";
+  return defaultMemoryTitle(kind, roleplayDocumentConfig);
 }
 
 export function defaultSections(kind: MemoryDocKind): readonly string[] {
-  return kind === "scene" ? SCENE_SECTIONS : USER_SECTIONS;
+  return defaultMemorySections(kind, roleplayDocumentConfig);
 }
 
 export function isAllowedSection(section: string, kind: MemoryDocKind): boolean {
-  return defaultSections(kind).includes(section as never);
-}
-
-function lines(content: string | undefined): string[] {
-  if (typeof content !== "string" || content.trim().length === 0) return [];
-  return content.replace(/\r\n/g, "\n").split("\n");
-}
-
-function trimBlankEdges(values: string[]): string[] {
-  let start = 0;
-  let end = values.length;
-  while (start < end && values[start]?.trim().length === 0) start += 1;
-  while (end > start && values[end - 1]?.trim().length === 0) end -= 1;
-  return values.slice(start, end);
-}
-
-function safeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
-}
-
-async function mtime(path: string): Promise<number | null> {
-  try {
-    return (await stat(path)).mtimeMs;
-  } catch {
-    return null;
-  }
+  return isAllowedMemorySection(section, kind, roleplayDocumentConfig);
 }

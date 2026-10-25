@@ -2,6 +2,7 @@ import { mkdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Logger } from "pino";
 import type { AppConfig, PluginConfig } from "../config/schema.js";
+import type { ResolvedReplyPlan, ResolvedReplySegment } from "../conversation/reply-plan.js";
 import type { ActiveRun, RunUsage } from "../conversation/types.js";
 import type { GroupMode } from "../domain/chat.js";
 import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
@@ -10,7 +11,7 @@ import type { AuditTrail } from "../observability/audit.js";
 import type { AgentMessage, AgentPort } from "../ports/agent.js";
 import type { MessageSender } from "../qq/sender.js";
 import { type LoadedPluginModule, loadPluginModule, PluginLoadError } from "./manifest.js";
-import { PluginMessageService } from "./messages.js";
+import { PluginMessageService, readPluginImage } from "./messages.js";
 import type {
   PluginAgentCompletion,
   PluginAgentResult,
@@ -32,7 +33,6 @@ import type {
   PluginPromptContext,
   PluginPromptPatch,
   PluginReplyContext,
-  PluginReplyPlan,
   PluginRole,
   PluginRunContext,
   PluginRunStatus,
@@ -42,6 +42,7 @@ import { PluginDataStorage } from "./storage.js";
 
 const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const HOOK_TIMEOUT_MS = 2_000;
+const REPLY_HOOK_TIMEOUT_MS = 4_000;
 const EVENT_TIMEOUT_MS = 2_000;
 const LIFECYCLE_TIMEOUT_MS = 5_000;
 const UTILITY_TIMEOUT_MS = 90_000;
@@ -424,7 +425,7 @@ export class PluginHost {
   }
 
   /** Let a plugin shape the final reply into ordered segments. */
-  async formatReply(active: ActiveRun, text: string): Promise<PluginReplyPlan | null> {
+  async formatReply(active: ActiveRun, text: string): Promise<ResolvedReplyPlan | null> {
     const hooks = this.#loadedHooks("formatReply");
     if (hooks.length === 0) return null;
     const context: PluginReplyContext = {
@@ -440,10 +441,10 @@ export class PluginHost {
       try {
         const raw = await withTimeout(
           Promise.resolve(handler(context)),
-          HOOK_TIMEOUT_MS,
+          REPLY_HOOK_TIMEOUT_MS,
           `formatReply hook of ${instance.id}`,
         );
-        const plan = normalizeReplyPlan(raw);
+        const plan = await this.#normalizeReplyPlan(instance, active, raw);
         if (plan !== null) return plan;
       } catch (error) {
         this.#logger.warn(
@@ -453,6 +454,111 @@ export class PluginHost {
       }
     }
     return null;
+  }
+
+  async #normalizeReplyPlan(
+    instance: PluginInstance,
+    active: ActiveRun,
+    value: unknown,
+  ): Promise<ResolvedReplyPlan | null> {
+    if (!isRecord(value)) return null;
+    const replyText = normalizeReplyText(value.replyText);
+    if (value.suppress === true) {
+      return {
+        segments: [],
+        suppress: true,
+        ...(replyText !== undefined ? { replyText } : {}),
+      };
+    }
+    if (!Array.isArray(value.segments)) return null;
+    if (value.segments.length === 0 || value.segments.length > 8) return null;
+
+    const resolved: ResolvedReplySegment[] = [];
+    const maxImages = Math.max(0, Math.floor(this.#config.qq.max_reply_images));
+    let images = 0;
+    let chars = 0;
+    for (const item of value.segments) {
+      if (!isRecord(item)) continue;
+      const delayMs =
+        typeof item.delayMs === "number" && Number.isFinite(item.delayMs)
+          ? Math.max(0, Math.min(5000, Math.floor(item.delayMs)))
+          : 0;
+      if (typeof item.text === "string") {
+        const text = item.text.trim();
+        if (text.length === 0) continue;
+        chars += text.length;
+        if (chars > 8000) return null;
+        resolved.push({ kind: "text", text, ...(delayMs > 0 ? { delayMs } : {}) });
+        continue;
+      }
+      if (!isRecord(item.image)) continue;
+      const path = typeof item.image.path === "string" ? item.image.path.trim() : "";
+      if (path.length === 0) continue;
+      if (images >= maxImages) {
+        this.#logger.warn(
+          { pluginId: instance.id, runId: active.record.id, path },
+          "Plugin reply exceeds the image limit; skipping image segment",
+        );
+        continue;
+      }
+      try {
+        const image = await readPluginImage({
+          dataDir: instance.dataDir,
+          path,
+          maxBytes: this.#config.security.max_outbound_image_bytes,
+          imagesEnabled: this.#config.features.images,
+        });
+        images += 1;
+        const caption =
+          typeof item.image.caption === "string" ? item.image.caption.trim().slice(0, 500) : "";
+        resolved.push({
+          kind: "image",
+          dataUri: image.dataUri,
+          bytes: image.bytes,
+          mime: image.mime,
+          pluginId: instance.id,
+          sourcePath: image.path,
+          ...(caption.length > 0 ? { caption } : {}),
+          ...(delayMs > 0 ? { delayMs } : {}),
+        });
+        this.#audit.record({
+          ts: this.#now(),
+          actorQq: active.message.userId,
+          chatKey: active.message.chat.chatKey,
+          projectId: active.record.projectId,
+          workspaceId: active.workspaceId,
+          action: "plugin.reply_image",
+          detail: {
+            pluginId: instance.id,
+            runId: active.record.id,
+            path: image.path,
+            bytes: image.bytes,
+            mime: image.mime,
+          },
+        });
+      } catch (error) {
+        this.#logger.warn(
+          { err: error, pluginId: instance.id, runId: active.record.id, path },
+          "Plugin reply image rejected; skipping image segment",
+        );
+      }
+    }
+
+    if (resolved.length === 0) {
+      this.#logger.warn(
+        { pluginId: instance.id, runId: active.record.id },
+        "Plugin reply plan had no valid segments; suppressing the reply",
+      );
+      return {
+        segments: [],
+        suppress: true,
+        ...(replyText !== undefined ? { replyText } : {}),
+      };
+    }
+    return {
+      segments: resolved,
+      ...(replyText !== undefined ? { replyText } : {}),
+    };
   }
 
   async afterRun(
@@ -1302,24 +1408,11 @@ function validateCommand(command: PluginCommandDefinition): string[] {
   return names;
 }
 
-function normalizeReplyPlan(value: unknown): PluginReplyPlan | null {
-  if (!isRecord(value) || !Array.isArray(value.segments)) return null;
-  if (value.segments.length === 0 || value.segments.length > 8) return null;
-  const segments: PluginReplyPlan["segments"] = [];
-  let total = 0;
-  for (const item of value.segments) {
-    if (!isRecord(item) || typeof item.text !== "string") return null;
-    const text = item.text.trim();
-    if (text.length === 0) return null;
-    total += text.length;
-    if (total > 8000) return null;
-    const delayMs =
-      typeof item.delayMs === "number" && Number.isFinite(item.delayMs)
-        ? Math.max(0, Math.min(5000, Math.floor(item.delayMs)))
-        : 0;
-    segments.push({ text, ...(delayMs > 0 ? { delayMs } : {}) });
-  }
-  return { segments };
+function normalizeReplyText(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text.length > 0 && text.length <= 8000 ? text : null;
 }
 
 function groupIdFromChatKey(chatKey: string): number | undefined {

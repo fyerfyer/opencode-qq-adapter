@@ -103,7 +103,7 @@ describe("Application + roleplay plugin", () => {
       agent: "qq-rp",
     });
     expect(agent.prompts[0]?.text).toContain("[检索上下文");
-    expect(agent.prompts[0]?.text).toContain("[世界书]");
+    expect(agent.prompts[0]?.text).toContain("[世界书");
     await waitFor(
       () => onebot.texts().some((text) => text.includes("fake answer")),
       3000,

@@ -22,6 +22,63 @@ export class PluginMessageError extends Error {
   }
 }
 
+export interface ResolvedPluginImage {
+  /** Real absolute path after symlink checks. */
+  path: string;
+  dataUri: string;
+  bytes: number;
+  mime: string;
+}
+
+/**
+ * Resolve a plugin-relative path and reject `..`/symlink escapes. The plugin
+ * data directory is the only media root plugins may read through this API.
+ */
+export async function resolvePluginFile(dataDir: string, candidate: string): Promise<string> {
+  if (candidate.trim().length === 0) throw new PluginMessageError("path 不能为空");
+  const root = await realpath(dataDir);
+  const requested = isAbsolute(candidate) ? resolve(candidate) : join(root, candidate);
+  let target: string;
+  try {
+    target = await realpath(requested);
+  } catch {
+    throw new PluginMessageError("文件不存在");
+  }
+  const rel = relative(root, target);
+  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new PluginMessageError("文件必须位于插件数据目录内，或使用了 symlink 逃逸");
+  }
+  return target;
+}
+
+export async function readPluginImage(input: {
+  dataDir: string;
+  path: string;
+  maxBytes: number;
+  imagesEnabled: boolean;
+}): Promise<ResolvedPluginImage> {
+  if (!input.imagesEnabled) {
+    throw new PluginMessageError("图片发送已被 features.images 关闭");
+  }
+  const target = await resolvePluginFile(input.dataDir, input.path);
+  const info = await stat(target);
+  if (!info.isFile()) throw new PluginMessageError("路径不是普通文件");
+  if (info.size > input.maxBytes) {
+    throw new PluginMessageError(`图片超过 ${formatBytes(input.maxBytes)} 限制`);
+  }
+  const buffer = await readFile(target);
+  const type = detectImageType(buffer);
+  if (type === null) {
+    throw new PluginMessageError("只支持 PNG / JPEG / GIF / WebP 图片");
+  }
+  return {
+    path: target,
+    dataUri: `base64://${buffer.toString("base64")}`,
+    bytes: buffer.length,
+    mime: type.mime,
+  };
+}
+
 /**
  * Plugin-facing outbound API. Text goes through the normal sender (Markdown
  * stripping and splitting). Media is restricted to the plugin data directory so
@@ -65,29 +122,19 @@ export class PluginMessageService {
   }
 
   async sendImage(chat: PluginChat, input: PluginImageInput): Promise<PluginSendResult> {
-    if (!this.#config.features.images) {
-      throw new PluginMessageError("图片发送已被 features.images 关闭");
-    }
-    const target = await this.#resolve(input.path);
-    const info = await stat(target);
-    if (!info.isFile()) throw new PluginMessageError("路径不是普通文件");
-    if (info.size > this.#config.security.max_outbound_image_bytes) {
-      throw new PluginMessageError(
-        `图片超过 ${formatBytes(this.#config.security.max_outbound_image_bytes)} 限制`,
-      );
-    }
-    const buffer = await readFile(target);
-    const type = detectImageType(buffer);
-    if (type === null) {
-      throw new PluginMessageError("只支持 PNG / JPEG / GIF / WebP 图片");
-    }
+    const image = await readPluginImage({
+      dataDir: this.#dataDir,
+      path: input.path,
+      maxBytes: this.#config.security.max_outbound_image_bytes,
+      imagesEnabled: this.#config.features.images,
+    });
     const caption = input.caption?.trim().slice(0, 500) ?? "";
     const result = await this.#sender.sendSegments(chatRef(chat), [
-      { type: "image", file: `base64://${buffer.toString("base64")}` },
+      { type: "image", file: image.dataUri },
       ...(caption.length > 0 ? [{ type: "text" as const, text: caption }] : []),
     ]);
     this.#logger.debug(
-      { pluginDataDir: this.#dataDir, path: target, bytes: buffer.length, mime: type.mime },
+      { pluginDataDir: this.#dataDir, path: image.path, bytes: image.bytes, mime: image.mime },
       "Plugin sent an image",
     );
     return { messageId: result.messageId ?? "" };
@@ -97,7 +144,7 @@ export class PluginMessageService {
     if (!this.#config.features.files) {
       throw new PluginMessageError("文件发送已被 features.files 关闭");
     }
-    const target = await this.#resolve(input.path);
+    const target = await resolvePluginFile(this.#dataDir, input.path);
     const info = await stat(target);
     if (!info.isFile()) throw new PluginMessageError("路径不是普通文件");
     if (info.size > this.#config.security.max_outbound_file_bytes) {
@@ -122,23 +169,6 @@ export class PluginMessageService {
       "Plugin sent a file",
     );
     return { messageId: "" };
-  }
-
-  async #resolve(candidate: string): Promise<string> {
-    if (candidate.trim().length === 0) throw new PluginMessageError("path 不能为空");
-    const root = await realpath(this.#dataDir);
-    const requested = isAbsolute(candidate) ? resolve(candidate) : join(root, candidate);
-    let target: string;
-    try {
-      target = await realpath(requested);
-    } catch {
-      throw new PluginMessageError("文件不存在");
-    }
-    const rel = relative(root, target);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new PluginMessageError("文件必须位于插件数据目录内，或使用了 symlink 逃逸");
-    }
-    return target;
   }
 }
 

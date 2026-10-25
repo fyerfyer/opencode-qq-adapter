@@ -4,8 +4,11 @@ import { parseCard } from "@character-foundry/character-foundry/loader";
 import { describe, expect, it } from "vitest";
 import {
   normalizeWorldbook,
+  parseStoredWorldbook,
   renderWorldbook,
   selectWorldbook,
+  selectWorldbookDetailed,
+  type WorldbookEntry,
 } from "../../packages/roleplay/src/worldbook.js";
 
 const fixture = fileURLToPath(
@@ -99,7 +102,7 @@ describe("roleplay worldbook", () => {
       { currentText: "你是不是胖了", recentTexts: [] },
       { scanDepth: 2, maxEntries: 2, maxChars: 2000 },
     );
-    expect(prioritized[0]?.name).toBe("体重禁区");
+    expect(prioritized.map((entry) => entry.name)).toEqual(["称呼", "体重禁区"]);
   });
 
   it("renders matches as a bounded prompt block", async () => {
@@ -117,4 +120,186 @@ describe("roleplay worldbook", () => {
     expect(rendered).toContain("白米饭");
     expect(rendered.startsWith("[世界书]")).toBe(true);
   });
+
+  it("normalizes match_whole_words from card extensions", () => {
+    const list = normalizeWorldbook({
+      data: {
+        character_book: {
+          entries: [
+            {
+              name: "猫",
+              keys: ["cat"],
+              content: "A cat.",
+              extensions: { match_whole_words: true },
+            },
+            {
+              name: "旧条目",
+              keys: ["dog"],
+              content: "A dog.",
+            },
+          ],
+        },
+      },
+    });
+    expect(list[0]?.matchWholeWords).toBe(true);
+    expect(list[1]?.matchWholeWords).toBeUndefined();
+  });
+
+  it("parses old cached worldbook entries without matchWholeWords", () => {
+    const old = {
+      name: "旧条目",
+      keys: ["dog"],
+      secondaryKeys: [],
+      content: "A dog.",
+      enabled: true,
+      constant: false,
+      selective: false,
+      caseSensitive: false,
+      priority: 0,
+      insertionOrder: 0,
+      position: "before_char",
+    } as WorldbookEntry;
+    expect(parseStoredWorldbook([old])[0]?.matchWholeWords).toBeUndefined();
+  });
+
+  it("matches ASCII keys on word boundaries only", () => {
+    const list = [
+      makeEntry({ name: "猫", keys: ["cat"], content: "A cat.", matchWholeWords: true }),
+    ];
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    expect(
+      selectWorldbook(list, { currentText: "concatenate", recentTexts: [] }, config),
+    ).toHaveLength(0);
+    expect(
+      selectWorldbook(list, { currentText: "look at that cat.", recentTexts: [] }, config),
+    ).toHaveLength(1);
+  });
+
+  it("keeps Chinese and mixed keys on substring matching", () => {
+    const list = [
+      makeEntry({ name: "白饭", keys: ["白饭"], content: "白饭", matchWholeWords: true }),
+      makeEntry({ name: "混合", keys: ["Rufus 的骨头"], content: "骨头", matchWholeWords: true }),
+    ];
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    expect(
+      selectWorldbook(list, { currentText: "我想吃白饭", recentTexts: [] }, config).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["白饭"]);
+    expect(
+      selectWorldbook(list, { currentText: "Rufus 的骨头在这里", recentTexts: [] }, config).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["混合"]);
+  });
+
+  it("uses the global whole-word option only as a fallback", () => {
+    const list = [
+      makeEntry({ name: "猫", keys: ["cat"], content: "A cat.", matchWholeWords: undefined }),
+      makeEntry({
+        name: "狗",
+        keys: ["dog"],
+        content: "A dog.",
+        matchWholeWords: false,
+      }),
+    ];
+    const config = {
+      scanDepth: 2,
+      maxEntries: 4,
+      maxChars: 2000,
+      matchWholeWords: true,
+    };
+    expect(
+      selectWorldbook(list, { currentText: "concatenate and catmatic", recentTexts: [] }, config),
+    ).toHaveLength(0);
+    expect(
+      selectWorldbook(list, { currentText: "concatenate and a dog", recentTexts: [] }, config).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["狗"]);
+  });
+
+  it("recursively activates entries from selected entry content", () => {
+    const list = [
+      makeEntry({
+        name: "Bessie",
+        keys: ["Bessie"],
+        content: "Bessie is a cow and is friends with Rufus.",
+      }),
+      makeEntry({ name: "Rufus", keys: ["Rufus"], content: "Rufus is a dog.", priority: 5 }),
+    ];
+    const context = { currentText: "Bessie", recentTexts: [] };
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000, recursionSteps: 1 };
+    const trace = selectWorldbookDetailed(list, context, config);
+    expect(trace.selected.map((entry) => entry.name)).toEqual(["Bessie", "Rufus"]);
+    expect(
+      trace.matches.find((match) => match.entry.name === "Rufus")?.primary[0]?.source,
+    ).toContain("递归");
+    expect(
+      selectWorldbook(list, context, { ...config, recursionSteps: 0 }).map((entry) => entry.name),
+    ).toEqual(["Bessie"]);
+  });
+
+  it("does not recurse past the shared budget", () => {
+    const list = [
+      makeEntry({ name: "Bessie", keys: ["Bessie"], content: "Bessie knows Rufus." }),
+      makeEntry({ name: "Rufus", keys: ["Rufus"], content: "Rufus is a dog." }),
+    ];
+    const trace = selectWorldbookDetailed(
+      list,
+      { currentText: "Bessie", recentTexts: [] },
+      { scanDepth: 2, maxEntries: 1, maxChars: 2000, recursionSteps: 2 },
+    );
+    expect(trace.selected.map((entry) => entry.name)).toEqual(["Bessie"]);
+    expect(trace.dropped.find((item) => item.entry.name === "Rufus")?.reason).toContain("条目上限");
+  });
+
+  it("selects constant entries before priority keyword entries", () => {
+    const list = [
+      makeEntry({ name: "称呼", keys: [], constant: true, content: "称呼对方为鱼片。" }),
+      makeEntry({ name: "体重禁区", keys: ["胖"], content: "不要提体重。", priority: 100 }),
+    ];
+    const selected = selectWorldbook(
+      list,
+      { currentText: "你是不是胖了", recentTexts: [] },
+      { scanDepth: 2, maxEntries: 2, maxChars: 2000 },
+    );
+    expect(selected.map((entry) => entry.name)).toEqual(["称呼", "体重禁区"]);
+  });
+
+  it("reports where each key matched in the debug trace", () => {
+    const list = [
+      makeEntry({ name: "白饭", keys: ["白饭"], content: "白饭" }),
+      makeEntry({ name: "机箱", keys: ["机箱"], content: "机箱" }),
+    ];
+    const trace = selectWorldbookDetailed(
+      list,
+      { currentText: "今天想吃白饭", recentTexts: ["机箱有点热"] },
+      { scanDepth: 1, maxEntries: 4, maxChars: 2000 },
+    );
+    expect(trace.matches.find((match) => match.entry.name === "白饭")?.primary[0]?.source).toBe(
+      "当前消息",
+    );
+    expect(
+      trace.matches.find((match) => match.entry.name === "机箱")?.primary[0]?.source,
+    ).toContain("最近");
+  });
 });
+
+function makeEntry(overrides: Partial<WorldbookEntry> = {}): WorldbookEntry {
+  return {
+    name: "条目",
+    keys: [],
+    secondaryKeys: [],
+    content: "内容",
+    enabled: true,
+    constant: false,
+    selective: false,
+    caseSensitive: false,
+    matchWholeWords: false,
+    priority: 0,
+    insertionOrder: 0,
+    position: "before_char",
+    ...overrides,
+  };
+}

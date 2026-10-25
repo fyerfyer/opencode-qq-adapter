@@ -217,6 +217,8 @@ features:
 
 qq:
   max_message_chars: 1800
+  # Maximum images a plugin may add to one final reply.
+  max_reply_images: 2
   strip_markdown: true
   reply_to_message: true
   mention_sender_in_group: true

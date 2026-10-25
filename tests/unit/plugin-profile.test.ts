@@ -140,7 +140,10 @@ describe("PluginHost conversation profile", () => {
     const active = activeRun();
     const plan = await host.formatReply(active, "一二三四五六");
     expect(plan).toEqual({
-      segments: [{ text: "一二三" }, { text: "四五六", delayMs: 5 }],
+      segments: [
+        { kind: "text", text: "一二三" },
+        { kind: "text", text: "四五六", delayMs: 5 },
+      ],
     });
   });
 

@@ -14,7 +14,7 @@ describe("roleplay transcript store", () => {
   it("stores messages, isolates scopes and retrieves short Chinese queries with LIKE", async () => {
     const store = await setup();
     store.addMessage({
-      personaId: "p",
+      namespace: "p",
       chatKey: "private:1",
       scope: "private:1",
       role: "user",
@@ -24,7 +24,7 @@ describe("roleplay transcript store", () => {
       actorQq: 1,
     });
     store.addMessage({
-      personaId: "p",
+      namespace: "p",
       chatKey: "group:9",
       scope: "group:9",
       role: "user",
@@ -35,7 +35,7 @@ describe("roleplay transcript store", () => {
     });
 
     const hits = store.search({
-      personaId: "p",
+      namespace: "p",
       scope: "private:1",
       query: "海边",
       limit: 5,
@@ -48,7 +48,7 @@ describe("roleplay transcript store", () => {
   it("retrieves natural-language Chinese queries through trigram OR", async () => {
     const store = await setup();
     store.addMessage({
-      personaId: "p",
+      namespace: "p",
       chatKey: "private:1",
       scope: "private:1",
       role: "user",
@@ -58,7 +58,7 @@ describe("roleplay transcript store", () => {
       actorQq: 1,
     });
     const hits = store.search({
-      personaId: "p",
+      namespace: "p",
       scope: "private:1",
       query: "我上次说我讨厌什么来着",
       limit: 5,
@@ -72,7 +72,7 @@ describe("roleplay transcript store", () => {
     const store = await setup();
     for (const [index, text] of ["第一句", "第二句", "第三句"].entries()) {
       store.addMessage({
-        personaId: "p",
+        namespace: "p",
         chatKey: "private:1",
         scope: "private:1",
         role: index % 2 === 0 ? "user" : "assistant",
@@ -83,11 +83,11 @@ describe("roleplay transcript store", () => {
     }
     expect(store.recent("private:1", 2).map((row) => row.text)).toEqual(["第二句", "第三句"]);
     expect(
-      store.messagesTail({ chatKey: "private:1", personaId: "p", limit: 2 }).map((m) => m.text),
+      store.messagesTail({ chatKey: "private:1", namespace: "p", limit: 2 }).map((m) => m.text),
     ).toEqual(["第二句", "第三句"]);
     expect(
       store.search({
-        personaId: "p",
+        namespace: "p",
         scope: "private:1",
         query: "第三句",
         limit: 5,
@@ -106,7 +106,7 @@ describe("roleplay transcript store", () => {
       ["assistant", "角色", "回复二号", null],
     ] as const) {
       store.addMessage({
-        personaId: "p",
+        namespace: "p",
         chatKey: "group:9",
         scope: "group:9",
         role,
@@ -118,7 +118,7 @@ describe("roleplay transcript store", () => {
     }
     expect(
       store
-        .messagesTailForActor({ chatKey: "group:9", personaId: "p", actorQq: 1, limit: 10 })
+        .messagesTailForActor({ chatKey: "group:9", namespace: "p", actorQq: 1, limit: 10 })
         .map((message) => message.text),
     ).toEqual(["一号说话", "回复二号"]);
     store.close();
@@ -127,7 +127,7 @@ describe("roleplay transcript store", () => {
   it("tracks consolidation events and cursors", async () => {
     const store = await setup();
     const first = store.addMessage({
-      personaId: "p",
+      namespace: "p",
       chatKey: "private:1",
       scope: "private:1",
       role: "user",
@@ -137,7 +137,7 @@ describe("roleplay transcript store", () => {
       actorQq: 1,
     });
     const event = store.addMemoryEvent({
-      personaId: "p",
+      namespace: "p",
       scope: "private:1",
       actorQq: 1,
       action: "consolidate",
@@ -157,7 +157,7 @@ describe("roleplay transcript store", () => {
   it("forgets messages and events for a scope", async () => {
     const store = await setup();
     store.addMessage({
-      personaId: "p",
+      namespace: "p",
       chatKey: "private:1",
       scope: "private:1",
       role: "user",
@@ -167,7 +167,7 @@ describe("roleplay transcript store", () => {
       actorQq: 1,
     });
     store.addMemoryEvent({
-      personaId: "p",
+      namespace: "p",
       scope: "private:1",
       actorQq: 1,
       action: "consolidate",
@@ -222,7 +222,7 @@ describe("roleplay transcript store", () => {
     const store = new TranscriptStore(path);
     expect(store.count("private:1", "p")).toBe(1);
     store.addMemoryEvent({
-      personaId: "p",
+      namespace: "p",
       scope: "private:1",
       actorQq: 1,
       action: "consolidate",

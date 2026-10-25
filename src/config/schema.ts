@@ -237,6 +237,7 @@ const featuresSchema = z
 const qqSchema = z
   .object({
     max_message_chars: z.number().int().min(200).max(5000).default(1800),
+    max_reply_images: z.number().int().min(0).max(4).default(2),
     strip_markdown: z.boolean().default(true),
     reply_to_message: z.boolean().default(true),
     mention_sender_in_group: z.boolean().default(true),

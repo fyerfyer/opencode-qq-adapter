@@ -12,17 +12,36 @@ import {
   type PluginRunContext,
 } from "@opencode-qq/plugin-sdk";
 import { installQqRpAgent, installQqRpUtilityAgent } from "./agent.js";
-import { type DeliveryOptions, planReply } from "./delivery.js";
+import {
+  type DeliveryOptions,
+  planReplyWithSticker,
+} from "./delivery.js";
 import { docForPrompt, type MemoryDoc, MemoryDocumentStore } from "./memory-document.js";
 import { type MemorySearchResult, MemoryService, type MemoryView } from "./memory-service.js";
 import { parseRoleplayOptions, type RoleplayOptions } from "./options.js";
+import { JevEmotionJudge } from "./jev.js";
 import { getPersona, importCard, listPersonas, type PersonaRecord } from "./persona.js";
+import {
+  chooseSticker,
+  extractEmotionTag,
+  listEmotions,
+  loadStickerCatalog,
+  stickerCount,
+  type StickerCatalog,
+} from "./stickers.js";
 import { buildContextBlock } from "./prompt.js";
 import { formatTimestamp } from "./time.js";
+import { BindingStore } from "./bindings.js";
 import { type MemoryEvent, TranscriptStore } from "./transcript.js";
-import { isWorldbookEntry, selectWorldbook, type WorldbookEntry } from "./worldbook.js";
+import {
+  formatWorldbookTrace,
+  parseStoredWorldbook,
+  selectWorldbook,
+  selectWorldbookDetailed,
+  type WorldbookEntry,
+} from "./worldbook.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const MAX_REMEMBER_CHARS = 200;
 const MEMORY_OUTPUT_CHARS = 1800;
 
@@ -112,7 +131,7 @@ function formatMemoryView(personaName: string, view: MemoryView): string {
     );
   }
   lines.push(
-    "用法：!memory search <关键词> | !memory diff | !memory history | !memory refresh | !remember <内容> | !forget confirm",
+    "用法：!memory search 关键词 | !memory diff | !memory history | !memory refresh | !remember 内容 | !forget confirm",
   );
   return capText(lines.join("\n"));
 }
@@ -189,6 +208,7 @@ export default definePlugin<RoleplayOptions>({
         ? expandPath(options.personasDir)
         : join(context.dataDir, "personas");
     const transcript = new TranscriptStore(join(context.dataDir, "roleplay.db"));
+    const bindings = new BindingStore(join(context.dataDir, "roleplay.db"));
     const documents = new MemoryDocumentStore({
       root: join(context.dataDir, "memory"),
       historyLimit: options.memoryHistoryLimit,
@@ -201,7 +221,42 @@ export default definePlugin<RoleplayOptions>({
       options,
     });
     const worldbookCache = new Map<string, WorldbookEntry[]>();
+    const stickerRoot = join(context.dataDir, "stickers");
+    const stickerCache = new Map<string, StickerCatalog>();
+    const lastStickers = new Map<string, string>();
+    const lastStickerAt = new Map<string, number>();
+    const jevKey = process.env[options.jevApiKeyEnv]?.trim() ?? "";
+    const jev =
+      options.stickerEnabled &&
+      (options.stickerJudge === "jev" || options.stickerJudge === "hybrid") &&
+      jevKey.length > 0
+        ? new JevEmotionJudge({
+            baseUrl: options.jevBaseUrl,
+            endpoint: options.jevEndpoint,
+            apiKey: jevKey,
+            model: options.jevModel,
+            timeoutMs: options.jevTimeoutMs,
+          })
+        : null;
+    if (
+      options.stickerEnabled &&
+      (options.stickerJudge === "jev" || options.stickerJudge === "hybrid") &&
+      jev === null
+    ) {
+      context.logger.warn(
+        { env: options.jevApiKeyEnv },
+        "Sticker judge is enabled but the API key env var is missing; falling back to tags",
+      );
+    }
     let disposed = false;
+
+    const stickerCatalogFor = async (persona: PersonaRecord): Promise<StickerCatalog> => {
+      const cached = stickerCache.get(persona.id);
+      if (cached !== undefined) return cached;
+      const catalog = await loadStickerCatalog(stickerRoot, persona.id);
+      stickerCache.set(persona.id, catalog);
+      return catalog;
+    };
 
     const worldbookFor = async (persona: PersonaRecord): Promise<WorldbookEntry[]> => {
       const cached = worldbookCache.get(persona.id);
@@ -213,7 +268,7 @@ export default definePlugin<RoleplayOptions>({
       }
       try {
         const parsed = JSON.parse(raw) as unknown;
-        const entries = Array.isArray(parsed) ? parsed.filter(isWorldbookEntry) : [];
+        const entries = parseStoredWorldbook(parsed);
         worldbookCache.set(persona.id, entries);
         return entries;
       } catch {
@@ -223,9 +278,9 @@ export default definePlugin<RoleplayOptions>({
     };
 
     const boundPersona = async (chatKey: string) => {
-      const binding = transcript.getBinding(chatKey);
+      const binding = bindings.get(chatKey);
       if (binding === null) return null;
-      const persona = await getPersona(personasDir, binding.personaId);
+      const persona = await getPersona(personasDir, binding.namespace);
       if (persona === null) return null;
       return { binding, persona };
     };
@@ -242,7 +297,7 @@ export default definePlugin<RoleplayOptions>({
       sendGreeting: boolean,
     ): Promise<string> => {
       const chatKey = command.message.chat.chatKey;
-      const existing = transcript.getBinding(chatKey);
+      const existing = bindings.get(chatKey);
       const conversation = context.sessions.get(chatKey) ?? command.conversation;
       const alreadyOnProject = conversation?.projectId === options.projectId;
       const previousProjectId =
@@ -258,16 +313,16 @@ export default definePlugin<RoleplayOptions>({
       const needsReset =
         existing === null ||
         !existing.enabled ||
-        existing.personaId !== persona.id ||
+        existing.namespace !== persona.id ||
         !alreadyOnProject;
       if (needsReset) {
         const reset = context.sessions.reset(chatKey, command.actor);
         if (!reset.ok) return reset.reason ?? "重置会话失败。";
       }
 
-      transcript.setBinding({
+      bindings.set({
         chatKey,
-        personaId: persona.id,
+        namespace: persona.id,
         previousProjectId,
         enabled: true,
         updatedAt: Date.now(),
@@ -277,7 +332,7 @@ export default definePlugin<RoleplayOptions>({
         const greeting = persona.firstMes.trim();
         if (greeting.length > 0) {
           transcript.addMessage({
-            personaId: persona.id,
+            namespace: persona.id,
             chatKey,
             scope: chatKey,
             role: "assistant",
@@ -316,25 +371,28 @@ export default definePlugin<RoleplayOptions>({
       defineCommand({
         name: "card",
         description: "导入 Character Card V2/V3",
-        usage: "card import <path> [id]",
+        usage: "card import 文件路径 [id]",
         chats: ["private"],
         roles: ["owner"],
         async handler(command) {
           const sub = command.args[0]?.toLowerCase();
           const source = command.args[1];
           if (sub !== "import" || source === undefined) {
-            return "用法：!card import <path> [id]";
+            return "用法：!card import 文件路径 [id]";
           }
           try {
             const result = await importCard({
               sourcePath: expandPath(source),
               personasDir,
+              stickerRoot,
               ...(command.args[2] !== undefined ? { id: command.args[2] } : {}),
             });
             worldbookCache.set(result.persona.id, result.worldbook);
+            stickerCache.delete(result.persona.id);
             return [
               `已导入角色：${result.persona.name}（${result.persona.id}）`,
               `世界书：${result.worldbook.length} 条`,
+              `表情素材：${result.stickerCount} 张`,
               `目录：${result.persona.dir}`,
               `使用 !persona use ${result.persona.id} 激活。`,
             ].join("\n");
@@ -355,28 +413,30 @@ export default definePlugin<RoleplayOptions>({
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "list";
           const chatKey = command.message.chat.chatKey;
-          const binding = transcript.getBinding(chatKey);
+          const binding = bindings.get(chatKey);
 
           if (sub === "list") {
             const personas = await listPersonas(personasDir);
-            if (personas.length === 0) return "还没有角色卡。发送 !card import <path> 导入。";
+            if (personas.length === 0) return "还没有角色卡。发送 !card import 文件路径 导入。";
             return [
               `角色卡（${personas.length}）：`,
               ...personas.map(
                 (persona) =>
-                  `- ${persona.id} · ${persona.name}${binding?.personaId === persona.id ? "（当前）" : ""}`,
+                  `- ${persona.id} · ${persona.name}${binding?.namespace === persona.id ? "（当前）" : ""}`,
               ),
-              "使用 !persona use <id> 切换。",
+              "使用 !persona use 角色ID 切换。",
             ].join("\n");
           }
 
-          const id = command.args[1] ?? binding?.personaId;
-          if (id === undefined) return "用法：!persona use <id>";
+          const id = command.args[1] ?? binding?.namespace;
+          if (id === undefined) return "用法：!persona use 角色ID";
           const persona = await getPersona(personasDir, id);
           if (persona === null) return `找不到角色：${id}`;
 
           if (sub === "info") {
             const worldbook = await worldbookFor(persona);
+            const stickers = await stickerCatalogFor(persona);
+            const emotions = listEmotions(stickers);
             const view = await memory.view({
               personaId: persona.id,
               scope: chatKey,
@@ -389,6 +449,7 @@ export default definePlugin<RoleplayOptions>({
               `角色：${persona.name}（${persona.id}）`,
               `开场白：${persona.firstMes || "（无）"}`,
               `世界书：${worldbook.length} 条`,
+              `表情：${stickerCount(stickers)} 张${emotions.length > 0 ? `（${emotions.join("、")}）` : ""}`,
               `记忆：用户文档 ${userChars} 字 · 场景文档 ${sceneChars} 字 · 原文 ${view.rawCount} 条`,
               `目录：${persona.dir}`,
             ].join("\n");
@@ -400,7 +461,95 @@ export default definePlugin<RoleplayOptions>({
             }
             return await activate(command, persona, true);
           }
-          return "用法：!persona list | !persona info [id] | !persona use <id>";
+          return "用法：!persona list | !persona info [id] | !persona use 角色ID";
+        },
+      }),
+    );
+
+    context.commands.register(
+      defineCommand({
+        name: "sticker",
+        description: "查看或测试当前角色的表情素材",
+        usage: "sticker [list|reload] | sticker test 情绪",
+        chats: ["private"],
+        roles: ["owner"],
+        async handler(command) {
+          const sub = command.args[0]?.toLowerCase() ?? "list";
+          const chatKey = command.message.chat.chatKey;
+          const active = await boundPersona(chatKey);
+          if (active === null) return "还没有绑定角色。发送 !persona use 角色ID。";
+          if (sub === "reload") {
+            stickerCache.delete(active.persona.id);
+            return "表情素材缓存已刷新。";
+          }
+          const catalog = await stickerCatalogFor(active.persona);
+          const emotions = listEmotions(catalog);
+          if (sub === "test") {
+            const emotion = command.args[1]?.toLowerCase();
+            if (emotion === undefined) return "用法：!sticker test 情绪";
+            const path = chooseSticker(
+              catalog,
+              emotion,
+              `sticker-test:${active.persona.id}:${chatKey}`,
+              lastStickers,
+            );
+            if (path === null) return `没有 ${emotion} 的表情素材。`;
+            const sent = await command.sendImage({ path, caption: `sticker:${emotion}` });
+            return `已发送 ${emotion}（${sent.messageId}）。`;
+          }
+          if (sub !== "list") return "用法：!sticker list | !sticker reload | !sticker test 情绪";
+          if (emotions.length === 0) {
+            return "当前角色没有表情素材。放到 dataDir/stickers/角色ID/情绪/ 后执行 !sticker reload。";
+          }
+          return [
+            `表情素材（${stickerCount(catalog)} 张）：`,
+            ...emotions.map(
+              (emotion) => `- ${emotion}：${catalog.emotions.get(emotion)?.length ?? 0} 张`,
+            ),
+          ].join("\n");
+        },
+      }),
+    );
+
+    context.commands.register(
+      defineCommand({
+        name: "worldbook",
+        description: "调试世界书关键词、递归和预算",
+        usage: "worldbook check 文本",
+        chats: ["private", "group"],
+        allowGroupShared: true,
+        async handler(command) {
+          const sub = command.args[0]?.toLowerCase();
+          const text = command.args.slice(1).join(" ").trim();
+          if (sub !== "check" || text.length === 0) {
+            return "用法：!worldbook check 文本";
+          }
+          const chatKey = command.message.chat.chatKey;
+          const active = await boundPersona(chatKey);
+          if (active === null) return "还没有绑定角色。发送 !persona use 角色ID。";
+          const recent = transcript.recent(
+            chatKey,
+            options.worldbookScanDepth,
+            active.persona.id,
+          );
+          const trace = selectWorldbookDetailed(
+            await worldbookFor(active.persona),
+            {
+              currentText: text,
+              recentTexts: recent.map((row) => row.text),
+            },
+            {
+              scanDepth: options.worldbookScanDepth,
+              maxEntries: options.worldbookMaxEntries,
+              maxChars: options.worldbookMaxChars,
+              recursionSteps: options.worldbookRecursionSteps,
+              matchWholeWords: options.worldbookMatchWholeWords,
+            },
+          );
+          const output = capText(
+            formatWorldbookTrace(active.persona.name, text, trace),
+          );
+          return deliverMemory(command, active.persona.id, output);
         },
       }),
     );
@@ -415,14 +564,14 @@ export default definePlugin<RoleplayOptions>({
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "status";
           const chatKey = command.message.chat.chatKey;
-          const binding = transcript.getBinding(chatKey);
+          const binding = bindings.get(chatKey);
 
           if (sub === "status") {
             if (binding === null) return "角色扮演未配置。发送 !persona list 查看角色卡。";
-            const persona = await getPersona(personasDir, binding.personaId);
+            const persona = await getPersona(personasDir, binding.namespace);
             return [
               `状态：${binding.enabled ? "开启" : "关闭"}`,
-              `角色：${persona?.name ?? binding.personaId}`,
+              `角色：${persona?.name ?? binding.namespace}`,
               `项目：${options.projectId}`,
               `会话：${(context.sessions.get(chatKey) ?? command.conversation)?.sessionId ?? "尚未创建"}`,
             ].join("\n");
@@ -433,18 +582,18 @@ export default definePlugin<RoleplayOptions>({
               return "shared 群中只有 owner/admin 可以关闭角色扮演。";
             }
             if (binding === null) return "当前没有绑定角色。";
-            transcript.setBinding({ ...binding, enabled: false, updatedAt: Date.now() });
+            bindings.set({ ...binding, enabled: false, updatedAt: Date.now() });
             const restoreTo = binding.previousProjectId ?? options.fallbackProject;
             if (restoreTo === null) {
               context.sessions.reset(chatKey, command.actor);
-              return "角色扮演已关闭。当前没有可恢复的项目，请发送 !use <项目> 选择 coding 项目。";
+              return "角色扮演已关闭。当前没有可恢复的项目，请发送 !use 项目 选择 coding 项目。";
             }
             const restored = context.sessions.setProject(chatKey, restoreTo, command.actor);
             if (!restored.ok) {
               return `已关闭角色扮演，但恢复原项目失败：${restored.reason ?? "未知原因"}`;
             }
             context.sessions.reset(chatKey, command.actor);
-            return "角色扮演已关闭。下次发送 !persona use <id> 可以重新开启。";
+            return "角色扮演已关闭。下次发送 !persona use 角色ID 可以重新开启。";
           }
 
           if (sub === "on") {
@@ -453,7 +602,7 @@ export default definePlugin<RoleplayOptions>({
             }
             if (binding === null) {
               if (options.defaultPersona === null) {
-                return "请先发送 !persona use <id> 选择角色。";
+                return "请先发送 !persona use 角色ID 选择角色。";
               }
               const fallback = await getPersona(personasDir, options.defaultPersona);
               if (fallback === null) {
@@ -461,8 +610,8 @@ export default definePlugin<RoleplayOptions>({
               }
               return await activate(command, fallback, true);
             }
-            const persona = await getPersona(personasDir, binding.personaId);
-            if (persona === null) return `角色卡已丢失：${binding.personaId}`;
+            const persona = await getPersona(personasDir, binding.namespace);
+            if (persona === null) return `角色卡已丢失：${binding.namespace}`;
             return await activate(command, persona, true);
           }
           return "用法：!rp on | !rp off | !rp status";
@@ -474,13 +623,13 @@ export default definePlugin<RoleplayOptions>({
       defineCommand({
         name: "memory",
         description: "查看、搜索或整理当前角色的记忆",
-        usage: "memory [search <关键词>|refresh|history|diff]",
+        usage: "memory [search 关键词|refresh|history|diff]",
         chats: ["private", "group"],
         allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
-          if (active === null) return "还没有绑定角色。发送 !persona use <id>。";
+          if (active === null) return "还没有绑定角色。发送 !persona use 角色ID。";
           const sub = command.args[0]?.toLowerCase();
 
           if (sub === "refresh") {
@@ -524,7 +673,7 @@ export default definePlugin<RoleplayOptions>({
 
           if (sub === "search") {
             const query = command.args.slice(1).join(" ").trim();
-            if (query.length === 0) return "用法：!memory search <关键词>";
+            if (query.length === 0) return "用法：!memory search 关键词";
             const result = await memory.search({
               personaId: active.persona.id,
               scope: chatKey,
@@ -568,15 +717,15 @@ export default definePlugin<RoleplayOptions>({
       defineCommand({
         name: "remember",
         description: "手动记住一条关于你的信息",
-        usage: "remember <内容>",
+        usage: "remember 内容",
         chats: ["private", "group"],
         allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
-          if (active === null) return "还没有绑定角色。发送 !persona use <id>。";
+          if (active === null) return "还没有绑定角色。发送 !persona use 角色ID。";
           const content = command.rawArgs.trim();
-          if (content.length === 0) return "用法：!remember <内容>";
+          if (content.length === 0) return "用法：!remember 内容";
           if (content.length > MAX_REMEMBER_CHARS) {
             return `最多记 ${MAX_REMEMBER_CHARS} 字，请缩短一点。`;
           }
@@ -595,7 +744,7 @@ export default definePlugin<RoleplayOptions>({
       defineCommand({
         name: "forget",
         description: "删除当前角色在当前会话中的记忆",
-        usage: "forget section <名称> | forget confirm",
+        usage: "forget section 名称 | forget confirm",
         chats: ["private", "group"],
         allowGroupShared: true,
         async handler(command) {
@@ -604,7 +753,7 @@ export default definePlugin<RoleplayOptions>({
           if (active === null) return "还没有绑定角色。";
           const sub = command.args[0]?.toLowerCase();
           if (sub === undefined) {
-            return "用法：!forget section <名称> | !forget confirm（全部，需要确认）";
+            return "用法：!forget section 名称 | !forget confirm（全部，需要确认）";
           }
 
           if (!canManageGroup(command)) {
@@ -622,7 +771,7 @@ export default definePlugin<RoleplayOptions>({
 
           if (sub === "section") {
             const section = command.args.slice(1).join(" ").trim();
-            if (section.length === 0) return "用法：!forget section <名称>";
+            if (section.length === 0) return "用法：!forget section 名称";
             const removed = await memory.forgetSection({
               personaId: active.persona.id,
               scope: chatKey,
@@ -632,7 +781,7 @@ export default definePlugin<RoleplayOptions>({
             return removed ? `已删除 section：${section}` : `没有找到 section：${section}`;
           }
 
-          return "用法：!forget section <名称> | !forget confirm（全部，需要确认）";
+          return "用法：!forget section 名称 | !forget confirm（全部，需要确认）";
         },
       }),
     );
@@ -672,6 +821,8 @@ export default definePlugin<RoleplayOptions>({
             scanDepth: options.worldbookScanDepth,
             maxEntries: options.worldbookMaxEntries,
             maxChars: options.worldbookMaxChars,
+            recursionSteps: options.worldbookRecursionSteps,
+            matchWholeWords: options.worldbookMatchWholeWords,
           },
         );
         const excludeCount = Math.max(0, options.memoryExcludeRecent);
@@ -684,8 +835,11 @@ export default definePlugin<RoleplayOptions>({
           scope,
           actorQq: prompt.message.userId,
         });
+        const emotions = options.stickerEnabled
+          ? listEmotions(await stickerCatalogFor(active.persona))
+          : [];
         const memories = transcript.search({
-          personaId: active.persona.id,
+          namespace: active.persona.id,
           scope,
           query: prompt.message.text,
           limit: options.memoryRawTopK,
@@ -702,6 +856,7 @@ export default definePlugin<RoleplayOptions>({
           now: Date.now(),
           turnCount: transcript.count(scope, active.persona.id, "user") + 1,
           ...(scene !== undefined ? { scene } : {}),
+          ...(emotions.length > 0 ? { emotions } : {}),
           worldbook: selected,
           memories,
           userDoc: memoryDocs.userDoc,
@@ -723,8 +878,76 @@ export default definePlugin<RoleplayOptions>({
         if (reply.projectId !== options.projectId) return undefined;
         const active = await activePersona(reply.message.chat.chatKey);
         if (active === null) return undefined;
-        const segments = planReply(reply.text, deliveryOptions(options));
-        return segments.length > 0 ? { segments } : undefined;
+        const tag = extractEmotionTag(reply.text);
+        let sticker: { path: string; delayMs: number } | null = null;
+        const stickerKey = `${reply.message.chat.chatKey}:${active.persona.id}`;
+        const now = Date.now();
+        const cooldownActive =
+          options.stickerCooldownMs > 0 &&
+          now - (lastStickerAt.get(stickerKey) ?? 0) < options.stickerCooldownMs;
+        if (options.stickerEnabled && options.stickerJudge !== "off" && !cooldownActive) {
+          try {
+            const catalog = await stickerCatalogFor(active.persona);
+            const emotions = listEmotions(catalog);
+            if (emotions.length > 0) {
+              const tagEmotion =
+                tag.emotion !== null && emotions.includes(tag.emotion) ? tag.emotion : null;
+              let emotion: string | null =
+                options.stickerJudge === "tag" || options.stickerJudge === "hybrid"
+                  ? tagEmotion
+                  : null;
+              if (
+                emotion === null &&
+                jev !== null &&
+                (options.stickerJudge === "jev" || options.stickerJudge === "hybrid")
+              ) {
+                const decision = await jev.judge({
+                  userText: reply.message.text,
+                  replyText: tag.text,
+                  emotions,
+                });
+                context.logger.debug(
+                  {
+                    personaId: active.persona.id,
+                    choice: decision.emotion,
+                    confidence: decision.confidence,
+                    stickerOk: decision.stickerOk,
+                    probabilities: decision.probabilities,
+                    costUsd: decision.usage?.cost ?? null,
+                  },
+                  "Jev sticker decision",
+                );
+                if (
+                  decision.emotion !== null &&
+                  decision.confidence >= options.jevMinConfidence &&
+                  decision.stickerOk >= options.jevMinStickerOk
+                ) {
+                  emotion = decision.emotion;
+                }
+              }
+              if (emotion === null && options.stickerJudge === "jev" && jev === null) {
+                emotion = tagEmotion;
+              }
+              if (emotion !== null) {
+                const path = chooseSticker(catalog, emotion, stickerKey, lastStickers);
+                if (path !== null) {
+                  sticker = { path, delayMs: options.stickerDelayMs };
+                  lastStickerAt.set(stickerKey, now);
+                }
+              }
+            }
+          } catch (error) {
+            context.logger.warn(
+              { err: error, personaId: active.persona.id, chatKey: reply.message.chat.chatKey },
+              "Sticker judgement failed; sending text only",
+            );
+          }
+        }
+        const segments = planReplyWithSticker(tag.text, deliveryOptions(options), sticker);
+        const replyText = tag.text.length > 0 ? tag.text : null;
+        return segments.length > 0
+          ? { segments, replyText }
+          : { segments: [], suppress: true, replyText };
       },
 
       async afterRun(run: PluginRunContext) {
@@ -750,6 +973,7 @@ export default definePlugin<RoleplayOptions>({
       disposed = true;
       await memory.dispose();
       transcript.close();
+      bindings.close();
     };
   },
 
