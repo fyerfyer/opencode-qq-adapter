@@ -7,10 +7,13 @@ import type { GroupMode } from "../domain/chat.js";
 import type { ConversationRecord, RunStatus } from "../domain/conversation.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { AuditTrail } from "../observability/audit.js";
+import type { AgentMessage, AgentPort } from "../ports/agent.js";
 import type { MessageSender } from "../qq/sender.js";
 import { type LoadedPluginModule, loadPluginModule, PluginLoadError } from "./manifest.js";
 import { PluginMessageService } from "./messages.js";
 import type {
+  PluginAgentCompletion,
+  PluginAgentResult,
   PluginChat,
   PluginCommandContext,
   PluginCommandDefinition,
@@ -41,6 +44,12 @@ const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const HOOK_TIMEOUT_MS = 2_000;
 const EVENT_TIMEOUT_MS = 2_000;
 const LIFECYCLE_TIMEOUT_MS = 5_000;
+const UTILITY_TIMEOUT_MS = 90_000;
+const UTILITY_MIN_TIMEOUT_MS = 5_000;
+const UTILITY_MAX_TIMEOUT_MS = 300_000;
+const UTILITY_MAX_PENDING = 3;
+const UTILITY_PROMPT_MAX_CHARS = 50_000;
+const DENY_ALL_PERMISSIONS = [{ action: "*", resource: "*", effect: "deny" as const }];
 const ROLES: readonly PluginRole[] = ["owner", "admin", "member"];
 const CHAT_TYPES = ["private", "group"] as const;
 
@@ -69,6 +78,8 @@ export interface PluginHostOptions {
   conversations: PluginConversationSource;
   /** Optional; plugins receive a no-op when the bridge does not provide it. */
   sessionActions?: PluginSessionActions;
+  /** Optional; enables `context.agent.complete()` for background plugin work. */
+  agent?: AgentPort;
   /** Built-in command names that plugins may not shadow. */
   reservedCommands: Iterable<string>;
   coreVersion: string;
@@ -168,11 +179,15 @@ export class PluginHost {
   readonly #sender: MessageSender;
   readonly #conversations: PluginConversationSource;
   readonly #sessionActions: PluginSessionActions | undefined;
+  readonly #agent: AgentPort | undefined;
   readonly #reserved: Set<string>;
   readonly #coreVersion: string;
   readonly #now: () => number;
   readonly #pluginsDir: string;
   readonly #instances = new Map<string, PluginInstance>();
+  readonly #utilityChains = new Map<string, Promise<unknown>>();
+  readonly #utilityAbort = new Map<string, AbortController>();
+  readonly #utilityPending = new Map<string, number>();
   #started = false;
 
   constructor(options: PluginHostOptions) {
@@ -182,6 +197,7 @@ export class PluginHost {
     this.#sender = options.sender;
     this.#conversations = options.conversations;
     this.#sessionActions = options.sessionActions;
+    this.#agent = options.agent;
     this.#reserved = new Set([...options.reservedCommands].map((name) => name.toLowerCase()));
     this.#coreVersion = options.coreVersion;
     this.#now = options.now ?? Date.now;
@@ -275,6 +291,7 @@ export class PluginHost {
       args: input.args,
       rawArgs: input.rawArgs,
       actor: { qq: actor, role: input.actor },
+      groupMode: input.groupMode,
       conversation,
       logger,
       reply: (text) => messages.reply(toPluginMessage(input.message), text),
@@ -613,6 +630,7 @@ export class PluginHost {
       instance.manifest = loaded.manifest;
       instance.definition = loaded.definition;
       await mkdir(instance.dataDir, { recursive: true, mode: 0o700 });
+      this.#utilityAbort.set(id, new AbortController());
       const options = parseOptions(loaded, spec.options);
       const context = this.#createContext(instance, options);
       instance.context = context;
@@ -672,6 +690,19 @@ export class PluginHost {
   }
 
   async #dispose(instance: PluginInstance): Promise<void> {
+    this.#utilityAbort.get(instance.id)?.abort();
+    const utilityChain = this.#utilityChains.get(instance.id);
+    if (utilityChain !== undefined) {
+      await withTimeout(
+        utilityChain,
+        LIFECYCLE_TIMEOUT_MS,
+        `utility runs of ${instance.id} during dispose`,
+      ).catch(() => undefined);
+    }
+    this.#utilityChains.delete(instance.id);
+    this.#utilityAbort.delete(instance.id);
+    this.#utilityPending.delete(instance.id);
+
     if (instance.definition?.stop !== undefined && instance.context !== null) {
       try {
         await withTimeout(
@@ -813,7 +844,159 @@ export class PluginHost {
       messages,
       sessions,
       events,
+      agent: {
+        complete: (input: PluginAgentCompletion) => this.#completeUtility(instance, input),
+      },
     };
+  }
+
+  async #completeUtility(
+    instance: PluginInstance,
+    input: PluginAgentCompletion,
+  ): Promise<PluginAgentResult> {
+    requireCapability(instance, "agent");
+    if (this.#agent === undefined) {
+      throw new Error("utility agent is not available in this bridge");
+    }
+    const request = normalizeUtilityInput(input);
+    const pending = (this.#utilityPending.get(instance.id) ?? 0) + 1;
+    if (pending > UTILITY_MAX_PENDING) {
+      throw new Error(
+        `plugin ${instance.id} already has ${UTILITY_MAX_PENDING} utility runs pending`,
+      );
+    }
+    this.#utilityPending.set(instance.id, pending);
+
+    const previous = this.#utilityChains.get(instance.id) ?? Promise.resolve();
+    const task = previous.then(
+      () => this.#runUtility(instance, request),
+      () => this.#runUtility(instance, request),
+    );
+    let tail: Promise<void>;
+    tail = task.then(
+      () => {
+        this.#finishUtilityPending(instance.id, tail);
+      },
+      () => {
+        this.#finishUtilityPending(instance.id, tail);
+      },
+    );
+    this.#utilityChains.set(instance.id, tail);
+    return task;
+  }
+
+  async #runUtility(
+    instance: PluginInstance,
+    request: NormalizedUtilityInput,
+  ): Promise<PluginAgentResult> {
+    const agent = this.#agent;
+    if (agent === undefined) throw new Error("utility agent is not available in this bridge");
+    const startedAt = this.#now();
+    const controller = new AbortController();
+    const instanceSignal = this.#utilityAbort.get(instance.id)?.signal;
+    const abortFromInstance = (): void => controller.abort();
+    if (instanceSignal?.aborted === true) {
+      controller.abort();
+    } else {
+      instanceSignal?.addEventListener("abort", abortFromInstance, { once: true });
+    }
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, request.timeoutMs);
+    timer.unref?.();
+
+    let sessionId: string | null = null;
+    let usage: PluginAgentResult["usage"] = null;
+    let errorMessage: string | null = null;
+    try {
+      const session = await agent.createSession({
+        directory: instance.dataDir,
+        title: `plugin:${instance.id}:${request.label}`.slice(0, 120),
+        ...(request.agent !== null ? { agent: request.agent } : {}),
+        ...(request.model !== null ? { model: request.model } : {}),
+        permissions: DENY_ALL_PERMISSIONS,
+      });
+      sessionId = session.id;
+      await withTimeout(
+        agent.prompt({ sessionId, text: request.prompt }),
+        10_000,
+        "utility prompt admission",
+      );
+      await withTimeout(
+        agent.waitForCompletion(sessionId, controller.signal),
+        request.timeoutMs + 1_000,
+        "utility agent completion",
+      );
+      const messages = await withTimeout(
+        agent.listMessages(sessionId, 20),
+        5_000,
+        "utility message read",
+      );
+      const text = messages
+        .filter((message) => message.type === "assistant" && message.text.trim().length > 0)
+        .sort((left, right) => left.created - right.created)
+        .at(-1)
+        ?.text.trim();
+      if (text === undefined || text.length === 0) {
+        throw new Error("utility agent returned no text");
+      }
+      usage = sumUtilityUsage(messages);
+      return { text, sessionId, usage };
+    } catch (error) {
+      errorMessage = describeError(error);
+      if (sessionId !== null && controller.signal.aborted) {
+        await agent.interrupt(sessionId).catch(() => undefined);
+      }
+      if (timedOut) {
+        throw new Error(`utility agent timed out after ${request.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      instanceSignal?.removeEventListener("abort", abortFromInstance);
+      if (sessionId !== null) {
+        await withTimeout(agent.deleteSession(sessionId), 5_000, "utility session delete").catch(
+          (error) => {
+            this.#logger.warn(
+              { err: error, pluginId: instance.id, sessionId },
+              "Failed to delete utility session",
+            );
+          },
+        );
+      }
+      this.#audit.record({
+        ts: this.#now(),
+        actorQq: request.actorQq,
+        chatKey: request.chatKey,
+        projectId: null,
+        workspaceId: null,
+        action: "plugin.agent",
+        detail: {
+          pluginId: instance.id,
+          label: request.label,
+          agent: request.agent,
+          model: request.model,
+          sessionId,
+          ok: errorMessage === null,
+          ...(errorMessage !== null ? { error: errorMessage } : {}),
+          durationMs: Math.max(0, this.#now() - startedAt),
+          costUsd: usage?.cost ?? 0,
+          inputTokens: usage?.tokens.input ?? 0,
+          outputTokens: usage?.tokens.output ?? 0,
+        },
+      });
+    }
+  }
+
+  #finishUtilityPending(pluginId: string, tail: Promise<void>): void {
+    const pending = Math.max(0, (this.#utilityPending.get(pluginId) ?? 1) - 1);
+    if (pending === 0) this.#utilityPending.delete(pluginId);
+    else this.#utilityPending.set(pluginId, pending);
+    if (this.#utilityChains.get(pluginId) === tail) {
+      this.#utilityChains.delete(pluginId);
+    }
   }
 
   async #normalizeProfile(
@@ -1176,6 +1359,77 @@ function toPluginMessage(message: IncomingMessage): PluginMessage {
     mentionsBot: message.mentionsBot,
     receivedAt: message.receivedAt,
   };
+}
+
+interface NormalizedUtilityInput {
+  prompt: string;
+  agent: string | null;
+  model: string | null;
+  timeoutMs: number;
+  label: string;
+  chatKey: string | null;
+  actorQq: number | null;
+}
+
+function normalizeUtilityInput(input: PluginAgentCompletion): NormalizedUtilityInput {
+  if (!isRecord(input)) throw new Error("utility input must be an object");
+  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  if (prompt.length === 0) throw new Error("utility prompt must not be empty");
+  if (prompt.length > UTILITY_PROMPT_MAX_CHARS) {
+    throw new Error(`utility prompt exceeds ${UTILITY_PROMPT_MAX_CHARS} characters`);
+  }
+  const agent = optionalPattern(input.agent, /^[A-Za-z0-9._/-]{1,80}$/, "utility agent");
+  const model = optionalPattern(input.model, /^[A-Za-z0-9._/:#-]{1,160}$/, "utility model");
+  const timeoutMs =
+    typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
+      ? Math.min(
+          UTILITY_MAX_TIMEOUT_MS,
+          Math.max(UTILITY_MIN_TIMEOUT_MS, Math.floor(input.timeoutMs)),
+        )
+      : UTILITY_TIMEOUT_MS;
+  const label =
+    (typeof input.label === "string" ? input.label : "utility")
+      .replace(/[^\w.-]+/g, "-")
+      .slice(0, 48) || "utility";
+  const chatKey =
+    typeof input.chatKey === "string" && input.chatKey.trim().length > 0
+      ? input.chatKey.trim().slice(0, 160)
+      : null;
+  const actorQq =
+    typeof input.actorQq === "number" && Number.isSafeInteger(input.actorQq) && input.actorQq > 0
+      ? input.actorQq
+      : null;
+  return { prompt, agent, model, timeoutMs, label, chatKey, actorQq };
+}
+
+function optionalPattern(value: unknown, pattern: RegExp, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (!pattern.test(trimmed)) throw new Error(`${label} contains invalid characters`);
+  return trimmed;
+}
+
+function sumUtilityUsage(messages: AgentMessage[]): PluginAgentResult["usage"] {
+  let cost = 0;
+  const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
+  let found = false;
+  for (const message of messages) {
+    if (message.cost !== null) {
+      cost += message.cost;
+      found = true;
+    }
+    if (message.tokens !== null) {
+      tokens.input += message.tokens.input;
+      tokens.output += message.tokens.output;
+      tokens.reasoning += message.tokens.reasoning;
+      tokens.cacheRead += message.tokens.cacheRead;
+      tokens.cacheWrite += message.tokens.cacheWrite;
+      found = true;
+    }
+  }
+  return found ? { cost, tokens } : null;
 }
 
 function sameSpec(left: PluginConfig, right: PluginConfig): boolean {

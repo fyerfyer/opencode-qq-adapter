@@ -1,4 +1,4 @@
-# Roleplay M1 configuration snippet.
+# Roleplay M2 configuration snippet.
 #
 # This is a fragment, not a complete bridge config. Merge these sections into
 # your config.yaml, or keep a separate file and copy the relevant blocks.
@@ -23,6 +23,16 @@ projects:
     agent: qq-rp
     model: null
     allowed_users: ["10001"]
+    # For group roleplay, add the group and include "roleplay" in its projects:
+    # allowed_groups: ["30001"]
+
+# groups:
+#   "30001":
+#     enabled: true
+#     mode: per_user # per_user | shared | readonly
+#     require_mention: true
+#     allowed_users: ["10001", "10002"]
+#     projects: ["roleplay"]
 
 policies:
   roleplay:
@@ -48,9 +58,10 @@ plugins:
       # Project to restore on !rp off when there was no previous project.
       # fallback_project: demo
       install_agent: true
-      # Defaults to <storage.plugins_dir>/roleplay/personas. Keep this aligned
-      # with projects.roleplay.path if you override it.
-      # personas_dir: ~/.local/share/opencode-qq/plugins/roleplay/personas
+      # Must match projects.roleplay.path. If this points elsewhere, the core
+      # rejects the profile directory (it escapes the project root) and the bot
+      # runs at the project root without the persona's AGENTS.md.
+      personas_dir: ~/.local/share/opencode-qq/plugins/roleplay/personas
       # Optional: pin a cheap/fast roleplay model, for example:
       # model: opencode-go/deepseek-v4.1-flash
       max_segments: 4
@@ -60,6 +71,26 @@ plugins:
       worldbook_scan_depth: 6
       worldbook_max_entries: 4
       worldbook_max_chars: 1200
-      memory_top_k: 6
-      memory_max_chars: 800
+
+      # Long-term memory lives in Markdown documents under
+      # <storage.plugins_dir>/roleplay/memory/<persona>/<scope>/.
+      # Raw messages stay in SQLite for FTS and evidence. Set memory_enabled:
+      # false to disable background consolidation (manual !remember and raw
+      # FTS still work).
+      memory_enabled: true
+      memory_utility_agent: qq-rp-utility
+      # null inherits the OpenCode default. Pin a cheap model here if desired:
+      # memory_utility_model: opencode-go/deepseek-v4.1-flash
+      memory_utility_timeout_ms: 90000
+      # Consolidate after N user turns, or after the chat has been idle for
+      # memory_idle_debounce_ms. No keyword heuristics are used.
+      memory_consolidate_every_turns: 8
+      memory_idle_debounce_ms: 120000
+      memory_user_max_chars: 1200
+      memory_scene_max_chars: 800
+      memory_raw_top_k: 6
+      memory_raw_max_chars: 600
+      memory_max_chars: 2400
       memory_exclude_recent: 10
+      memory_history_limit: 20
+      memory_refresh_cooldown_ms: 60000

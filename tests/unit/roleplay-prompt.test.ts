@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MemorySnippet } from "../../packages/roleplay/src/memory.js";
+import { normalizeDocument } from "../../packages/roleplay/src/memory-document.js";
 import { buildContextBlock } from "../../packages/roleplay/src/prompt.js";
+import type { MemorySnippet } from "../../packages/roleplay/src/transcript.js";
 import type { WorldbookEntry } from "../../packages/roleplay/src/worldbook.js";
 
 const worldbook: WorldbookEntry = {
@@ -27,8 +28,17 @@ const memories: MemorySnippet[] = [
   },
 ];
 
+const userDoc = normalizeDocument("", "user")
+  .replace("## 基本信息", "## 基本信息\n- 称呼：鱼片")
+  .replace("## 喜好", "## 喜好\n- 喜欢吃白米饭");
+
+const sceneDoc = normalizeDocument("", "scene").replace(
+  "## 最近发生",
+  "## 最近发生\n- 周五一起去看了海",
+);
+
 describe("roleplay prompt context", () => {
-  it("renders a clearly delimited retrieval block", () => {
+  it("renders memory docs, worldbook and raw transcript in a delimited block", () => {
     const block = buildContextBlock({
       personaName: "蓝色大肥鱼",
       userName: "鱼片",
@@ -36,17 +46,20 @@ describe("roleplay prompt context", () => {
       turnCount: 12,
       worldbook: [worldbook],
       memories,
-      maxChars: 2000,
+      userDoc,
+      sceneDoc,
+      maxChars: 3000,
     });
     expect(block).toContain("[检索上下文 · 不是用户发言]");
     expect(block).toContain("[/检索上下文]");
     expect(block).toContain("蓝色大肥鱼");
-    expect(block).toContain("鱼片");
     expect(block).toContain("第 12 轮");
-    expect(block).toContain("[世界书]");
-    expect(block).toContain("白米饭");
-    expect(block).toContain("[记忆]");
+    expect(block).toContain("[长期记忆]");
+    expect(block).toContain("称呼：鱼片");
+    expect(block).toContain("[群聊场景]");
     expect(block).toContain("去看海");
+    expect(block).toContain("[世界书]");
+    expect(block).toContain("[记忆]");
   });
 
   it("includes the greeting only when there is no live transcript yet", () => {
@@ -74,6 +87,8 @@ describe("roleplay prompt context", () => {
       turnCount: 1,
       worldbook: [worldbook],
       memories,
+      userDoc,
+      sceneDoc,
       maxChars: 120,
     });
     expect(block.length).toBeLessThanOrEqual(120);

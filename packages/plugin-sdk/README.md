@@ -96,6 +96,7 @@ The config key must match `opencodeQq.id`. Only explicitly configured plugins ar
 | `ctx.messages` | `messages` | Send text / image / file |
 | `ctx.sessions` | `sessions` | Read the conversation binding; guarded `setProject` / `reset` |
 | `ctx.events` | `events` | Subscribe to `run.finished` / `config.reloaded` |
+| `ctx.agent` | `agent` | One-shot OpenCode utility run for background work |
 | `ctx.storage` / `ctx.dataDir` | — | Isolated JSON/text files |
 | `ctx.logger` | — | Plugin-prefixed structured logging |
 
@@ -156,6 +157,58 @@ Rules:
 - The first plugin returning a valid profile/plan wins. Invalid plans fall back to the original reply.
 
 `afterRun` receives both `userText` (before injection) and `replyText` (the final assistant text), which is what transcript-memory plugins should store.
+
+## Background utility runs
+
+`ctx.agent.complete()` runs an ephemeral OpenCode session in the plugin data directory. Every tool is denied, the session is deleted afterwards, and the run does not touch any QQ conversation:
+
+```ts
+context.hooks.register({
+  async afterRun(run) {
+    // Do not await long work inside a 2s afterRun hook. Queue it instead.
+    void context.agent
+      .complete({
+        prompt: "Summarize this in JSON",
+        agent: "my-plugin-worker", // a hidden, tool-free primary agent
+        model: "provider/model",   // optional
+        timeoutMs: 90_000,
+        label: "my-plugin.summarize",
+        chatKey: run.chat.chatKey,
+        actorQq: run.userId,
+      })
+      .then((result) => {
+        context.logger.info({ text: result.text.slice(0, 80) }, "utility done");
+      });
+  },
+});
+```
+
+Rules:
+
+- The prompt is the only input; utility runs cannot read files or send QQ messages.
+- The core serializes utility runs per plugin (at most 3 pending) and aborts them when the plugin is disposed.
+- Timeouts are clamped to 5s–300s. Cost and token usage are written to the audit log as `plugin.agent`; prompt content is not.
+- `agent` defaults to `build` if omitted. A custom hidden agent with `steps: 1` and all permissions denied is recommended.
+
+## Group-aware commands
+
+`command.groupMode` is `per_user`, `shared`, `readonly`, or `null` for private chats. In `shared`/`readonly` groups, commands that affect everyone should check the actor role:
+
+```ts
+handler(command) {
+  if (
+    command.message.chat.type === "group" &&
+    (command.groupMode === "shared" || command.groupMode === "readonly") &&
+    command.actor.role !== "owner" &&
+    command.actor.role !== "admin"
+  ) {
+    return "只有 owner/admin 可以操作。";
+  }
+  return "ok";
+}
+```
+
+`allowGroupShared: true` is still required for a command to run in a shared group.
 
 ## Media and paths
 

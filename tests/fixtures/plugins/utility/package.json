@@ -1,0 +1,17 @@
+{
+  "name": "@fixture/utility",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "utility-fixture",
+    "name": "Utility fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Plugin host utility-agent fixture",
+    "capabilities": ["commands", "agent"],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.2.0"
+    },
+    "entry": "./index.ts"
+  }
+}

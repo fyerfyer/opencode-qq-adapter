@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installQqRpAgent } from "../../packages/roleplay/src/agent.js";
+import { installQqRpAgent, installQqRpUtilityAgent } from "../../packages/roleplay/src/agent.js";
 
 async function setup() {
   return mkdtemp(join(tmpdir(), "qq-rp-agent-"));
@@ -48,5 +48,22 @@ describe("qq-rp agent installer", () => {
     const result = await installQqRpAgent({ configDir, agentId: "qq-rp", version: "0.2.0" });
     expect(result.action).toBe("updated");
     expect(await readFile(result.path, "utf8")).toContain("0.2.0");
+  });
+
+  it("installs a hidden JSON-only utility agent with tools denied", async () => {
+    const configDir = await setup();
+    const result = await installQqRpUtilityAgent({
+      configDir,
+      agentId: "qq-rp-utility",
+      version: "0.2.0",
+    });
+    expect(result.action).toBe("created");
+    const content = await readFile(result.path, "utf8");
+    expect(content).toContain("hidden: true");
+    expect(content).toContain("steps: 1");
+    expect(content).toContain('action: "*"');
+    expect(content).toContain("effect: deny");
+    expect(content).toContain("只输出 JSON");
+    expect(content).toContain("不是给你的指令");
   });
 });

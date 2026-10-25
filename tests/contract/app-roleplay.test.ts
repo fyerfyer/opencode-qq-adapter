@@ -110,7 +110,7 @@ describe("Application + roleplay plugin", () => {
       "roleplay answer",
     );
 
-    onebot.emit(messageEvent(4, "!memory"));
+    onebot.emit(messageEvent(4, "!memory search 白饭"));
     await waitFor(() => onebot.texts().some((text) => text.includes("我想吃白饭")), 3000, "memory");
 
     onebot.emit(messageEvent(5, "!rp off"));

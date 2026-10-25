@@ -116,9 +116,9 @@ describe("roleplay package", () => {
 
     const memory = await plugins.dispatchCommand({
       name: "memory",
-      message: makeIncomingMessage({ text: "!memory" }),
-      args: [],
-      rawArgs: "",
+      message: makeIncomingMessage({ text: "!memory search 白饭" }),
+      args: ["search", "白饭"],
+      rawArgs: "search 白饭",
       actor: "owner",
       groupMode: null,
     });
@@ -126,7 +126,7 @@ describe("roleplay package", () => {
     await waitFor(
       () => onebot.texts().some((text) => text.includes("我想吃白饭")),
       2000,
-      "memory reply",
+      "memory search reply",
     );
   });
 });

@@ -117,6 +117,7 @@ export class App {
         conversations: {
           getConversation: (chatKey) => conversationsRef?.getConversation(chatKey) ?? null,
         },
+        agent: this.agent,
         sessionActions: {
           setProject: ({ chatKey, projectId, actorQq, groupId }) => {
             const actor = this.policy.actor(actorQq);

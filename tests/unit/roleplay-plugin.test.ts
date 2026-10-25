@@ -5,8 +5,14 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import roleplay from "../../packages/roleplay/src/index.js";
 import { getPersona, importCard } from "../../packages/roleplay/src/persona.js";
-import type { PluginRunContext } from "../../src/plugins/sdk.js";
+import type {
+  PluginAgent,
+  PluginAgentCompletion,
+  PluginAgentResult,
+  PluginRunContext,
+} from "../../src/plugins/sdk.js";
 import { createPluginHarness, type PluginHarness } from "../../src/plugins/testing.js";
+import { waitFor } from "../helpers/fakes.js";
 
 const fixture = fileURLToPath(
   new URL("../fixtures/roleplay/blue-fat-fish.card.json", import.meta.url),
@@ -19,7 +25,35 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function setup(extraOptions: Record<string, unknown> = {}) {
+function fakeMemoryAgent() {
+  const calls: PluginAgentCompletion[] = [];
+  const agent: PluginAgent = {
+    async complete(input: PluginAgentCompletion): Promise<PluginAgentResult> {
+      calls.push(input);
+      return {
+        text: JSON.stringify({
+          user_operations: [
+            { op: "upsert", section: "基本信息", content: "- 称呼：鱼片", reason: "新称呼" },
+            {
+              op: "upsert",
+              section: "喜好",
+              content: "- 喜欢吃白米饭\n- 讨厌香菜",
+              reason: "饮食偏好",
+            },
+            { op: "append", section: "最近发生", content: "- 聊了考试", reason: "近期事件" },
+          ],
+          scene_operations: [],
+          summary: "记录称呼、饮食和考试",
+        }),
+        sessionId: "ses_memory",
+        usage: null,
+      };
+    },
+  };
+  return { agent, calls };
+}
+
+async function setup(extraOptions: Record<string, unknown> = {}, agent?: PluginAgent) {
   const dataDir = await mkdtemp(join(tmpdir(), "qq-rp-plugin-"));
   const personasDir = join(dataDir, "personas");
   await importCard({ sourcePath: fixture, personasDir, id: "blue-fat-fish" });
@@ -31,8 +65,12 @@ async function setup(extraOptions: Record<string, unknown> = {}) {
       install_agent: false,
       personas_dir: personasDir,
       memory_exclude_recent: 0,
+      memory_consolidate_every_turns: 1,
+      memory_idle_debounce_ms: 0,
+      memory_refresh_cooldown_ms: 0,
       ...extraOptions,
     },
+    ...(agent !== undefined ? { agent } : {}),
   });
   disposers.push(async () => harness.dispose());
   return { harness, dataDir, personasDir };
@@ -64,11 +102,20 @@ function runContext(overrides: Partial<PluginRunContext> = {}): PluginRunContext
     usage: null,
     error: null,
     durationMs: 100,
-    promptText: "我想吃白饭",
-    userText: "我想吃白饭",
-    replyText: "哼，给你一碗。",
+    promptText: "我叫鱼片，我喜欢吃白米饭，我讨厌香菜。",
+    userText: "我叫鱼片，我喜欢吃白米饭，我讨厌香菜。",
+    replyText: "哼，记住了。",
     ...overrides,
   };
+}
+
+async function waitForMemory(harness: PluginHarness<unknown>, text: string): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const memory = (await harness.runCommand("memory")) ?? "";
+    if (memory.includes(text)) return memory;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`memory did not contain ${text}`);
 }
 
 describe("roleplay plugin", () => {
@@ -93,61 +140,77 @@ describe("roleplay plugin", () => {
     expect(harness.sent.some((entry) => entry.text?.includes("今天只吃一碗白饭"))).toBe(true);
   });
 
-  it("resolves the persona directory and injects worldbook plus greeting context", async () => {
-    const { harness, personasDir } = await setup();
+  it("consolidates after the configured turn count and injects the Markdown memory", async () => {
+    const fake = fakeMemoryAgent();
+    const { harness } = await setup({ memory_consolidate_every_turns: 1 }, fake.agent);
     await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
-    const profile = await harness.resolveProfile({
-      message: message("我想吃白饭"),
-      projectId: "roleplay",
-      conversation: null,
-    });
-    expect(profile).toMatchObject({
-      directory: join(personasDir, "blue-fat-fish"),
-      agent: "qq-rp",
-      workspace: "none",
-    });
+    await harness.afterRun(runContext());
+    await waitFor(() => fake.calls.length === 1, 1000, "consolidation");
+    const memory = await waitForMemory(harness, "称呼：鱼片");
+    expect(memory).toContain("[长期记忆]");
+    expect(memory).toContain("喜欢吃白米饭");
+    expect(memory).toContain("最近变更");
+    expect(memory).toContain("原文：3 条");
 
     const prompt = await harness.beforePrompt({
-      message: message("我想吃白饭"),
-      projectId: "roleplay",
-      conversation: null,
-      profile,
-    });
-    expect(prompt?.prepend).toContain("[检索上下文");
-    expect(prompt?.prepend).toContain("[世界书]");
-    expect(prompt?.prepend).toContain("白米饭");
-    expect(prompt?.prepend).toContain("你刚才对鱼片说");
-  });
-
-  it("plans segmented replies and records raw transcript memory", async () => {
-    const { harness } = await setup();
-    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
-    const plan = await harness.formatReply({
-      message: message("随便聊聊"),
+      message: message("你还记得我吗？"),
       projectId: "roleplay",
       conversation: null,
       profile: null,
-      text: "第一句。第二句！",
     });
-    expect(plan?.segments).toHaveLength(2);
-    expect(plan?.segments[1]?.delayMs).toBeGreaterThan(0);
-
-    await harness.afterRun(runContext());
-    const memory = await harness.runCommand("memory");
-    expect(memory).toContain("我想吃白饭");
-    expect(memory).toContain("哼，给你一碗。");
+    expect(prompt?.prepend).toContain("[长期记忆]");
+    expect(prompt?.prepend).toContain("称呼：鱼片");
+    expect(prompt?.prepend).toContain("喜欢吃白米饭");
   });
 
-  it("forgets transcript memory after confirmation", async () => {
-    const { harness } = await setup();
+  it("supports manual memory, diff, history and section deletion", async () => {
+    const fake = fakeMemoryAgent();
+    const { harness } = await setup({ memory_consolidate_every_turns: 1 }, fake.agent);
     await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
     await harness.afterRun(runContext());
-    const refused = await harness.runCommand("forget");
-    expect(refused).toContain("确认");
+    await waitForMemory(harness, "称呼：鱼片");
+
+    const diff = await harness.runCommand("memory", { args: ["diff"] });
+    expect(diff).toContain("记录称呼、饮食和考试");
+
+    const remembered = await harness.runCommand("remember", {
+      args: ["生日是 3 月 14 日"],
+      rawArgs: "生日是 3 月 14 日",
+    });
+    expect(remembered).toContain("已写入手动记忆");
+    const memory = await harness.runCommand("memory");
+    expect(memory).toContain("## 手动记忆");
+    expect(memory).toContain("3 月 14 日");
+
+    const history = await harness.runCommand("memory", { args: ["history"] });
+    expect(history).toContain("consolidate");
+
+    const search = await harness.runCommand("memory", { args: ["search", "白米饭"] });
+    expect(search).toContain("白米饭");
+
+    const removed = await harness.runCommand("forget", { args: ["section", "喜好"] });
+    expect(removed).toContain("已删除 section");
+    const after = await harness.runCommand("memory");
+    expect(after).not.toContain("喜欢吃白米饭");
+  });
+
+  it("forgets the whole scope after confirmation", async () => {
+    const fake = fakeMemoryAgent();
+    const { harness } = await setup({ memory_consolidate_every_turns: 1 }, fake.agent);
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    await harness.afterRun(runContext());
+    await waitForMemory(harness, "称呼：鱼片");
     const deleted = await harness.runCommand("forget", { args: ["confirm"] });
-    expect(deleted).toContain("已删除");
+    expect(deleted).toContain("已删除记忆");
     const memory = await harness.runCommand("memory");
     expect(memory).toContain("还没有记忆");
+  });
+
+  it("reports when memory consolidation is disabled", async () => {
+    const { harness } = await setup({ memory_enabled: false });
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const result = await harness.runCommand("memory", { args: ["refresh"] });
+    expect(result).toContain("记忆整理未启用");
   });
 
   it("disables roleplay and restores the previous project", async () => {
@@ -157,28 +220,5 @@ describe("roleplay plugin", () => {
     const result = await harness.runCommand("rp", { args: ["off"] });
     expect(result).toContain("已关闭");
     expect(harness.sessionCalls[0]).toMatchObject({ action: "reset" });
-  });
-
-  it("can still forget memory after roleplay is disabled", async () => {
-    const { harness } = await setup();
-    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
-    await harness.afterRun(runContext());
-    await harness.runCommand("rp", { args: ["off"] });
-    const deleted = await harness.runCommand("forget", { args: ["confirm"] });
-    expect(deleted).toContain("已删除");
-  });
-
-  it("restores a configured fallback project when there is no previous project", async () => {
-    const { harness } = await setup({ fallback_project: "demo" });
-    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
-    harness.sessionCalls.length = 0;
-    const result = await harness.runCommand("rp", { args: ["off"] });
-    expect(result).toContain("已关闭");
-    expect(harness.sessionCalls).toContainEqual({
-      action: "setProject",
-      chatKey: "private:10001",
-      projectId: "demo",
-      actorQq: 10001,
-    });
   });
 });

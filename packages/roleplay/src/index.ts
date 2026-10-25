@@ -1,28 +1,30 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import {
   defineCommand,
   definePlugin,
+  type PluginChat,
   type PluginCommandContext,
   type PluginContext,
+  type PluginGroupMode,
   type PluginMessage,
   type PluginRunContext,
 } from "@opencode-qq/plugin-sdk";
-import { installQqRpAgent } from "./agent.js";
+import { installQqRpAgent, installQqRpUtilityAgent } from "./agent.js";
 import { type DeliveryOptions, planReply } from "./delivery.js";
-import { MemoryStore } from "./memory.js";
+import { docForPrompt, type MemoryDoc, MemoryDocumentStore } from "./memory-document.js";
+import { type MemorySearchResult, MemoryService, type MemoryView } from "./memory-service.js";
 import { parseRoleplayOptions, type RoleplayOptions } from "./options.js";
 import { getPersona, importCard, listPersonas, type PersonaRecord } from "./persona.js";
 import { buildContextBlock } from "./prompt.js";
 import { formatTimestamp } from "./time.js";
+import { type MemoryEvent, TranscriptStore } from "./transcript.js";
 import { isWorldbookEntry, selectWorldbook, type WorldbookEntry } from "./worldbook.js";
 
-const VERSION = "0.1.0";
-
-function scopeFor(message: PluginMessage): string {
-  return `private:${message.userId}`;
-}
+const VERSION = "0.3.0";
+const MAX_REMEMBER_CHARS = 200;
+const MEMORY_OUTPUT_CHARS = 1800;
 
 function expandPath(input: string): string {
   if (input === "~") return homedir();
@@ -51,6 +53,133 @@ function errorMessage(error: unknown): string {
   return message.length > 200 ? `${message.slice(0, 200)}…` : message;
 }
 
+function isSharedGroup(mode: PluginGroupMode | null): boolean {
+  return mode === "shared" || mode === "readonly";
+}
+
+function canManageGroup(command: PluginCommandContext): boolean {
+  if (command.message.chat.type !== "group") return true;
+  if (!isSharedGroup(command.groupMode)) return true;
+  return command.actor.role === "owner" || command.actor.role === "admin";
+}
+
+function canViewAllActors(command: PluginCommandContext): boolean {
+  return (
+    command.message.chat.type === "group" &&
+    isSharedGroup(command.groupMode) &&
+    canManageGroup(command)
+  );
+}
+
+function privateChatFor(message: PluginMessage): PluginChat {
+  return {
+    type: "private",
+    userId: message.userId,
+    chatKey: `private:${message.userId}`,
+  };
+}
+
+function capText(text: string, maxChars = MEMORY_OUTPUT_CHARS): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function formatDoc(title: string, doc: MemoryDoc): string {
+  const content = doc.content.trim().length > 0 ? docForPrompt(doc.content, 4000) : "";
+  return `${title}\n${content.length > 0 ? content : "（空）"}`;
+}
+
+function formatMemoryView(personaName: string, view: MemoryView): string {
+  const lines: string[] = [`角色：${personaName}`];
+  if (view.shared) {
+    lines.push(formatDoc("[群聊场景]", view.scene ?? emptyDoc()));
+    if (view.allUsers.length > 0) {
+      lines.push("[群成员记忆]");
+      for (const doc of view.allUsers) {
+        const id = basename(doc.path, ".md");
+        lines.push(formatDoc(`群友 ${id}`, doc));
+      }
+    } else {
+      lines.push(formatDoc("[我的记忆]", view.user));
+    }
+  } else {
+    lines.push(formatDoc("[长期记忆]", view.user));
+  }
+  lines.push(`原文：${view.rawCount} 条`);
+  if (view.lastEvent !== null) {
+    lines.push(
+      `最近变更：${formatTimestamp(view.lastEvent.createdAt)} · ${view.lastEvent.summary}`,
+    );
+  }
+  lines.push(
+    "用法：!memory search <关键词> | !memory diff | !memory history | !memory refresh | !remember <内容> | !forget confirm",
+  );
+  return capText(lines.join("\n"));
+}
+
+function emptyDoc(): MemoryDoc {
+  return { path: "", content: "", exists: false, updatedAt: null };
+}
+
+function formatHistory(events: MemoryEvent[]): string {
+  if (events.length === 0) return "还没有记忆变更。";
+  return capText(
+    [
+      `最近记忆变更（${events.length}）：`,
+      ...events.map(
+        (event) =>
+          `- [${formatTimestamp(event.createdAt)}] ${event.action} · ${event.summary}`,
+      ),
+    ].join("\n"),
+  );
+}
+
+function formatDiff(event: MemoryEvent | null): string {
+  if (event === null) return "还没有记忆变更。";
+  const lines = [
+    `最近变更：${formatTimestamp(event.createdAt)} · ${event.action}`,
+    event.summary,
+  ];
+  const detail = event.detail;
+  if (detail !== null) {
+    lines.push(...formatOperations("用户", detail.user));
+    lines.push(...formatOperations("群聊", detail.scene));
+  }
+  if (lines.length === 2) lines.push("（没有 section 级变更记录）");
+  return capText(lines.join("\n"));
+}
+
+function formatOperations(label: string, value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) return [];
+  const lines: string[] = [`${label}操作：`];
+  for (const item of value) {
+    if (item === null || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const section = typeof record.section === "string" ? record.section : "?";
+    const op = typeof record.op === "string" ? record.op : "?";
+    const reason = typeof record.reason === "string" ? `（${record.reason}）` : "";
+    lines.push(`- ${section} · ${op}${reason}`);
+  }
+  return lines;
+}
+
+function formatSearch(result: MemorySearchResult): string {
+  const lines: string[] = [];
+  for (const doc of result.docs) {
+    lines.push(`- [${doc.source} · ${doc.section}] ${doc.line}`);
+  }
+  if (result.messages.length > 0) {
+    lines.push(
+      "[原文]",
+      ...result.messages.map(
+        (message) =>
+          `- [${formatTimestamp(message.ts)}] ${message.role === "user" ? message.speaker : "你"}：${message.text}`,
+      ),
+    );
+  }
+  return lines.length > 0 ? capText(lines.join("\n")) : "没有匹配的记忆。";
+}
+
 export default definePlugin<RoleplayOptions>({
   options: { parse: parseRoleplayOptions },
   setup(context) {
@@ -59,7 +188,18 @@ export default definePlugin<RoleplayOptions>({
       options.personasDir !== null
         ? expandPath(options.personasDir)
         : join(context.dataDir, "personas");
-    const store = new MemoryStore(join(context.dataDir, "roleplay.db"));
+    const transcript = new TranscriptStore(join(context.dataDir, "roleplay.db"));
+    const documents = new MemoryDocumentStore({
+      root: join(context.dataDir, "memory"),
+      historyLimit: options.memoryHistoryLimit,
+    });
+    const memory = new MemoryService({
+      transcript,
+      documents,
+      agent: context.agent,
+      logger: context.logger,
+      options,
+    });
     const worldbookCache = new Map<string, WorldbookEntry[]>();
     let disposed = false;
 
@@ -83,7 +223,7 @@ export default definePlugin<RoleplayOptions>({
     };
 
     const boundPersona = async (chatKey: string) => {
-      const binding = store.getBinding(chatKey);
+      const binding = transcript.getBinding(chatKey);
       if (binding === null) return null;
       const persona = await getPersona(personasDir, binding.personaId);
       if (persona === null) return null;
@@ -102,7 +242,7 @@ export default definePlugin<RoleplayOptions>({
       sendGreeting: boolean,
     ): Promise<string> => {
       const chatKey = command.message.chat.chatKey;
-      const existing = store.getBinding(chatKey);
+      const existing = transcript.getBinding(chatKey);
       const conversation = context.sessions.get(chatKey) ?? command.conversation;
       const alreadyOnProject = conversation?.projectId === options.projectId;
       const previousProjectId =
@@ -125,7 +265,7 @@ export default definePlugin<RoleplayOptions>({
         if (!reset.ok) return reset.reason ?? "重置会话失败。";
       }
 
-      store.setBinding({
+      transcript.setBinding({
         chatKey,
         personaId: persona.id,
         previousProjectId,
@@ -136,10 +276,10 @@ export default definePlugin<RoleplayOptions>({
       if (sendGreeting && needsReset) {
         const greeting = persona.firstMes.trim();
         if (greeting.length > 0) {
-          store.addMessage({
+          transcript.addMessage({
             personaId: persona.id,
             chatKey,
-            scope: scopeFor(command.message),
+            scope: chatKey,
             role: "assistant",
             speaker: persona.name,
             text: greeting,
@@ -149,6 +289,27 @@ export default definePlugin<RoleplayOptions>({
         }
       }
       return `角色扮演已开启：${persona.name}（${persona.id}）`;
+    };
+
+    const deliverMemory = async (
+      command: PluginCommandContext,
+      personaId: string,
+      text: string,
+    ): Promise<string> => {
+      if (command.message.chat.type !== "group") return text;
+      if (isSharedGroup(command.groupMode) && !canManageGroup(command)) {
+        return "shared 群中只有 owner/admin 可以查看记忆。";
+      }
+      try {
+        await context.messages.send(privateChatFor(command.message), text);
+        return "已私聊你。";
+      } catch (error) {
+        context.logger.warn(
+          { err: error, personaId, chatKey: command.message.chat.chatKey },
+          "Failed to deliver roleplay memory by private message",
+        );
+        return "无法私聊发送记忆详情，请先添加我为好友。";
+      }
     };
 
     context.commands.register(
@@ -189,12 +350,12 @@ export default definePlugin<RoleplayOptions>({
         name: "persona",
         description: "列出、查看或使用角色卡",
         usage: "persona [list|info|use] [id]",
-        chats: ["private"],
-        allowGroupShared: false,
+        chats: ["private", "group"],
+        allowGroupShared: true,
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "list";
           const chatKey = command.message.chat.chatKey;
-          const binding = store.getBinding(chatKey);
+          const binding = transcript.getBinding(chatKey);
 
           if (sub === "list") {
             const personas = await listPersonas(personasDir);
@@ -216,16 +377,27 @@ export default definePlugin<RoleplayOptions>({
 
           if (sub === "info") {
             const worldbook = await worldbookFor(persona);
+            const view = await memory.view({
+              personaId: persona.id,
+              scope: chatKey,
+              actorQq: command.message.userId,
+              allActors: canViewAllActors(command),
+            });
+            const userChars = view.user.content.trim().length;
+            const sceneChars = view.scene?.content.trim().length ?? 0;
             return [
               `角色：${persona.name}（${persona.id}）`,
               `开场白：${persona.firstMes || "（无）"}`,
               `世界书：${worldbook.length} 条`,
-              `记忆：${store.count(scopeFor(command.message), persona.id)} 条`,
+              `记忆：用户文档 ${userChars} 字 · 场景文档 ${sceneChars} 字 · 原文 ${view.rawCount} 条`,
               `目录：${persona.dir}`,
             ].join("\n");
           }
 
           if (sub === "use") {
+            if (!canManageGroup(command)) {
+              return "shared 群中只有 owner/admin 可以切换角色。";
+            }
             return await activate(command, persona, true);
           }
           return "用法：!persona list | !persona info [id] | !persona use <id>";
@@ -238,11 +410,12 @@ export default definePlugin<RoleplayOptions>({
         name: "rp",
         description: "查看、开启或关闭角色扮演",
         usage: "rp [on|off|status]",
-        chats: ["private"],
+        chats: ["private", "group"],
+        allowGroupShared: true,
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "status";
           const chatKey = command.message.chat.chatKey;
-          const binding = store.getBinding(chatKey);
+          const binding = transcript.getBinding(chatKey);
 
           if (sub === "status") {
             if (binding === null) return "角色扮演未配置。发送 !persona list 查看角色卡。";
@@ -256,8 +429,11 @@ export default definePlugin<RoleplayOptions>({
           }
 
           if (sub === "off") {
+            if (!canManageGroup(command)) {
+              return "shared 群中只有 owner/admin 可以关闭角色扮演。";
+            }
             if (binding === null) return "当前没有绑定角色。";
-            store.setBinding({ ...binding, enabled: false, updatedAt: Date.now() });
+            transcript.setBinding({ ...binding, enabled: false, updatedAt: Date.now() });
             const restoreTo = binding.previousProjectId ?? options.fallbackProject;
             if (restoreTo === null) {
               context.sessions.reset(chatKey, command.actor);
@@ -272,6 +448,9 @@ export default definePlugin<RoleplayOptions>({
           }
 
           if (sub === "on") {
+            if (!canManageGroup(command)) {
+              return "shared 群中只有 owner/admin 可以开启角色扮演。";
+            }
             if (binding === null) {
               if (options.defaultPersona === null) {
                 return "请先发送 !persona use <id> 选择角色。";
@@ -294,19 +473,120 @@ export default definePlugin<RoleplayOptions>({
     context.commands.register(
       defineCommand({
         name: "memory",
-        description: "查看当前角色的最近记忆",
-        usage: "memory",
-        chats: ["private"],
+        description: "查看、搜索或整理当前角色的记忆",
+        usage: "memory [search <关键词>|refresh|history|diff]",
+        chats: ["private", "group"],
+        allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
           if (active === null) return "还没有绑定角色。发送 !persona use <id>。";
-          const rows = store.recent(chatKey, 5, active.persona.id);
-          if (rows.length === 0) return "还没有记忆。";
-          return [
-            `最近记忆（${rows.length}）：`,
-            ...rows.map((row) => `- [${formatTimestamp(row.ts)}] ${row.speaker}：${row.text}`),
-          ].join("\n");
+          const sub = command.args[0]?.toLowerCase();
+
+          if (sub === "refresh") {
+            if (command.message.chat.type === "group") {
+              return "请在私聊中使用 !memory refresh。";
+            }
+            await command.reply("正在整理记忆…");
+            const result = await memory.refresh({
+              personaId: active.persona.id,
+              personaName: active.persona.name,
+              chatKey,
+              scope: chatKey,
+              actorQq: command.message.userId,
+              senderName: command.message.senderName,
+            });
+            if (!result.enabled) return "记忆整理未启用。";
+            if (result.cooldown) return "刚整理过，请稍后再试。";
+            if (result.failed) return `整理失败：${result.summary}`;
+            return result.changed
+              ? `整理完成：${result.summary}`
+              : "整理完成：没有新的记忆变化。";
+          }
+
+          if (command.message.chat.type === "group" && isSharedGroup(command.groupMode) && !canManageGroup(command)) {
+            return "shared 群中只有 owner/admin 可以查看记忆。";
+          }
+
+          if (sub === "history") {
+            const events = memory.history({
+              personaId: active.persona.id,
+              scope: chatKey,
+              limit: 10,
+            });
+            return deliverMemory(command, active.persona.id, formatHistory(events));
+          }
+
+          if (sub === "diff") {
+            const event = memory.lastEvent({ personaId: active.persona.id, scope: chatKey });
+            return deliverMemory(command, active.persona.id, formatDiff(event));
+          }
+
+          if (sub === "search") {
+            const query = command.args.slice(1).join(" ").trim();
+            if (query.length === 0) return "用法：!memory search <关键词>";
+            const result = await memory.search({
+              personaId: active.persona.id,
+              scope: chatKey,
+              actorQq: command.message.userId,
+              query,
+              allActors: canViewAllActors(command),
+              limit: 5,
+            });
+            return deliverMemory(
+              command,
+              active.persona.id,
+              `记忆搜索：${query}\n${formatSearch(result)}`,
+            );
+          }
+
+          const view = await memory.view({
+            personaId: active.persona.id,
+            scope: chatKey,
+            actorQq: command.message.userId,
+            allActors: canViewAllActors(command),
+          });
+          const hasMemory =
+            view.user.exists || view.scene?.exists === true || view.allUsers.length > 0;
+          if (!hasMemory && view.rawCount === 0) {
+            return deliverMemory(
+              command,
+              active.persona.id,
+              "还没有记忆。使用 !remember 或继续聊天后会自动整理。",
+            );
+          }
+          return deliverMemory(
+            command,
+            active.persona.id,
+            formatMemoryView(active.persona.name, view),
+          );
+        },
+      }),
+    );
+
+    context.commands.register(
+      defineCommand({
+        name: "remember",
+        description: "手动记住一条关于你的信息",
+        usage: "remember <内容>",
+        chats: ["private", "group"],
+        allowGroupShared: true,
+        async handler(command) {
+          const chatKey = command.message.chat.chatKey;
+          const active = await boundPersona(chatKey);
+          if (active === null) return "还没有绑定角色。发送 !persona use <id>。";
+          const content = command.rawArgs.trim();
+          if (content.length === 0) return "用法：!remember <内容>";
+          if (content.length > MAX_REMEMBER_CHARS) {
+            return `最多记 ${MAX_REMEMBER_CHARS} 字，请缩短一点。`;
+          }
+          await memory.remember({
+            personaId: active.persona.id,
+            scope: chatKey,
+            actorQq: command.message.userId,
+            content,
+          });
+          return "已写入手动记忆。";
         },
       }),
     );
@@ -314,21 +594,45 @@ export default definePlugin<RoleplayOptions>({
     context.commands.register(
       defineCommand({
         name: "forget",
-        description: "删除当前角色的私聊记忆",
-        usage: "forget confirm",
-        chats: ["private"],
+        description: "删除当前角色在当前会话中的记忆",
+        usage: "forget section <名称> | forget confirm",
+        chats: ["private", "group"],
+        allowGroupShared: true,
         async handler(command) {
-          if (command.args[0]?.toLowerCase() !== "confirm") {
-            return "这会删除当前角色在本私聊中的全部原文记忆。确认请发送：!forget confirm";
-          }
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
           if (active === null) return "还没有绑定角色。";
-          const deleted = store.forget({
-            personaId: active.persona.id,
-            scope: scopeFor(command.message),
-          });
-          return `已删除 ${deleted} 条记忆。`;
+          const sub = command.args[0]?.toLowerCase();
+          if (sub === undefined) {
+            return "用法：!forget section <名称> | !forget confirm（全部，需要确认）";
+          }
+
+          if (!canManageGroup(command)) {
+            return "shared 群中只有 owner/admin 可以删除记忆。";
+          }
+
+          if (sub === "confirm") {
+            const deleted = await memory.forgetAll({
+              personaId: active.persona.id,
+              scope: chatKey,
+              actorQq: command.message.userId,
+            });
+            return `已删除记忆（原文 ${deleted.messages} 条、变更事件 ${deleted.events} 条）。`;
+          }
+
+          if (sub === "section") {
+            const section = command.args.slice(1).join(" ").trim();
+            if (section.length === 0) return "用法：!forget section <名称>";
+            const removed = await memory.forgetSection({
+              personaId: active.persona.id,
+              scope: chatKey,
+              actorQq: command.message.userId,
+              section,
+            });
+            return removed ? `已删除 section：${section}` : `没有找到 section：${section}`;
+          }
+
+          return "用法：!forget section <名称> | !forget confirm（全部，需要确认）";
         },
       }),
     );
@@ -349,10 +653,10 @@ export default definePlugin<RoleplayOptions>({
       async beforePrompt(prompt) {
         if (prompt.projectId !== options.projectId) return undefined;
         const chatKey = prompt.message.chat.chatKey;
+        const scope = chatKey;
         const active = await activePersona(chatKey);
         if (active === null) return undefined;
-        const scope = scopeFor(prompt.message);
-        const recent = store.recent(
+        const recent = transcript.recent(
           chatKey,
           Math.max(options.worldbookScanDepth, options.memoryExcludeRecent),
           active.persona.id,
@@ -375,25 +679,42 @@ export default definePlugin<RoleplayOptions>({
           excludeCount === 0
             ? []
             : recent.slice(-excludeCount).map((row) => row.id);
-        const memories = store.search({
+        const memoryDocs = await memory.loadForPrompt({
+          personaId: active.persona.id,
+          scope,
+          actorQq: prompt.message.userId,
+        });
+        const memories = transcript.search({
           personaId: active.persona.id,
           scope,
           query: prompt.message.text,
-          limit: options.memoryTopK,
+          limit: options.memoryRawTopK,
           excludeIds: excluded,
         });
         const hasUser = recent.some((row) => row.role === "user");
+        const scene =
+          prompt.message.chat.type === "group"
+            ? `群聊 ${prompt.message.chat.groupId ?? ""}`.trim()
+            : undefined;
         const block = buildContextBlock({
           personaName: active.persona.name,
           userName: prompt.message.senderName,
           now: Date.now(),
-          turnCount: store.count(scope, active.persona.id, "user") + 1,
+          turnCount: transcript.count(scope, active.persona.id, "user") + 1,
+          ...(scene !== undefined ? { scene } : {}),
           worldbook: selected,
           memories,
+          userDoc: memoryDocs.userDoc,
+          sceneDoc: memoryDocs.sceneDoc,
           ...(!hasUser && active.persona.firstMes.length > 0
             ? { firstMes: active.persona.firstMes }
             : {}),
           maxChars: Math.max(400, options.memoryMaxChars + options.worldbookMaxChars + 400),
+          sectionMaxChars: {
+            user: options.memoryUserMaxChars,
+            scene: options.memorySceneMaxChars,
+            raw: options.memoryRawMaxChars,
+          },
         });
         return { prepend: block };
       },
@@ -410,66 +731,77 @@ export default definePlugin<RoleplayOptions>({
         if (run.projectId !== options.projectId) return;
         const active = await activePersona(run.chat.chatKey);
         if (active === null) return;
-        const scope = `private:${run.userId}`;
-        const ts = Date.now();
-        if (run.userText.trim().length > 0) {
-          store.addMessage({
-            personaId: active.persona.id,
-            chatKey: run.chat.chatKey,
-            scope,
-            role: "user",
-            speaker: run.senderName,
-            text: run.userText,
-            ts,
-            qqMessageId: undefined,
-            sessionId: run.sessionId ?? undefined,
-          });
-        }
-        if (run.replyText !== null && run.replyText.trim().length > 0) {
-          store.addMessage({
-            personaId: active.persona.id,
-            chatKey: run.chat.chatKey,
-            scope,
-            role: "assistant",
-            speaker: active.persona.name,
-            text: run.replyText,
-            ts: ts + 1,
-            sessionId: run.sessionId ?? undefined,
-          });
-        }
+        memory.recordRun({
+          personaId: active.persona.id,
+          personaName: active.persona.name,
+          chatKey: run.chat.chatKey,
+          scope: run.chat.chatKey,
+          actorQq: run.userId,
+          senderName: run.senderName,
+          userText: run.userText,
+          replyText: run.replyText,
+          sessionId: run.sessionId,
+        });
       },
     });
 
     return async () => {
       if (disposed) return;
       disposed = true;
-      store.close();
+      await memory.dispose();
+      transcript.close();
     };
   },
 
   async start(context: PluginContext<RoleplayOptions>) {
     if (!context.config.installAgent) return;
-    if (!/^[a-z][a-z0-9-]*$/.test(context.config.agent)) {
+    const configDir = roleplayConfigDir(context.config.opencodeConfigDir);
+    const engine = context.config.agent;
+    if (!/^[a-z][a-z0-9-]*$/.test(engine)) {
       context.logger.warn(
-        { agent: context.config.agent },
+        { agent: engine },
         "Roleplay agent id is not a safe filename; skip agent installation",
+      );
+    } else {
+      try {
+        const result = await installQqRpAgent({
+          configDir,
+          agentId: engine,
+          version: context.manifest.version || VERSION,
+        });
+        context.logger.info(
+          { path: result.path, action: result.action, agent: engine },
+          result.action === "kept"
+            ? "Roleplay engine agent already present"
+            : "Roleplay engine agent installed; restart or reload OpenCode before using it",
+        );
+      } catch (error) {
+        context.logger.warn({ err: error }, "Failed to install the qq-rp agent");
+      }
+    }
+
+    const utility = context.config.memoryUtilityAgent;
+    if (!/^[a-z][a-z0-9-]*$/.test(utility)) {
+      context.logger.warn(
+        { agent: utility },
+        "Roleplay utility agent id is not a safe filename; skip utility agent installation",
       );
       return;
     }
     try {
-      const result = await installQqRpAgent({
-        configDir: roleplayConfigDir(context.config.opencodeConfigDir),
-        agentId: context.config.agent,
+      const result = await installQqRpUtilityAgent({
+        configDir,
+        agentId: utility,
         version: context.manifest.version || VERSION,
       });
       context.logger.info(
-        { path: result.path, action: result.action, agent: context.config.agent },
+        { path: result.path, action: result.action, agent: utility },
         result.action === "kept"
-          ? "Roleplay engine agent already present"
-          : "Roleplay engine agent installed; restart or reload OpenCode before using it",
+          ? "Roleplay utility agent already present"
+          : "Roleplay utility agent installed; restart or reload OpenCode before using it",
       );
     } catch (error) {
-      context.logger.warn({ err: error }, "Failed to install the qq-rp agent");
+      context.logger.warn({ err: error }, "Failed to install the qq-rp utility agent");
     }
   },
 });

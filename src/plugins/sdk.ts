@@ -17,6 +17,7 @@ export const PLUGIN_CAPABILITIES = [
   "messages",
   "sessions",
   "events",
+  "agent",
   "admin",
 ] as const;
 
@@ -38,6 +39,7 @@ export interface PluginManifest {
 }
 
 export type PluginChatType = "private" | "group";
+export type PluginGroupMode = "per_user" | "shared" | "readonly";
 export type PluginRole = "owner" | "admin" | "member";
 
 export interface PluginChat {
@@ -130,11 +132,46 @@ export interface PluginLogger {
   error(detail: unknown, message?: string): void;
 }
 
+/**
+ * Input for a one-shot OpenCode utility run.
+ *
+ * The core creates an ephemeral session in the plugin data directory, denies
+ * every tool, waits for completion and deletes the session. The prompt is the
+ * only input: utility runs cannot read plugin/core files or send QQ messages.
+ */
+export interface PluginAgentCompletion {
+  prompt: string;
+  /** OpenCode agent id. Defaults to `build` when omitted. */
+  agent?: string;
+  /** `provider/model` override. */
+  model?: string;
+  /** Hard timeout; clamped by the core. Defaults to 90 seconds. */
+  timeoutMs?: number;
+  /** Short audit label, e.g. `roleplay.memory.facts`. */
+  label?: string;
+  /** Optional audit context; never used for routing. */
+  chatKey?: string;
+  actorQq?: number;
+}
+
+export interface PluginAgentResult {
+  text: string;
+  sessionId: string;
+  usage: PluginRunUsage | null;
+}
+
+/** Ephemeral, tool-free OpenCode session for plugin background work. */
+export interface PluginAgent {
+  complete(input: PluginAgentCompletion): Promise<PluginAgentResult>;
+}
+
 export interface PluginCommandContext {
   message: PluginMessage;
   args: string[];
   rawArgs: string;
   actor: PluginActor;
+  /** Group policy for this chat; null for private chats. */
+  groupMode: PluginGroupMode | null;
   conversation: PluginConversation | null;
   logger: PluginLogger;
   reply(text: string): Promise<PluginSendResult>;
@@ -308,6 +345,7 @@ export interface PluginContext<TOptions = Record<string, unknown>> {
   messages: PluginMessages;
   sessions: PluginSessions;
   events: PluginEvents;
+  agent: PluginAgent;
 }
 
 export type PluginDisposer = () => void | Promise<void>;

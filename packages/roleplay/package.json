@@ -1,6 +1,6 @@
 {
   "name": "@opencode-qq/roleplay",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Character-card roleplay plugin for opencode-qq-adapter",
   "type": "module",
   "license": "MIT",
@@ -19,14 +19,15 @@
   "opencodeQq": {
     "id": "roleplay",
     "name": "Roleplay",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "apiVersion": 1,
-    "description": "Character Card V2/V3 roleplay with per-persona prompt and raw transcript memory",
+    "description": "Character Card V2/V3 roleplay with Markdown memory documents and raw transcript retrieval",
     "capabilities": [
       "commands",
       "hooks",
       "messages",
-      "sessions"
+      "sessions",
+      "agent"
     ],
     "engines": {
       "opencodeQq": ">=0.1.0 <0.3.0"

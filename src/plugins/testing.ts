@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  PluginAgent,
+  PluginAgentCompletion,
   PluginChat,
   PluginCommandContext,
   PluginCommandDefinition,
@@ -11,6 +13,7 @@ import type {
   PluginDisposer,
   PluginEventMap,
   PluginFileInput,
+  PluginGroupMode,
   PluginHooksDefinition,
   PluginImageInput,
   PluginLogger,
@@ -20,6 +23,7 @@ import type {
   PluginPromptPatch,
   PluginReplyContext,
   PluginReplyPlan,
+  PluginRole,
   PluginRunContext,
   PluginSendResult,
 } from "./sdk.js";
@@ -40,12 +44,16 @@ export interface PluginHarnessOptions<TOptions = Record<string, unknown>> {
   dataDir?: string;
   logger?: PluginLogger;
   config?: TOptions;
+  /** Optional fake for `context.agent.complete`. */
+  agent?: PluginAgent;
 }
 
 export interface RunCommandOptions {
   message?: Partial<PluginMessage>;
   args?: string[];
   rawArgs?: string;
+  groupMode?: PluginGroupMode | null;
+  actorRole?: PluginRole;
 }
 
 export interface HarnessSessionCall {
@@ -61,6 +69,7 @@ export interface PluginHarness<TOptions = Record<string, unknown>> {
   readonly hooks: PluginHooksDefinition[];
   readonly sent: HarnessSend[];
   readonly sessionCalls: HarnessSessionCall[];
+  readonly agentCalls: PluginAgentCompletion[];
   runCommand(name: string, options?: RunCommandOptions): Promise<string | undefined>;
   resolveProfile(context: PluginProfileContext): Promise<PluginConversationProfile | null>;
   beforePrompt(context: PluginPromptContext): Promise<PluginPromptPatch | undefined>;
@@ -94,7 +103,18 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
   }> = [];
   const sent: HarnessSend[] = [];
   const sessionCalls: HarnessSessionCall[] = [];
+  const agentCalls: PluginAgentCompletion[] = [];
   const disposers: PluginDisposer[] = [];
+
+  const agentApi: PluginAgent = {
+    async complete(input) {
+      agentCalls.push(input);
+      if (options.agent === undefined) {
+        throw new Error("utility agent is not configured in this harness");
+      }
+      return options.agent.complete(input);
+    },
+  };
 
   const commandsApi = {
     register: (command: PluginCommandDefinition): (() => void) => {
@@ -180,6 +200,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
       },
     },
     events: eventsApi,
+    agent: agentApi,
   };
 
   const disposer = await definition.setup(context);
@@ -192,6 +213,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     hooks,
     sent,
     sessionCalls,
+    agentCalls,
     async runCommand(name: string, overrides: RunCommandOptions = {}): Promise<string | undefined> {
       const command = findCommand(commands, name);
       if (command === undefined) throw new Error(`unknown harness command: ${name}`);
@@ -201,7 +223,8 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
         message,
         args,
         rawArgs: overrides.rawArgs ?? args.join(" "),
-        actor: { qq: message.userId, role: "owner" },
+        actor: { qq: message.userId, role: overrides.actorRole ?? "owner" },
+        groupMode: overrides.groupMode ?? null,
         conversation: null,
         logger,
         reply: (text) => messages.reply(message, text),

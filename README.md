@@ -398,14 +398,24 @@ pnpm test
 
 ## Roleplay（实验）
 
-`packages/roleplay` 提供私聊角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书和原文记忆、把回复拆成多条短消息并加打字延迟。
+`packages/roleplay` 提供角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书与 Markdown 长期记忆、把回复拆成多条短消息并加打字延迟。
 
-当前 M1 边界：
+当前 0.3 能力：
 
-- 只支持私聊，一个 chat 同时激活一个角色；
-- 记忆只做原文检索，不做 LLM 事实/情节抽取；
-- 不做群聊主动插话、多角色同场、WebUI、TTS；
-- 开场白目前使用角色卡的 `first_mes`，时间段问候尚未实现。
+- 私聊 + 群聊 `per_user` / `shared` / `readonly`；私聊一个 chat 一个角色，`per_user` 群每个成员各自绑定，`shared` 群由 owner/admin 管理；
+- 长期记忆是一份可读、可手改的 `memory.md`（shared 群为 `scene.md` + 每人 `users/<qq>.md`），原文保存在 SQLite 供 FTS5 检索；
+- 后台 consolidation：隐藏的 `qq-rp-utility` 临时 session，工具全 deny，按 section 级 JSON 操作更新 MD；
+- `memory_events` 记录每次 consolidate/manual_add/manual_delete，`history/` 保留最近版本；
+- 触发条件是每 N 轮或 idle debounce，不再使用硬编码的“记忆关键词”正则；
+- `!remember` 写入手动记忆，`!memory diff|history|search|refresh`，`!forget section|confirm`；
+- 中文原文检索使用 FTS5 trigram OR 查询 + 短查询 LIKE 回退；
+- 群聊记忆详情私聊发送；`shared` 群仅 owner/admin 可查看/清空。
+
+仍不在本阶段：
+
+- 主动消息、群聊旁听、多角色同场、WebUI 记忆编辑器、TTS、表情包管线；
+- 向量/embedding 检索和外部记忆服务；
+- 时间段开场白、备选开场白轮换。
 
 配置片段见 [`config/roleplay.example.yaml`](config/roleplay.example.yaml)，完整说明见 [`packages/roleplay/README.md`](packages/roleplay/README.md)。
 
@@ -421,12 +431,22 @@ mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
 !card import /path/to/card.png blue-fat-fish
 !persona use blue-fat-fish
 !rp status
+!remember 我不喜欢吃香菜
 !memory
+!memory diff
+!memory history
+!memory search 香菜
+!memory refresh
+!forget section 喜好
 !forget confirm
 !rp off
 ```
 
-`install_agent` 默认会在 `~/.config/opencode/agents/qq-rp.md` 写入固定的引擎 agent；已有用户文件不会被覆盖。首次安装后需要重启或 reload OpenCode 才能看到新 agent。角色卡会被渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。
+`install_agent` 默认写入两个 agent：`~/.config/opencode/agents/qq-rp.md`（角色引擎）和 `qq-rp-utility.md`（隐藏的 JSON 记忆整理器）。已有用户文件不会被覆盖。首次安装后需要重启或 reload OpenCode 才能看到新 agent。角色卡会被渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。
+
+`memory_enabled: false` 可关闭后台 LLM consolidation，只保留手动 `!remember` 和原文检索；consolidation 会把当前 MD + 最近对话发送给你配置的模型，详情和隐私说明见角色扮演 README。
+
+注意：插件选项里的 `personas_dir` 必须与 `projects.roleplay.path` 完全一致。两者不一致时，核心会拒绝角色目录（`Plugin profile directory escapes the project root`），bot 会退回项目根目录运行，角色卡的 `AGENTS.md` 不会生效。
 
 ## OpenCode 图片插件安装
 
@@ -445,6 +465,8 @@ ln -sf "$(pwd)/plugin/opencode-qq-plugin.ts" \
 ```bash
 opencode plugin list
 ```
+
+如果 `qq_send_image` 返回 `unauthorized`，检查 `~/.config/opencode/qq-bridge.json` 的 `token` 是否与 bridge **解析后**的 `server.internal_token` 一致（通常就是 `.env` 里的 `QQ_BRIDGE_INTERNAL_TOKEN`）。插件每次调用都会重新读取该文件，修改后不需要重启 OpenCode。
 
 OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/README.md`](plugin/README.md)。
 
