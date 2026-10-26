@@ -359,6 +359,58 @@ export interface PluginOptionsSchema<T> {
   parse(input: unknown): T;
 }
 
+export type PluginAdminMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface PluginAdminActor {
+  /** Local admin WebUI account name, never a QQ number. */
+  username: string;
+}
+
+export interface PluginAdminPage {
+  /** Stable page id, unique inside the plugin. */
+  id: string;
+  title: string;
+  /** Core WebUI route, for example `/roleplay`. */
+  path: string;
+  description?: string;
+}
+
+export interface PluginAdminRequestContext {
+  /** Raw Fetch Request. Use request.json()/formData() for the body. */
+  request: Request;
+  method: PluginAdminMethod;
+  /** Path after `/admin/api/plugins/<plugin-id>`, always starts with `/`. */
+  path: string;
+  params: Record<string, string>;
+  query: URLSearchParams;
+  actor: PluginAdminActor;
+}
+
+export type PluginAdminResult =
+  | Response
+  | Record<string, unknown>
+  | unknown[]
+  | string
+  | number
+  | boolean
+  | null;
+
+export type PluginAdminHandler = (
+  context: PluginAdminRequestContext,
+) => PluginAdminResult | Promise<PluginAdminResult>;
+
+/**
+ * Plugin-owned JSON/image API mounted under `/admin/api/plugins/<id>/*`.
+ *
+ * Authentication, loopback checks, CSRF and audit stay in the core. Plugins
+ * only receive an already-authenticated request context.
+ */
+export interface PluginAdmin {
+  route(method: PluginAdminMethod, path: string, handler: PluginAdminHandler): () => void;
+  /** Optional navigation metadata consumed by the core WebUI. */
+  page(page: PluginAdminPage): () => void;
+}
+
 export interface PluginContext<TOptions = Record<string, unknown>> {
   manifest: Readonly<PluginManifest>;
   config: TOptions;
@@ -371,6 +423,7 @@ export interface PluginContext<TOptions = Record<string, unknown>> {
   sessions: PluginSessions;
   events: PluginEvents;
   agent: PluginAgent;
+  admin: PluginAdmin;
 }
 
 export type PluginDisposer = () => void | Promise<void>;

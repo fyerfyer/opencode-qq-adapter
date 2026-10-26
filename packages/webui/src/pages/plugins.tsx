@@ -1,10 +1,15 @@
-import { Blocks, PackageOpen, PlugZap } from "lucide-react";
+import { Blocks, ExternalLink, PackageOpen, PlugZap, Settings2 } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { toast } from "sonner";
+import { api, errorMessage } from "@/api/client";
 import type { MetaInfo, PluginInfo } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { useApiQuery } from "@/hooks/use-api-query";
 
 function statusBadge(plugin: PluginInfo) {
@@ -16,6 +21,20 @@ function statusBadge(plugin: PluginInfo) {
 
 export function PluginsPage() {
   const { data, error, loading, refresh } = useApiQuery<MetaInfo>("/meta");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const toggle = async (plugin: PluginInfo, enabled: boolean) => {
+    setBusy(plugin.id);
+    try {
+      await api.put(`/plugins/${encodeURIComponent(plugin.id)}/enabled`, { enabled });
+      toast.success(enabled ? `${plugin.name} 已启用` : `${plugin.name} 已禁用`);
+      await refresh(true);
+    } catch (caught) {
+      toast.error(errorMessage(caught));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   if (loading && data === null) return <LoadingState rows={4} />;
   if (error !== null && data === null)
@@ -76,9 +95,16 @@ export function PluginsPage() {
                       <Badge variant="outline">v{plugin.version}</Badge>
                       {statusBadge(plugin)}
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      API {plugin.apiVersion || "-"}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        API {plugin.apiVersion || "-"}
+                      </span>
+                      <Switch
+                        checked={plugin.status !== "disabled"}
+                        disabled={busy === plugin.id}
+                        onCheckedChange={(value) => void toggle(plugin, value)}
+                      />
+                    </div>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
                     {plugin.description ?? plugin.id}
@@ -94,7 +120,28 @@ export function PluginsPage() {
                         {capability}
                       </Badge>
                     ))}
+                    {plugin.admin.routes > 0 && (
+                      <Badge variant="outline">{plugin.admin.routes} admin routes</Badge>
+                    )}
                   </div>
+                  {plugin.admin.pages.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {plugin.admin.pages.map((page) => (
+                        <Button key={page.id} variant="outline" size="sm" asChild>
+                          <Link to={page.path}>
+                            <ExternalLink /> {page.title}
+                          </Link>
+                        </Button>
+                      ))}
+                      {plugin.id === "roleplay" && (
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link to="/roleplay?tab=settings">
+                            <Settings2 /> 配置
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
+                  )}
                   {plugin.error !== null ? (
                     <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
                       {plugin.error}

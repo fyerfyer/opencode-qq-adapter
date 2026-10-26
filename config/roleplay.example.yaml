@@ -1,11 +1,15 @@
-# Roleplay M2 configuration snippet.
+# Roleplay configuration snippet.
 #
-# This is a fragment, not a complete bridge config. Merge these sections into
-# your config.yaml, or keep a separate file and copy the relevant blocks.
+# This is a fragment, not a complete bridge config. `opencode-qq setup
+# --with-roleplay` generates these sections automatically. For manual installs,
+# merge them into config.yaml, or keep a separate file and copy the blocks.
 #
 # Create the persona root before starting the bridge so config validation sees
 # it:
 #   mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
+#
+# WebUI: after the bridge starts, open /admin → Roleplay to import cards,
+# upload stickers, edit Markdown memory and change these options.
 
 version: 1
 

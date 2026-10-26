@@ -19,7 +19,7 @@ export function setCsrfToken(token: string | null): void {
 }
 
 export interface RequestOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Sent as X-Config-Hash for optimistic YAML edits. */
   configHash?: string;
@@ -29,7 +29,8 @@ export interface RequestOptions {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  const isForm = options.body instanceof FormData;
+  if (options.body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   if (method !== "GET" && csrfToken !== null) headers["X-CSRF-Token"] = csrfToken;
   if (options.configHash !== undefined) headers["X-Config-Hash"] = options.configHash;
 
@@ -37,7 +38,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     credentials: "same-origin",
     headers,
-    ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+    ...(options.body !== undefined
+      ? { body: isForm ? (options.body as FormData) : JSON.stringify(options.body) }
+      : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
 
@@ -89,11 +92,17 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", ...(body !== undefined ? { body } : {}) }),
+  upload: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", body: form }),
   put: <T>(path: string, body: unknown, configHash?: string) =>
     request<T>(path, {
       method: "PUT",
       body,
       ...(configHash !== undefined ? { configHash } : {}),
+    }),
+  patch: <T>(path: string, body: unknown) =>
+    request<T>(path, {
+      method: "PATCH",
+      body,
     }),
   delete: <T>(path: string, configHash?: string) =>
     request<T>(path, {

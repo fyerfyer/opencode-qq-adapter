@@ -1,7 +1,9 @@
 import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse, stringify } from "yaml";
 import { loadConfig } from "../../src/config/loader.js";
 import { parseEnvFile } from "../../src/config/paths.js";
 import type { SetupError } from "../../src/setup/files.js";
@@ -187,5 +189,100 @@ describe("setup wizard", () => {
       token: string;
     };
     expect(config).toEqual({ url: "http://127.0.0.1:8787", token: "test-token" });
+  });
+
+  it("generates a roleplay project, policy, plugin and persona directory", async () => {
+    const dir = await tempDir();
+    const dataDir = join(dir, "data");
+    const personasDir = join(dataDir, "plugins", "roleplay", "personas");
+    const configPath = join(dir, "config.yaml");
+    const result = await runSetup({
+      configPath,
+      dataDir,
+      ownerQq: "12345678",
+      projects: [{ id: "demo", path: dir }],
+      napcat: "skip",
+      agent: "default",
+      yes: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      withRoleplay: true,
+      roleplayPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
+      roleplayPersonas: personasDir,
+      roleplayProject: "roleplay",
+      output: () => undefined,
+    });
+    expect(result.roleplay).toMatchObject({
+      enabled: true,
+      projectId: "roleplay",
+      personasDir,
+    });
+    expect((await stat(personasDir)).isDirectory()).toBe(true);
+    const env = parseEnvFile(await readFile(result.envPath, "utf8"));
+    const loaded = await loadConfig(configPath, {
+      checkPaths: true,
+      env: { ...process.env, ...env },
+    });
+    expect(loaded.config.projects.roleplay).toMatchObject({
+      path: personasDir,
+      workspace: "none",
+      policy: "roleplay",
+      agent: "qq-rp",
+    });
+    expect(loaded.config.policies.roleplay).toMatchObject({
+      read: "allow",
+      edit: "deny",
+      shell: "deny",
+      external_directory: "deny",
+    });
+    expect(loaded.config.plugins.roleplay?.path).toContain("packages/roleplay");
+    expect(loaded.config.plugins.roleplay?.options).toMatchObject({
+      project_id: "roleplay",
+      personas_dir: personasDir,
+      fallback_project: "demo",
+    });
+    expect(loaded.config.security.allowed_roots.some((root) => root === dataDir)).toBe(true);
+    expect(formatSetupSummary(result).join("\n")).toContain("Roleplay");
+  });
+
+  it("merges roleplay into an existing config without dropping comments or custom projects", async () => {
+    const { dir, configPath, dataDir } = await runTempSetup();
+    const customPath = join(dir, "custom-project");
+    await mkdir(customPath, { recursive: true });
+    const before = await readFile(configPath, "utf8");
+    const doc = parse(before) as Record<string, unknown>;
+    const projects = doc.projects as Record<string, unknown>;
+    projects.custom = {
+      path: customPath,
+      policy: "standard",
+      workspace: "shared",
+      allowed_users: ["12345678"],
+    };
+    await writeFile(configPath, `${stringify(doc)}# keep-this-comment\n`, "utf8");
+
+    const personasDir = join(dataDir, "plugins", "roleplay", "personas");
+    const result = await runSetup({
+      configPath,
+      dataDir,
+      ownerQq: "12345678",
+      projects: [{ id: "demo", path: dir }],
+      napcat: "skip",
+      agent: "default",
+      yes: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      reconfigure: true,
+      withRoleplay: true,
+      roleplayPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
+      roleplayPersonas: personasDir,
+      output: () => undefined,
+    });
+    expect(result.roleplay?.enabled).toBe(true);
+    const merged = await readFile(configPath, "utf8");
+    expect(merged).toContain("# keep-this-comment");
+    expect(merged).toContain("custom:");
+    expect(merged).toContain("roleplay:");
+    const files = await readdir(dir);
+    expect(files.some((file) => file.startsWith("config.yaml.bak."))).toBe(true);
   });
 });

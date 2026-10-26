@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import {
@@ -12,6 +13,7 @@ import {
   type PluginRunContext,
 } from "@opencode-qq/plugin-sdk";
 import { installQqRpAgent, installQqRpUtilityAgent } from "./agent.js";
+import { registerRoleplayAdmin } from "./admin.js";
 import {
   type DeliveryOptions,
   planReplyWithSticker,
@@ -967,6 +969,28 @@ export default definePlugin<RoleplayOptions>({
         });
       },
     });
+
+    registerRoleplayAdmin(context.admin, {
+      options,
+      personasDir,
+      stickerRoot,
+      memoryRoot: join(context.dataDir, "memory"),
+      databasePath: join(context.dataDir, "roleplay.db"),
+      agentConfigDir: roleplayConfigDir(options.opencodeConfigDir),
+      memory,
+      documents,
+      transcript,
+      bindings,
+      messages: context.messages,
+      logger: context.logger,
+      worldbookCache,
+      stickerCache,
+      jev,
+    });
+
+    mkdirSync(personasDir, { recursive: true, mode: 0o700 });
+    mkdirSync(stickerRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(join(context.dataDir, "memory"), { recursive: true, mode: 0o700 });
 
     return async () => {
       if (disposed) return;

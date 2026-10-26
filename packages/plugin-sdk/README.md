@@ -29,7 +29,7 @@ my-plugin/
     "version": "0.1.0",
     "apiVersion": 1,
     "description": "Example plugin",
-    "capabilities": ["commands", "messages", "hooks"],
+    "capabilities": ["commands", "messages", "hooks", "admin"],
     "engines": { "opencodeQq": ">=0.1.0 <0.2.0" },
     "entry": "./src/index.ts"
   },
@@ -97,10 +97,38 @@ The config key must match `opencodeQq.id`. Only explicitly configured plugins ar
 | `ctx.sessions` | `sessions` | Read the conversation binding; guarded `setProject` / `reset` |
 | `ctx.events` | `events` | Subscribe to `run.finished` / `config.reloaded` |
 | `ctx.agent` | `agent` | One-shot OpenCode utility run for background work |
+| `ctx.admin` | `admin` | Plugin-owned JSON/image routes under `/admin/api/plugins/<id>/*` and optional page metadata |
 | `ctx.storage` / `ctx.dataDir` | — | Isolated JSON/text files |
 | `ctx.logger` | — | Plugin-prefixed structured logging |
 
 Capabilities are enforced: calling `ctx.commands.register` without `"commands"` fails the plugin load instead of silently doing nothing.
+
+## Admin routes
+
+`ctx.admin` is authenticated by the core admin session; plugins never implement login, CSRF or loopback checks themselves.
+
+```ts
+context.admin.route("GET", "/items/:id", async ({ params, query }) => {
+  return { id: params.id, filter: query.get("q") };
+});
+
+context.admin.route("POST", "/items", async ({ request }) => {
+  const body = await request.json();
+  return { created: true, body };
+});
+
+context.admin.route("GET", "/media/:file", async ({ params }) => {
+  return new Response(bytes, { headers: { "content-type": "image/png" } });
+});
+
+context.admin.page({
+  id: "my-plugin",
+  title: "My Plugin",
+  path: "/my-plugin",
+});
+```
+
+The core mounts the routes at `/admin/api/plugins/<plugin-id>/*`, blocks HTML responses, enforces CSRF on writes, audits mutations, and supports `Response` passthrough for images/files. The current core WebUI only ships first-party pages; third-party plugin pages are planned as restricted iframes with a postMessage bridge.
 
 ## Commands
 

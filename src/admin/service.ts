@@ -13,6 +13,7 @@ import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
 import type { PluginHost, PluginHostStatus } from "../plugins/host.js";
+import type { PluginAdminActor, PluginAdminResult } from "../plugins/sdk.js";
 import type { AgentPort, AgentSession } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import {
@@ -30,7 +31,7 @@ import {
 import { type PromptFile, PromptStore, type PromptSummary } from "./prompts.js";
 
 export class AdminError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 503;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 415 | 500 | 503;
   readonly code: string;
   readonly details: string[];
 
@@ -73,6 +74,15 @@ export interface ConversationOverview extends ConversationRecord {
   activeRun: RunRecord | null;
   pendingApprovals: number;
   recentRuns: RunRecord[];
+}
+
+export interface PluginOptionsSnapshot {
+  plugin: NonNullable<PluginHostStatus["plugins"][number]>;
+  options: Record<string, unknown>;
+  normalized: unknown;
+  error: string | null;
+  configHash: string | null;
+  configPath: string | null;
 }
 
 export class AdminService {
@@ -443,9 +453,16 @@ export class AdminService {
     return this.prompts.read(name);
   }
 
-  async writePrompt(name: string, content: string): Promise<PromptFile> {
-    const file = await this.prompts.write(name, content);
-    this.record({ action: "admin.prompt.saved", detail: { name } });
+  async writePrompt(
+    name: string,
+    content: string,
+    options: { override?: boolean } = {},
+  ): Promise<PromptFile> {
+    const file = await this.prompts.write(name, content, options);
+    this.record({
+      action: "admin.prompt.saved",
+      detail: { name, override: options.override === true },
+    });
     return file;
   }
 
@@ -459,9 +476,16 @@ export class AdminService {
     return this.prompts.readBackup(name, backup);
   }
 
-  async restorePromptBackup(name: string, backup: string): Promise<PromptFile> {
-    const file = await this.prompts.restoreBackup(name, backup);
-    this.record({ action: "admin.prompt.restored", detail: { name, backup } });
+  async restorePromptBackup(
+    name: string,
+    backup: string,
+    options: { override?: boolean } = {},
+  ): Promise<PromptFile> {
+    const file = await this.prompts.restoreBackup(name, backup, options);
+    this.record({
+      action: "admin.prompt.restored",
+      detail: { name, backup, override: options.override === true },
+    });
     return file;
   }
 
@@ -487,6 +511,135 @@ export class AdminService {
     };
   }
 
+  async pluginOptions(pluginId: string): Promise<PluginOptionsSnapshot> {
+    const plugin = this.#requirePlugin(pluginId);
+    const raw = this.#config.plugins[pluginId]?.options ?? {};
+    let normalized: unknown = raw;
+    let error: string | null = null;
+    if (this.#plugins !== undefined) {
+      try {
+        normalized = this.#plugins.validateOptions(pluginId, raw);
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught);
+      }
+    }
+    let configHash: string | null = null;
+    if (this.configEditor.enabled) {
+      try {
+        configHash = (await this.configEditor.read()).hash;
+      } catch {
+        configHash = null;
+      }
+    }
+    return {
+      plugin,
+      options: raw,
+      normalized,
+      error,
+      configHash,
+      configPath: this.#configPath,
+    };
+  }
+
+  async setPluginEnabled(
+    pluginId: string,
+    enabled: boolean,
+    expectedHash?: string,
+  ): Promise<ConfigSaveResult & { plugin: NonNullable<PluginHostStatus["plugins"][number]> }> {
+    this.#requirePlugin(pluginId);
+    const result = await this.configEditor.mutate((document) => {
+      document.setIn(["plugins", pluginId, "enabled"], enabled);
+    }, expectedHash);
+    this.record({
+      action: enabled ? "admin.plugin.enabled" : "admin.plugin.disabled",
+      detail: { pluginId },
+    });
+    return { ...result, plugin: this.#requirePlugin(pluginId) };
+  }
+
+  async savePluginOptions(
+    pluginId: string,
+    options: Record<string, unknown>,
+    expectedHash?: string,
+  ): Promise<PluginOptionsSnapshot & ConfigSaveResult> {
+    this.#requirePlugin(pluginId);
+    if (this.#plugins === undefined) {
+      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
+    }
+    let normalized: unknown;
+    try {
+      normalized = this.#plugins.validateOptions(pluginId, options);
+    } catch (error) {
+      throw new AdminError(
+        400,
+        "invalid_plugin_options",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (!isPlainRecord(normalized)) {
+      throw new AdminError(400, "invalid_plugin_options", "插件配置必须是 JSON 对象。");
+    }
+    const result = await this.configEditor.mutate((document) => {
+      document.setIn(["plugins", pluginId, "options"], normalized);
+    }, expectedHash);
+    this.record({
+      action: "admin.plugin.options.updated",
+      detail: { pluginId },
+    });
+    const refreshed = this.#requirePlugin(pluginId);
+    return {
+      ...result,
+      plugin: refreshed,
+      options: normalized,
+      normalized,
+      error: null,
+      configHash: result.hash,
+      configPath: result.path,
+    };
+  }
+
+  async dispatchPluginAdmin(
+    pluginId: string,
+    request: Request,
+    path: string,
+    actor: PluginAdminActor,
+  ): Promise<PluginAdminResult> {
+    this.#requirePlugin(pluginId);
+    if (this.#plugins === undefined) {
+      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
+    }
+    let result: PluginAdminResult | null;
+    try {
+      result = await this.#plugins.dispatchAdmin(pluginId, request, path, actor);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AdminError(
+        /unknown plugin|not loaded/.test(message) ? 404 : 500,
+        "plugin_admin_failed",
+        message,
+      );
+    }
+    if (result === null) {
+      throw new AdminError(404, "plugin_route_not_found", "插件没有这个管理接口。");
+    }
+    if (!(result instanceof Response) && request.method !== "GET") {
+      this.record({
+        action: "admin.plugin.route",
+        detail: { pluginId, method: request.method, path },
+      });
+    }
+    return result;
+  }
+
+  #requirePlugin(pluginId: string): NonNullable<PluginHostStatus["plugins"][number]> {
+    const status = this.plugins();
+    const plugin = status.plugins.find((item) => item.id === pluginId);
+    if (plugin === undefined) {
+      throw new AdminError(404, "plugin_not_found", `插件不存在：${pluginId}`);
+    }
+    return plugin;
+  }
+
   record(
     entry: Omit<AuditEntry, "ts" | "actorQq" | "chatKey" | "projectId" | "workspaceId">,
   ): void {
@@ -505,6 +658,10 @@ function compactObject<T extends object>(value: T): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined),
   ) as Record<string, unknown>;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function dayKey(now = new Date()): string {

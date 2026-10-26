@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
-import { stringify as stringifyYaml } from "yaml";
-import { loadConfig } from "../config/loader.js";
+import { parseDocument, stringify as stringifyYaml } from "yaml";
+import { loadConfig, parseConfigSource } from "../config/loader.js";
 import {
   configHome as defaultConfigHome,
   defaultDataDir,
+  parseEnvFile,
   resolveConfigPath,
 } from "../config/paths.js";
 import { installQqCodeAgent, QQ_CODE_AGENT_ID } from "./agent.js";
@@ -57,6 +58,16 @@ export interface SetupOptions {
   wsPort?: number;
   yes?: boolean;
   force?: boolean;
+  /** Merge managed sections into an existing config instead of overwriting it. */
+  reconfigure?: boolean;
+  /** Print what would be written without changing files. */
+  dryRun?: boolean;
+  /** Enable the first-party Roleplay plugin and project. */
+  withRoleplay?: boolean;
+  roleplayPath?: string;
+  roleplayPersonas?: string;
+  roleplayProject?: string;
+  roleplayDefaultPersona?: string | null;
   skipPlugin?: boolean;
   skipDoctor?: boolean;
   cwd?: string;
@@ -65,6 +76,15 @@ export interface SetupOptions {
   sleep?: (ms: number) => Promise<void>;
   portAvailable?: (port: number) => Promise<boolean>;
   output?: (line: string) => void;
+}
+
+export interface SetupRoleplayResult {
+  enabled: boolean;
+  projectId: string | null;
+  personasDir: string | null;
+  pluginPath: string | null;
+  defaultPersona: string | null;
+  warnings: string[];
 }
 
 export interface SetupResult {
@@ -88,6 +108,7 @@ export interface SetupResult {
   adminPassword: string | null;
   pluginPath: string | null;
   bridgeConfigPath: string | null;
+  roleplay: SetupRoleplayResult;
   warnings: string[];
 }
 
@@ -102,13 +123,133 @@ function envRef(name: string, fallback?: string): string {
   return "$" + "{" + name + (fallback === undefined ? "" : `:-${fallback}`) + "}";
 }
 
+export interface GeneratedRoleplayConfig {
+  projectId: string;
+  personasDir: string;
+  pluginPath: string;
+  fallbackProject: string | null;
+  defaultPersona: string | null;
+}
+
 export function generateConfigObject(options: {
   ownerQq: string;
   projects: SetupProject[];
   dataDir: string;
   defaultAgent?: string | null;
+  roleplay?: GeneratedRoleplayConfig | null;
 }): Record<string, unknown> {
   const projectPaths = [...new Set(options.projects.map((project) => resolve(project.path)))];
+  const allowedRoots = [
+    ...new Set([
+      ...projectPaths,
+      resolve(options.dataDir),
+      ...(options.roleplay !== undefined && options.roleplay !== null
+        ? [resolve(options.roleplay.personasDir)]
+        : []),
+    ]),
+  ];
+  const projects: Record<string, unknown> = Object.fromEntries(
+    options.projects.map((project) => [
+      project.id,
+      {
+        path: resolve(project.path),
+        description: project.id,
+        policy: "standard",
+        workspace: "shared",
+        agent: null,
+        model: null,
+        allowed_users: [options.ownerQq],
+        setup: [],
+      },
+    ]),
+  );
+  const policies: Record<string, unknown> = {
+    readonly: {
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      edit: "deny",
+      shell: "deny",
+      webfetch: "ask",
+      websearch: "ask",
+      external_directory: "deny",
+    },
+    standard: {
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      edit: "ask",
+      shell: "ask",
+      webfetch: "ask",
+      websearch: "ask",
+      external_directory: "deny",
+      shell_rules: [
+        { pattern: "git status *", effect: "allow" },
+        { pattern: "git diff *", effect: "allow" },
+        { pattern: "git push *", effect: "deny" },
+        { pattern: "rm -rf *", effect: "deny" },
+      ],
+    },
+    trusted: {
+      read: "allow",
+      glob: "allow",
+      grep: "allow",
+      edit: "allow",
+      shell: "allow",
+      webfetch: "allow",
+      websearch: "allow",
+      external_directory: "deny",
+      shell_rules: [
+        { pattern: "sudo *", effect: "deny" },
+        { pattern: "git push *", effect: "ask" },
+      ],
+    },
+  };
+  const plugins: Record<string, unknown> = {};
+  if (options.roleplay !== undefined && options.roleplay !== null) {
+    const roleplay = options.roleplay;
+    if (projects[roleplay.projectId] !== undefined) {
+      throw new SetupError(
+        "invalid",
+        `Roleplay project ID conflicts with an existing project: ${roleplay.projectId}`,
+      );
+    }
+    projects[roleplay.projectId] = {
+      path: roleplay.personasDir,
+      description: "Roleplay personas (read-only)",
+      policy: "roleplay",
+      workspace: "none",
+      agent: "qq-rp",
+      model: null,
+      allowed_users: [options.ownerQq],
+      setup: [],
+    };
+    policies.roleplay = {
+      read: "allow",
+      glob: "deny",
+      grep: "deny",
+      edit: "deny",
+      shell: "deny",
+      webfetch: "deny",
+      websearch: "deny",
+      external_directory: "deny",
+    };
+    plugins.roleplay = {
+      enabled: true,
+      path: roleplay.pluginPath,
+      options: {
+        project_id: roleplay.projectId,
+        agent: "qq-rp",
+        model: null,
+        personas_dir: roleplay.personasDir,
+        ...(roleplay.defaultPersona !== null ? { default_persona: roleplay.defaultPersona } : {}),
+        ...(roleplay.fallbackProject !== null
+          ? { fallback_project: roleplay.fallbackProject }
+          : {}),
+        install_agent: true,
+      },
+    };
+  }
   return {
     version: 1,
     server: {
@@ -144,7 +285,7 @@ export function generateConfigObject(options: {
     },
     security: {
       default_effect: "deny",
-      allowed_roots: projectPaths,
+      allowed_roots: allowedRoots,
       require_mention_in_group: true,
       max_prompt_chars: 8000,
       max_images_per_message: 4,
@@ -165,63 +306,9 @@ export function generateConfigObject(options: {
       [options.ownerQq]: { role: "owner", projects: ["*"] },
     },
     groups: {},
-    projects: Object.fromEntries(
-      options.projects.map((project) => [
-        project.id,
-        {
-          path: resolve(project.path),
-          description: project.id,
-          policy: "standard",
-          workspace: "shared",
-          agent: null,
-          model: null,
-          allowed_users: [options.ownerQq],
-          setup: [],
-        },
-      ]),
-    ),
-    policies: {
-      readonly: {
-        read: "allow",
-        glob: "allow",
-        grep: "allow",
-        edit: "deny",
-        shell: "deny",
-        webfetch: "ask",
-        websearch: "ask",
-        external_directory: "deny",
-      },
-      standard: {
-        read: "allow",
-        glob: "allow",
-        grep: "allow",
-        edit: "ask",
-        shell: "ask",
-        webfetch: "ask",
-        websearch: "ask",
-        external_directory: "deny",
-        shell_rules: [
-          { pattern: "git status *", effect: "allow" },
-          { pattern: "git diff *", effect: "allow" },
-          { pattern: "git push *", effect: "deny" },
-          { pattern: "rm -rf *", effect: "deny" },
-        ],
-      },
-      trusted: {
-        read: "allow",
-        glob: "allow",
-        grep: "allow",
-        edit: "allow",
-        shell: "allow",
-        webfetch: "allow",
-        websearch: "allow",
-        external_directory: "deny",
-        shell_rules: [
-          { pattern: "sudo *", effect: "deny" },
-          { pattern: "git push *", effect: "ask" },
-        ],
-      },
-    },
+    projects,
+    policies,
+    plugins,
     workspaces: {
       default_mode: "shared",
       root: join(options.dataDir, "workspaces"),
@@ -255,6 +342,7 @@ export function generateConfigObject(options: {
     features: { images: true, files: true, worktrees: false, forms: false, metrics: false },
     qq: {
       max_message_chars: 1800,
+      max_reply_images: 2,
       strip_markdown: true,
       reply_to_message: true,
       mention_sender_in_group: true,
@@ -276,6 +364,7 @@ export function renderConfigYaml(options: {
   projects: SetupProject[];
   dataDir: string;
   defaultAgent?: string | null;
+  roleplay?: GeneratedRoleplayConfig | null;
 }): string {
   const header = [
     "# Generated by `opencode-qq setup`.",
@@ -321,28 +410,36 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     output("");
 
     let force = options.force === true;
-    if (existsSync(configPath) && !force) {
+    let reconfigure = options.reconfigure === true;
+    const configExists = existsSync(configPath);
+    if (configExists && !force && !reconfigure) {
       if (prompt === null) {
         throw new SetupError(
           "exists",
-          `Configuration already exists: ${configPath}\nUse --force to back it up and regenerate.`,
+          `Configuration already exists: ${configPath}\nUse --reconfigure to merge managed sections, or --force to back it up and regenerate.`,
         );
       }
       output(`Existing config found: ${configPath}`);
-      const overwrite = await prompt.confirm(
-        "Back up the existing config and overwrite it?",
-        false,
+      const action = await prompt.select(
+        "Existing configuration:",
+        [
+          { value: "merge", label: "Merge managed sections (keep comments and custom projects)" },
+          { value: "force", label: "Back up and regenerate the whole config" },
+          { value: "cancel", label: "Cancel" },
+        ],
+        0,
       );
-      if (!overwrite) {
+      if (action === "cancel") {
         throw new SetupError(
           "cancelled",
           "Setup cancelled. The existing configuration was left unchanged.",
         );
       }
-      force = true;
+      if (action === "force") force = true;
+      if (action === "merge") reconfigure = true;
     }
 
-    output("[1/8] Checking runtime...");
+    output("[1/9] Checking runtime...");
     if (!semver.satisfies(process.versions.node, ">=22.18.0")) {
       throw new SetupError(
         "unsupported",
@@ -367,7 +464,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     }
     output("");
 
-    output("[2/8] Owner and projects...");
+    output("[2/9] Owner and projects...");
     const ownerQq = options.ownerQq ?? (await askOwnerQq(prompt, options.yes === true));
     if (!isNumericQq(ownerQq)) {
       throw new SetupError("invalid", `Owner QQ must be a numeric QQ number, got: ${ownerQq}`);
@@ -379,7 +476,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     }
     output("");
 
-    output("[3/8] Configuring NapCat...");
+    output("[3/9] Configuring NapCat...");
     const napcat = await resolveNapcatMode(prompt, options, dataDir, configPath, output, force);
     const accessToken = napcat.accessToken;
     const bridgeToken = randomToken(24);
@@ -389,14 +486,26 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     warnings.push(...napcat.warnings);
     output("");
 
-    output("[4/8] Configuring OpenCode agent...");
+    output("[4/9] Configuring OpenCode agent...");
     const agent = await resolveAgent(prompt, options, env, output);
     warnings.push(...agent.warnings);
     output(`      Agent: ${agent.id ?? "OpenCode default"}${agent.path ? ` (${agent.path})` : ""}`);
     output("");
 
-    output("[5/8] Writing bridge config...");
-    if (force) {
+    output("[5/9] Configuring Roleplay...");
+    const roleplay = await resolveRoleplaySetup(prompt, options, env, dataDir, projects, output);
+    warnings.push(...roleplay.warnings);
+    if (roleplay.enabled) {
+      output(`      Project:  ${roleplay.projectId}`);
+      output(`      Personas: ${roleplay.personasDir}`);
+      output(`      Plugin:   ${roleplay.pluginPath}`);
+    } else {
+      output("      disabled");
+    }
+    output("");
+
+    output("[6/9] Writing bridge config...");
+    if (force || reconfigure) {
       const configBackup = backupFile(configPath);
       if (configBackup !== null) warnings.push(`Backed up previous config to ${configBackup}`);
       const envBackup = backupFile(join(dirname(configPath), ".env"));
@@ -417,16 +526,63 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
       );
     }
     const adminPassword = databaseExists ? null : (options.adminPassword ?? randomToken(18));
-    writePublicFile(
-      configPath,
-      renderConfigYaml({ ownerQq, projects, dataDir, defaultAgent: agent.id }),
+    const existingEnvSource = reconfigure ? (readTextIfExists(envPath) ?? "") : "";
+    const existingEnv = existingEnvSource.length > 0 ? parseEnvFile(existingEnvSource) : {};
+    const effectiveAccessToken =
+      reconfigure && existingEnv.NAPCAT_ACCESS_TOKEN
+        ? existingEnv.NAPCAT_ACCESS_TOKEN
+        : accessToken;
+    const effectiveBridgeToken =
+      reconfigure && existingEnv.QQ_BRIDGE_INTERNAL_TOKEN
+        ? existingEnv.QQ_BRIDGE_INTERNAL_TOKEN
+        : bridgeToken;
+    const generated = generateConfigObject({
+      ownerQq,
+      projects,
+      dataDir,
+      defaultAgent: agent.id,
+      roleplay: roleplay.enabled
+        ? {
+            projectId: roleplay.projectId ?? "roleplay",
+            personasDir: roleplay.personasDir ?? join(dataDir, "plugins", "roleplay", "personas"),
+            pluginPath: roleplay.pluginPath ?? "",
+            fallbackProject: projects[0]?.id ?? null,
+            defaultPersona: roleplay.defaultPersona,
+          }
+        : null,
+    });
+    const configContent =
+      reconfigure && configExists
+        ? mergeConfigSource(readTextIfExists(configPath) ?? "", generated)
+        : `${[
+            "# Generated by `opencode-qq setup`.",
+            "# Secrets live in .env next to this file; never commit it.",
+            "",
+          ].join("\n")}${stringifyYaml(generated)}`;
+    const validationEnv = {
+      ...env,
+      NAPCAT_WS_URL: wsUrl,
+      NAPCAT_ACCESS_TOKEN: effectiveAccessToken,
+      QQ_BRIDGE_INTERNAL_TOKEN: effectiveBridgeToken,
+    };
+    if (options.skipDoctor !== true) {
+      await validateConfigContent(configContent, configPath, validationEnv);
+    }
+    writePublicFile(configPath, configContent);
+    writePrivateFile(
+      envPath,
+      renderEnvFile({
+        wsUrl,
+        accessToken: effectiveAccessToken,
+        bridgeToken: effectiveBridgeToken,
+        adminPassword,
+      }),
     );
-    writePrivateFile(envPath, renderEnvFile({ wsUrl, accessToken, bridgeToken, adminPassword }));
     output(`      ${configPath}`);
     output(`      ${envPath} (mode 0600)`);
     output("");
 
-    output("[6/8] Installing OpenCode plugin...");
+    output("[7/9] Installing OpenCode plugin...");
     let pluginPath: string | null = null;
     let bridgeConfigPath: string | null = null;
     if (options.skipPlugin !== true) {
@@ -434,7 +590,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
         const installed = installOpenCodePlugin({
           openCodeConfigDir: defaultOpenCodeConfigDir(defaultConfigHome(env)),
           bridgeUrl: "http://127.0.0.1:8787",
-          token: bridgeToken,
+          token: effectiveBridgeToken,
           force,
         });
         pluginPath = installed.pluginPath;
@@ -452,13 +608,13 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
     }
     output("");
 
-    output("[7/8] Validating configuration...");
+    output("[8/9] Validating configuration...");
     if (options.skipDoctor !== true) {
       const validation = await validateGeneratedConfig(configPath, {
         ...env,
         NAPCAT_WS_URL: wsUrl,
-        NAPCAT_ACCESS_TOKEN: accessToken,
-        QQ_BRIDGE_INTERNAL_TOKEN: bridgeToken,
+        NAPCAT_ACCESS_TOKEN: effectiveAccessToken,
+        QQ_BRIDGE_INTERNAL_TOKEN: effectiveBridgeToken,
       });
       warnings.push(...validation);
       output("      OK");
@@ -466,7 +622,7 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
       output("      skipped (--skip-doctor)");
     }
     output("");
-    output("[8/8] Setup complete.");
+    output("[9/9] Setup complete.");
 
     return {
       configPath,
@@ -479,13 +635,14 @@ export async function runSetup(options: SetupOptions = {}): Promise<SetupResult>
       napcatMode: napcat.mode,
       napcatStarted: napcat.started,
       napcatUrl: wsUrl,
-      napcatAccessToken: accessToken,
+      napcatAccessToken: effectiveAccessToken,
       webuiUrl: napcat.webuiUrl,
       webuiToken: napcat.webuiToken,
       adminUrl: DEFAULT_ADMIN_URL,
       adminPassword,
       pluginPath,
       bridgeConfigPath,
+      roleplay,
       warnings,
     };
   } finally {
@@ -652,6 +809,162 @@ export async function resolveAgent(
     );
   }
   return { id, path: null, warnings: [] };
+}
+
+async function resolveRoleplaySetup(
+  prompt: Prompt | null,
+  options: SetupOptions,
+  _env: NodeJS.ProcessEnv,
+  dataDir: string,
+  projects: SetupProject[],
+  output: (line: string) => void,
+): Promise<SetupRoleplayResult> {
+  let enabled = options.withRoleplay;
+  if (enabled === undefined) {
+    if (prompt === null) {
+      enabled = false;
+    } else {
+      enabled = await prompt.confirm("Enable the Roleplay plugin?", false);
+    }
+  }
+  if (enabled !== true) {
+    return {
+      enabled: false,
+      projectId: null,
+      personasDir: null,
+      pluginPath: null,
+      defaultPersona: null,
+      warnings: [],
+    };
+  }
+
+  let pluginPath =
+    options.roleplayPath ?? process.env.OPENCODE_QQ_ROLEPLAY_PATH ?? detectRoleplayPath();
+  if (pluginPath === null && prompt !== null) {
+    pluginPath = await prompt.ask(
+      "Roleplay plugin path",
+      join(process.cwd(), "packages", "roleplay"),
+    );
+  }
+  if (pluginPath === null || pluginPath.trim().length === 0) {
+    throw new SetupError(
+      "invalid",
+      "Roleplay is enabled but the plugin path was not found. Install @opencode-qq/roleplay and pass --roleplay-path <path>.",
+    );
+  }
+  pluginPath = resolve(expandHome(pluginPath));
+  if (!existsSync(join(pluginPath, "package.json"))) {
+    throw new SetupError(
+      "invalid",
+      `Roleplay plugin path does not contain package.json: ${pluginPath}`,
+    );
+  }
+
+  let projectId = options.roleplayProject ?? (prompt === null ? "roleplay" : undefined);
+  if (projectId === undefined && prompt !== null) {
+    projectId = await prompt.ask("Roleplay project ID", "roleplay");
+  }
+  projectId = sanitizeProjectId(projectId ?? "roleplay");
+  if (projects.some((project) => project.id === projectId)) {
+    throw new SetupError(
+      "invalid",
+      `Roleplay project ID conflicts with an existing project: ${projectId}`,
+    );
+  }
+
+  let personasDir =
+    options.roleplayPersonas ??
+    (prompt === null
+      ? join(dataDir, "plugins", "roleplay", "personas")
+      : await prompt.ask("Persona directory", join(dataDir, "plugins", "roleplay", "personas")));
+  personasDir = resolve(expandHome(personasDir));
+  ensureDirectory(personasDir);
+  output(`      Created persona directory: ${personasDir}`);
+
+  let defaultPersona = options.roleplayDefaultPersona ?? null;
+  if (defaultPersona === null && prompt !== null) {
+    const answer = (await prompt.ask("Default persona ID (optional)", "")).trim();
+    defaultPersona = answer.length > 0 ? answer : null;
+  }
+
+  return {
+    enabled: true,
+    projectId,
+    personasDir,
+    pluginPath,
+    defaultPersona,
+    warnings: [],
+  };
+}
+
+function detectRoleplayPath(): string | null {
+  const candidates = [
+    join(process.cwd(), "packages", "roleplay"),
+    join(resolve(process.cwd(), ".."), "packages", "roleplay"),
+    join(process.cwd(), "node_modules", "@opencode-qq", "roleplay"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "package.json"))) return candidate;
+  }
+  return null;
+}
+
+function expandHome(input: string): string {
+  if (input === "~") return process.env.HOME ?? input;
+  if (input.startsWith("~/")) return join(process.env.HOME ?? "~", input.slice(2));
+  return input;
+}
+
+function mergeConfigSource(existing: string, generated: Record<string, unknown>): string {
+  const document = parseDocument(existing);
+  if (document.errors.length > 0) {
+    throw new SetupError(
+      "invalid",
+      `Existing configuration is not valid YAML: ${document.errors.map((error) => error.message).join("; ")}`,
+    );
+  }
+  mergeConfigValue(document, document.toJS() as Record<string, unknown>, generated, []);
+  return document.toString();
+}
+
+function mergeConfigValue(
+  document: ReturnType<typeof parseDocument>,
+  current: Record<string, unknown>,
+  generated: Record<string, unknown>,
+  path: string[],
+): void {
+  for (const [key, value] of Object.entries(generated)) {
+    const next = [...path, key];
+    if (key === "allowed_roots" && Array.isArray(value)) {
+      const existing = current[key];
+      const roots = Array.isArray(existing) ? existing : [];
+      document.setIn(next, [...new Set([...roots, ...value])]);
+      continue;
+    }
+    const existing = current[key];
+    if (isRecord(value) && isRecord(existing)) {
+      mergeConfigValue(document, existing, value, next);
+      continue;
+    }
+    document.setIn(next, value);
+  }
+}
+
+async function validateConfigContent(
+  content: string,
+  configPath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  try {
+    const loaded = await parseConfigSource(content, configPath, { checkPaths: true, env });
+    return loaded.warnings;
+  } catch (error) {
+    throw new SetupError(
+      "invalid",
+      `Generated configuration failed validation: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 async function resolveNapcatMode(
@@ -854,12 +1167,24 @@ export function formatSetupSummary(result: SetupResult): string[] {
     );
   }
   lines.push("5. Send `!ping` to the bot in a QQ private chat.");
+  if (result.roleplay.enabled) {
+    lines.push("6. Open the Roleplay page, import a Character Card, then send:");
+    lines.push(`   ${result.adminUrl} → Roleplay`);
+    lines.push(`   !persona use <persona-id>`);
+  }
   lines.push("");
   lines.push(`Config:      ${result.configPath}`);
   lines.push(`Environment: ${result.envPath}`);
   lines.push(`Agent:       ${result.agentId ?? "OpenCode default"}`);
   if (result.agentPath !== null) lines.push(`Agent file:  ${result.agentPath}`);
   if (result.pluginPath !== null) lines.push(`Plugin:      ${result.pluginPath}`);
+  if (result.roleplay.enabled) {
+    lines.push(`Roleplay:    ${result.roleplay.projectId} · ${result.roleplay.personasDir}`);
+    lines.push(`RP plugin:   ${result.roleplay.pluginPath}`);
+    if (result.roleplay.defaultPersona !== null) {
+      lines.push(`RP default:  ${result.roleplay.defaultPersona}`);
+    }
+  }
   lines.push(`Admin UI:    ${result.adminUrl}`);
   if (result.adminPassword !== null) {
     lines.push(`Admin pass:  ${result.adminPassword}`);
@@ -878,4 +1203,8 @@ export function configFileExists(path: string): boolean {
 
 export function readSetupFile(path: string): string | null {
   return readTextIfExists(path);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

@@ -53,9 +53,12 @@
     "build:sdk": "pnpm --dir packages/plugin-sdk build",
     "build:memory": "pnpm --dir packages/memory build",
     "build:roleplay": "pnpm --dir packages/roleplay build",
-    "build:webui": "pnpm --dir packages/webui build",
+    "build:webui": "node scripts/clean-webui-assets.mjs && pnpm --dir packages/webui build",
     "build:server": "tsc -p tsconfig.json",
-    "dev:webui": "pnpm --dir packages/webui dev",
+    "dev:webui": "tsx scripts/dev-webui.ts",
+    "dev:ui": "pnpm --dir packages/webui dev",
+    "dev:fixture": "tsx scripts/webui-fixture.ts",
+    "webui": "tsx scripts/dev-webui.ts",
     "start": "node dist/main.js start --config config/config.yaml",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --dir packages/webui typecheck && pnpm typecheck:memory && pnpm typecheck:roleplay && pnpm typecheck:examples",
     "typecheck:server": "tsc -p tsconfig.json --noEmit",
@@ -76,6 +79,7 @@
     "config:validate": "tsx src/main.ts config validate --config config/config.yaml"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.1",
     "@hono/node-server": "^1.19.6",
     "@opencode/client": "2.0.32",
     "better-sqlite3": "^12.4.1",

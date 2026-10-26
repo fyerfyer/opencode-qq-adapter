@@ -1,0 +1,17 @@
+{
+  "name": "@fixture/admin",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "admin-fixture",
+    "name": "Admin fixture",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Plugin admin API fixture",
+    "capabilities": ["admin"],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.3.0"
+    },
+    "entry": "./index.ts"
+  }
+}

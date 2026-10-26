@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -356,6 +356,40 @@ describe("Admin HTTP API", () => {
       body: { content: "nope" },
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("marks plugin-managed agents read-only until advanced override", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(
+      join(harness.promptRoot, "qq-rp.md"),
+      "---\n# managed by @opencode-qq/roleplay; version: 0.4.0\ndescription: RP\n---\n\nRP prompt\n",
+      "utf8",
+    );
+
+    const list = await request(harness, "/admin/api/prompts");
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      prompts: Array<{ name: string; owner: string; managedBy: string | null; editable: boolean }>;
+    };
+    expect(body.prompts.find((item) => item.name === "qq-rp.md")).toMatchObject({
+      owner: "plugin",
+      managedBy: "@opencode-qq/roleplay",
+      editable: false,
+    });
+
+    const rejected = await request(harness, "/admin/api/prompts/qq-rp.md", {
+      method: "PUT",
+      body: { content: "changed" },
+    });
+    expect(rejected.status).toBe(409);
+
+    const overridden = await request(harness, "/admin/api/prompts/qq-rp.md", {
+      method: "PUT",
+      body: { content: "changed", override: true },
+    });
+    expect(overridden.status).toBe(200);
+    expect(((await overridden.json()) as { content: string }).content).toBe("changed");
   });
 
   it("returns dashboard and session data", async () => {

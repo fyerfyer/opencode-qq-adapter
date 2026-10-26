@@ -13,6 +13,11 @@ import type { MessageSender } from "../qq/sender.js";
 import { type LoadedPluginModule, loadPluginModule, PluginLoadError } from "./manifest.js";
 import { PluginMessageService, readPluginImage } from "./messages.js";
 import type {
+  PluginAdminActor,
+  PluginAdminHandler,
+  PluginAdminMethod,
+  PluginAdminPage,
+  PluginAdminResult,
   PluginAgentCompletion,
   PluginAgentResult,
   PluginChat,
@@ -45,6 +50,7 @@ const HOOK_TIMEOUT_MS = 2_000;
 const REPLY_HOOK_TIMEOUT_MS = 4_000;
 const EVENT_TIMEOUT_MS = 2_000;
 const LIFECYCLE_TIMEOUT_MS = 5_000;
+const ADMIN_TIMEOUT_MS = 120_000;
 const UTILITY_TIMEOUT_MS = 90_000;
 const UTILITY_MIN_TIMEOUT_MS = 5_000;
 const UTILITY_MAX_TIMEOUT_MS = 300_000;
@@ -99,6 +105,10 @@ export interface PluginStatus {
   commands: string[];
   source: string;
   loadedAt: number | null;
+  admin: {
+    routes: number;
+    pages: PluginAdminPage[];
+  };
 }
 
 export interface PluginHostStatus {
@@ -125,6 +135,19 @@ interface RegisteredHook {
   definition: PluginHooksDefinition;
 }
 
+interface RegisteredAdminRoute {
+  method: PluginAdminMethod;
+  pattern: string;
+  segments: AdminPathSegment[];
+  handler: PluginAdminHandler;
+  order: number;
+}
+
+type AdminPathSegment =
+  | { kind: "static"; value: string }
+  | { kind: "param"; name: string }
+  | { kind: "wildcard" };
+
 interface EventSubscription {
   type: keyof PluginEventMap;
   handler: (event: unknown) => void | Promise<void>;
@@ -143,6 +166,8 @@ interface PluginInstance {
   commands: Map<string, RegisteredCommand>;
   hooks: RegisteredHook[];
   events: EventSubscription[];
+  adminRoutes: RegisteredAdminRoute[];
+  adminPages: PluginAdminPage[];
   disposers: PluginDisposer[];
   loadedAt: number | null;
 }
@@ -263,6 +288,77 @@ export class PluginHost {
       }
     }
     return lines.length === 0 ? "" : ["插件", ...lines].join("\n");
+  }
+
+  /** Validate/normalize raw plugin options with the plugin's own parser. */
+  validateOptions(pluginId: string, options: unknown): unknown {
+    const instance = this.#instances.get(pluginId);
+    if (instance === undefined) {
+      throw new Error(`unknown plugin: ${pluginId}`);
+    }
+    const definition = instance.definition;
+    if (definition?.options === undefined) return options;
+    try {
+      return definition.options.parse(options);
+    } catch (error) {
+      throw new Error(
+        `invalid options for plugin ${pluginId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Dispatch an authenticated admin request to a plugin-owned route.
+   * Returns null when no route matches. The core keeps auth, CSRF and audit.
+   */
+  async dispatchAdmin(
+    pluginId: string,
+    request: Request,
+    path: string,
+    actor: PluginAdminActor,
+  ): Promise<PluginAdminResult | null> {
+    const instance = this.#instances.get(pluginId);
+    if (instance === undefined) throw new Error(`unknown plugin: ${pluginId}`);
+    if (instance.status !== "loaded") {
+      throw new Error(`plugin ${pluginId} is not loaded (status: ${instance.status})`);
+    }
+    requireCapability(instance, "admin");
+    const method = request.method.toUpperCase() as PluginAdminMethod;
+    const normalized = normalizeAdminPath(path);
+    const segments = normalized.split("/").filter((segment) => segment.length > 0);
+    const candidates = instance.adminRoutes
+      .filter((route) => route.method === method)
+      .map((route) => ({ route, params: matchAdminPath(route.segments, segments) }))
+      .filter(
+        (item): item is { route: RegisteredAdminRoute; params: Record<string, string> } =>
+          item.params !== null,
+      )
+      .sort(
+        (left, right) =>
+          adminSpecificity(right.route) - adminSpecificity(left.route) ||
+          left.route.order - right.route.order,
+      );
+    const selected = candidates[0];
+    if (selected === undefined) return null;
+
+    const query = new URL(request.url).searchParams;
+    const result = await withTimeout(
+      Promise.resolve(
+        selected.route.handler({
+          request,
+          method,
+          path: normalized,
+          params: selected.params,
+          query,
+          actor,
+        }),
+      ),
+      ADMIN_TIMEOUT_MS,
+      `admin route ${method} ${selected.route.pattern} of ${pluginId}`,
+    );
+    return result;
   }
 
   /** Return true when a plugin handled the command (including permission denial). */
@@ -708,6 +804,8 @@ export class PluginHost {
       commands: new Map(),
       hooks: [],
       events: [],
+      adminRoutes: [],
+      adminPages: [],
       disposers: [],
       loadedAt: null,
     };
@@ -727,6 +825,8 @@ export class PluginHost {
       commands: new Map(),
       hooks: [],
       events: [],
+      adminRoutes: [],
+      adminPages: [],
       disposers: [],
       loadedAt: null,
     };
@@ -835,6 +935,8 @@ export class PluginHost {
     instance.commands.clear();
     instance.hooks.length = 0;
     instance.events.length = 0;
+    instance.adminRoutes.length = 0;
+    instance.adminPages.length = 0;
     if (instance.status === "loaded") instance.status = "stopped";
   }
 
@@ -939,6 +1041,55 @@ export class PluginHost {
       ): PluginSessionMutationResult => this.#resetSession(chatKey, actor.qq),
     };
 
+    const admin = {
+      route: (
+        method: PluginAdminMethod,
+        routePath: string,
+        handler: PluginAdminHandler,
+      ): (() => void) => {
+        requireCapability(instance, "admin");
+        const normalizedMethod = normalizeAdminMethod(method);
+        const normalizedPath = normalizeAdminPath(routePath);
+        if (normalizedPath === "/") {
+          throw new Error("admin route path must not be the plugin root");
+        }
+        if (typeof handler !== "function") {
+          throw new Error("admin route handler must be a function");
+        }
+        if (
+          instance.adminRoutes.some(
+            (route) => route.method === normalizedMethod && route.pattern === normalizedPath,
+          )
+        ) {
+          throw new Error(`duplicate admin route ${normalizedMethod} ${normalizedPath}`);
+        }
+        const route: RegisteredAdminRoute = {
+          method: normalizedMethod,
+          pattern: normalizedPath,
+          segments: compileAdminPath(normalizedPath),
+          handler,
+          order: instance.adminRoutes.length,
+        };
+        instance.adminRoutes.push(route);
+        return () => {
+          const index = instance.adminRoutes.indexOf(route);
+          if (index >= 0) instance.adminRoutes.splice(index, 1);
+        };
+      },
+      page: (page: PluginAdminPage): (() => void) => {
+        requireCapability(instance, "admin");
+        const normalized = normalizeAdminPage(page);
+        if (instance.adminPages.some((item) => item.id === normalized.id)) {
+          throw new Error(`duplicate admin page '${normalized.id}'`);
+        }
+        instance.adminPages.push(normalized);
+        return () => {
+          const index = instance.adminPages.indexOf(normalized);
+          if (index >= 0) instance.adminPages.splice(index, 1);
+        };
+      },
+    };
+
     return {
       manifest,
       config: options,
@@ -953,6 +1104,7 @@ export class PluginHost {
       agent: {
         complete: (input: PluginAgentCompletion) => this.#completeUtility(instance, input),
       },
+      admin,
     };
   }
 
@@ -1343,6 +1495,10 @@ export class PluginHost {
       commands: [...instance.commands.values()].map((command) => command.definition.name).sort(),
       source: instance.spec.package ?? instance.spec.path ?? "",
       loadedAt: instance.loadedAt,
+      admin: {
+        routes: instance.adminRoutes.length,
+        pages: [...instance.adminPages],
+      },
     };
   }
 }
@@ -1527,6 +1683,124 @@ function sumUtilityUsage(messages: AgentMessage[]): PluginAgentResult["usage"] {
 
 function sameSpec(left: PluginConfig, right: PluginConfig): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function normalizeAdminMethod(method: PluginAdminMethod): PluginAdminMethod {
+  const normalized = String(method).toUpperCase();
+  if (
+    normalized !== "GET" &&
+    normalized !== "POST" &&
+    normalized !== "PUT" &&
+    normalized !== "PATCH" &&
+    normalized !== "DELETE"
+  ) {
+    throw new Error(`unsupported admin method: ${String(method)}`);
+  }
+  return normalized;
+}
+
+function normalizeAdminPath(path: string): string {
+  if (typeof path !== "string" || path.trim().length === 0) {
+    throw new Error("admin route path must be a non-empty string");
+  }
+  const trimmed = path.trim();
+  const withSlash = trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+  const collapsed = withSlash.replace(/\/{2,}/g, "/");
+  const normalized = collapsed.length > 1 ? collapsed.replace(/\/+$/, "") : collapsed;
+  if (normalized.split("/").some((segment) => segment === ".." || segment === ".")) {
+    throw new Error(`admin route path must not contain '.' or '..': ${path}`);
+  }
+  return normalized;
+}
+
+function compileAdminPath(path: string): AdminPathSegment[] {
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment): AdminPathSegment => {
+      if (segment === "*") return { kind: "wildcard" };
+      if (segment.startsWith(":")) {
+        const name = segment.slice(1);
+        if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name)) {
+          throw new Error(`invalid admin route parameter: ${segment}`);
+        }
+        return { kind: "param", name };
+      }
+      if (segment.includes(":") || segment.includes("*")) {
+        throw new Error(`admin route parameters must occupy a full segment: ${segment}`);
+      }
+      return { kind: "static", value: segment };
+    });
+}
+
+function matchAdminPath(
+  pattern: AdminPathSegment[],
+  segments: string[],
+): Record<string, string> | null {
+  const params: Record<string, string> = {};
+  let index = 0;
+  for (const part of pattern) {
+    if (part.kind === "wildcard") {
+      const rest = segments.slice(index);
+      if (rest.length === 0) return null;
+      params["*"] = rest.map(decodeAdminSegment).join("/");
+      return params;
+    }
+    const value = segments[index];
+    if (value === undefined) return null;
+    if (part.kind === "static") {
+      if (value !== part.value) return null;
+    } else {
+      const decoded = decodeAdminSegment(value);
+      if (decoded.length === 0 || decoded.includes("/")) return null;
+      params[part.name] = decoded;
+    }
+    index += 1;
+  }
+  return index === segments.length ? params : null;
+}
+
+function decodeAdminSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function adminSpecificity(route: RegisteredAdminRoute): number {
+  let score = 0;
+  for (const segment of route.segments) {
+    if (segment.kind === "static") score += 100;
+    else if (segment.kind === "param") score += 10;
+  }
+  return score + route.segments.length;
+}
+
+function normalizeAdminPage(page: PluginAdminPage): PluginAdminPage {
+  if (!isRecord(page)) throw new Error("admin page must be an object");
+  const id = typeof page.id === "string" ? page.id.trim() : "";
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(id)) {
+    throw new Error("admin page id must be lowercase letters, digits or dashes");
+  }
+  const title = typeof page.title === "string" ? page.title.trim() : "";
+  if (title.length === 0 || title.length > 120) {
+    throw new Error("admin page title must be 1-120 characters");
+  }
+  const path = normalizeAdminPath(page.path);
+  if (path === "/admin" || path.startsWith("/admin/")) {
+    throw new Error("admin page path must be a core UI route outside /admin");
+  }
+  const description =
+    typeof page.description === "string" && page.description.trim().length > 0
+      ? page.description.trim().slice(0, 500)
+      : undefined;
+  return {
+    id,
+    title,
+    path,
+    ...(description !== undefined ? { description } : {}),
+  };
 }
 
 function describeError(error: unknown): string {

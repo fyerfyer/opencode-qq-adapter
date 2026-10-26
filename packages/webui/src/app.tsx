@@ -1,19 +1,24 @@
 import { LoaderCircle } from "lucide-react";
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "@/auth/auth-provider";
 import { AppShell } from "@/components/layout/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { AccessPage } from "@/pages/access";
+import { AgentsPage } from "@/pages/agents";
 import { AuditPage } from "@/pages/audit";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { PluginsPage } from "@/pages/plugins";
 import { PoliciesPage } from "@/pages/policies";
 import { ProjectsPage } from "@/pages/projects";
-import { PromptsPage } from "@/pages/prompts";
 import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
 import { UsagePage } from "@/pages/usage";
+
+const RoleplayPage = lazy(() =>
+  import("@/pages/roleplay").then((module) => ({ default: module.RoleplayPage })),
+);
 
 export function App() {
   const { status } = useAuth();
@@ -49,10 +54,25 @@ export function App() {
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="sessions" element={<SessionsPage />} />
-          <Route path="prompts" element={<PromptsPage />} />
+          <Route path="agents" element={<AgentsPage />} />
+          <Route path="prompts" element={<Navigate to="/agents" replace />} />
           <Route path="audit" element={<AuditPage />} />
           <Route path="usage" element={<UsagePage />} />
           <Route path="plugins" element={<PluginsPage />} />
+          <Route
+            path="roleplay"
+            element={
+              <Suspense
+                fallback={
+                  <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <LoaderCircle className="size-4 animate-spin" /> 正在加载 Roleplay…
+                  </div>
+                }
+              >
+                <RoleplayPage />
+              </Suspense>
+            }
+          />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

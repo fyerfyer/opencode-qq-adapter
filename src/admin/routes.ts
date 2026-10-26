@@ -247,8 +247,18 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     context.json(await service.readPrompt(context.req.param("name"))),
   );
   api.put("/prompts/:name", async (context) => {
-    const body = await readJson(context, z.object({ content: z.string().max(512 * 1024) }));
-    return context.json(await service.writePrompt(context.req.param("name"), body.content));
+    const body = await readJson(
+      context,
+      z.object({
+        content: z.string().max(512 * 1024),
+        override: z.boolean().optional(),
+      }),
+    );
+    return context.json(
+      await service.writePrompt(context.req.param("name"), body.content, {
+        ...(body.override !== undefined ? { override: body.override } : {}),
+      }),
+    );
   });
   api.get("/prompts/:name/backups", async (context) =>
     context.json({ backups: await service.promptBackups(context.req.param("name")) }),
@@ -262,8 +272,18 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     }),
   );
   api.post("/prompts/:name/restore", async (context) => {
-    const body = await readJson(context, z.object({ backup: z.string().min(1) }));
-    return context.json(await service.restorePromptBackup(context.req.param("name"), body.backup));
+    const body = await readJson(
+      context,
+      z.object({
+        backup: z.string().min(1),
+        override: z.boolean().optional(),
+      }),
+    );
+    return context.json(
+      await service.restorePromptBackup(context.req.param("name"), body.backup, {
+        ...(body.override !== undefined ? { override: body.override } : {}),
+      }),
+    );
   });
 
   api.get("/audit", (context) => {
@@ -281,6 +301,66 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   });
 
   api.get("/plugins", (context) => context.json(service.plugins()));
+
+  api.get("/plugins/:id/options", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    return context.json(await service.pluginOptions(id));
+  });
+
+  api.put("/plugins/:id/options", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    const body = await readJson(
+      context,
+      z.object({
+        options: z.record(z.string(), z.unknown()),
+        expectedHash: z.string().optional(),
+      }),
+    );
+    return context.json(
+      await service.savePluginOptions(id, body.options, body.expectedHash ?? configHash(context)),
+    );
+  });
+
+  api.put("/plugins/:id/enabled", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    const body = await readJson(
+      context,
+      z.object({
+        enabled: z.boolean(),
+        expectedHash: z.string().optional(),
+      }),
+    );
+    return context.json(
+      await service.setPluginEnabled(id, body.enabled, body.expectedHash ?? configHash(context)),
+    );
+  });
+
+  api.all("/plugins/:id/*", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    const prefix = `/admin/api/plugins/${id}`;
+    const path = context.req.path.startsWith(prefix)
+      ? context.req.path.slice(prefix.length) || "/"
+      : "/";
+    const session = context.get("session");
+    const result = await service.dispatchPluginAdmin(id, context.req.raw, path, {
+      username: session.username,
+    });
+    if (result instanceof Response) {
+      const headers = new Headers(result.headers);
+      if (!headers.has("cache-control")) headers.set("cache-control", "private, no-store");
+      headers.set("x-content-type-options", "nosniff");
+      const contentType = headers.get("content-type") ?? "";
+      if (contentType.includes("text/html")) {
+        throw new AdminError(415, "plugin_html_forbidden", "插件管理接口不能返回 HTML。");
+      }
+      return new Response(result.body, {
+        status: result.status,
+        statusText: result.statusText,
+        headers,
+      });
+    }
+    return context.json(result);
+  });
 
   api.notFound((context) => context.json({ error: "not_found" }, 404));
   api.onError((error, context) => {

@@ -59,6 +59,27 @@ export class BindingStore {
     return row === undefined ? null : toBinding(row);
   }
 
+  list(): BindingRecord[] {
+    const rows = this.#db
+      .prepare(
+        "SELECT chat_key AS chatKey, namespace, previous_project_id AS previousProjectId, enabled, updated_at AS updatedAt FROM bindings ORDER BY updated_at DESC",
+      )
+      .all() as BindingRow[];
+    return rows.map(toBinding);
+  }
+
+  setEnabled(chatKey: string, enabled: boolean, now = Date.now()): BindingRecord | null {
+    const existing = this.get(chatKey);
+    if (existing === null) return null;
+    this.set({ ...existing, enabled, updatedAt: now });
+    return { ...existing, enabled, updatedAt: now };
+  }
+
+  remove(chatKey: string): boolean {
+    const result = this.#db.prepare("DELETE FROM bindings WHERE chat_key = ?").run(chatKey);
+    return result.changes > 0;
+  }
+
   set(input: BindingRecord): void {
     this.#db
       .prepare(

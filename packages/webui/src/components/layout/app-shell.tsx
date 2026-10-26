@@ -1,8 +1,9 @@
 import {
   Activity,
   Blocks,
+  Bot,
   ChevronDown,
-  FileText,
+  Clapperboard,
   FolderGit2,
   Gauge,
   LogOut,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import type { Overview } from "@/api/types";
+import type { MetaInfo, Overview } from "@/api/types";
 import { useAuth } from "@/auth/auth-provider";
 import { StatusDot } from "@/components/common/status-dot";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -63,7 +64,6 @@ const navigation = [
     items: [
       { to: "/access", label: "用户与群", icon: UsersRound },
       { to: "/policies", label: "策略", icon: ShieldCheck },
-      { to: "/prompts", label: "Prompt", icon: FileText },
     ],
   },
   {
@@ -71,6 +71,7 @@ const navigation = [
     items: [
       { to: "/audit", label: "审计", icon: ScrollText },
       { to: "/usage", label: "用量", icon: Activity },
+      { to: "/agents", label: "Agents", icon: Bot },
       { to: "/plugins", label: "插件", icon: Blocks },
       { to: "/settings", label: "设置", icon: Settings },
     ],
@@ -83,10 +84,11 @@ const titles: Record<string, string> = {
   "/projects": "项目",
   "/access": "用户与群",
   "/policies": "策略",
-  "/prompts": "Prompt",
+  "/agents": "Agents",
   "/audit": "审计",
   "/usage": "用量",
   "/plugins": "插件",
+  "/roleplay": "Roleplay",
   "/settings": "设置",
 };
 
@@ -95,7 +97,12 @@ export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const overview = useApiQuery<Overview>("/overview", { intervalMs: 30_000 });
+  const meta = useApiQuery<MetaInfo>("/meta", { intervalMs: 60_000 });
   const status = overview.data?.status;
+  const roleplayLoaded =
+    meta.data?.plugins.plugins.some(
+      (plugin) => plugin.id === "roleplay" && plugin.status === "loaded",
+    ) ?? false;
 
   return (
     <SidebarProvider>
@@ -145,6 +152,27 @@ export function AppShell() {
               </SidebarGroupContent>
             </SidebarGroup>
           ))}
+          {roleplayLoaded && (
+            <SidebarGroup>
+              <SidebarGroupLabel>插件</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location.pathname.startsWith("/roleplay")}
+                      tooltip="Roleplay"
+                    >
+                      <NavLink to="/roleplay">
+                        <Clapperboard />
+                        <span>Roleplay</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          )}
         </SidebarContent>
         <SidebarFooter>
           <div className="flex items-center gap-2 rounded-lg border bg-background/50 p-2 group-data-[collapsible=icon]:hidden">

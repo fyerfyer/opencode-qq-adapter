@@ -237,6 +237,8 @@ export interface ConfigSaveResult extends ConfigSnapshot {
   };
 }
 
+export type PromptOwner = "core" | "plugin" | "user";
+
 export interface PromptSummary {
   name: string;
   title: string | null;
@@ -244,6 +246,9 @@ export interface PromptSummary {
   size: number;
   updatedAt: number;
   backups: number;
+  owner: PromptOwner;
+  managedBy: string | null;
+  editable: boolean;
 }
 
 export interface PromptFile extends PromptSummary {
@@ -288,4 +293,181 @@ export interface PluginInfo {
   commands: string[];
   source: string;
   loadedAt: number | null;
+  admin: {
+    routes: number;
+    pages: PluginAdminPage[];
+  };
+}
+
+export interface PluginAdminPage {
+  id: string;
+  title: string;
+  path: string;
+  description?: string;
+}
+
+export interface PluginOptionsSnapshot {
+  plugin: PluginInfo;
+  options: Record<string, unknown>;
+  normalized: unknown;
+  error: string | null;
+  configHash: string | null;
+  configPath: string | null;
+}
+
+export interface PluginOptionsSaveResult extends PluginOptionsSnapshot, ConfigSaveResult {
+  reload: ConfigSaveResult["reload"];
+}
+
+export interface RoleplayDiagnostic {
+  id: string;
+  ok: boolean;
+  label: string;
+  detail: string;
+}
+
+export interface RoleplaySummary {
+  options: Record<string, unknown>;
+  personas: { total: number };
+  stickers: {
+    total: number;
+    personas: Array<{ personaId: string; count: number; emotions: string[] }>;
+    global: { count: number; emotions: string[] };
+  };
+  memory: { scopes: number };
+  bindings: { total: number };
+  paths: {
+    personas: string;
+    stickers: string;
+    memory: string;
+    database: string;
+    agents: string;
+  };
+  agents: { persona: boolean; utility: boolean };
+  jev: { judge: string; configured: boolean };
+  checks: RoleplayDiagnostic[];
+}
+
+export interface RoleplayPersonaSummary {
+  id: string;
+  name: string;
+  description: string;
+  avatarUrl: string | null;
+  updatedAt: number;
+  worldbook: number;
+  stickers: number;
+  emotions: string[];
+  memoryScopes: number;
+  bindings: number;
+}
+
+export interface RoleplayWorldbookEntry {
+  name: string;
+  keys: string[];
+  secondaryKeys: string[];
+  content: string;
+  enabled: boolean;
+  constant: boolean;
+  selective: boolean;
+  caseSensitive: boolean;
+  matchWholeWords?: boolean;
+  priority: number;
+  insertionOrder: number;
+  position: "before_char" | "after_char";
+}
+
+export interface RoleplayBinding {
+  chatKey: string;
+  namespace: string;
+  personaId: string;
+  personaName: string;
+  previousProjectId: string | null;
+  enabled: boolean;
+  updatedAt: number;
+}
+
+export interface RoleplayMemoryDoc {
+  kind: "user" | "scene";
+  kindLabel?: string;
+  path: string;
+  name?: string;
+  content: string;
+  exists: boolean;
+  updatedAt: number | null;
+  size?: number;
+  manualSection?: string;
+  sections?: string[];
+}
+
+export interface RoleplayMemoryScope {
+  scope: string;
+  chatKey: string | null;
+  kind: "private" | "shared";
+  label: string;
+  actorQq: number | null;
+  docs: Array<{
+    kind: "user" | "scene";
+    actorQq: number | null;
+    name: string;
+    exists: boolean;
+    size: number;
+    updatedAt: number | null;
+  }>;
+}
+
+export interface RoleplayMemoryHistoryEntry {
+  name: string;
+  path: string;
+  createdAt: number;
+}
+
+export interface RoleplayStickerFile {
+  name: string;
+  size: number;
+  updatedAt: number;
+  url: string;
+  thumbnailUrl: string;
+}
+
+export interface RoleplayStickerEmotion {
+  emotion: string;
+  files: RoleplayStickerFile[];
+}
+
+export interface RoleplayStickerSet {
+  personaId: string;
+  emotions: RoleplayStickerEmotion[];
+  global: RoleplayStickerEmotion[];
+}
+
+export interface RoleplayPersonaDetail {
+  persona: {
+    id: string;
+    name: string;
+    dir: string;
+    cardPath: string;
+    firstMes: string;
+    createdAt: number;
+    updatedAt: number;
+  };
+  card: {
+    name: string;
+    description: string;
+    personality: string;
+    scenario: string;
+    first_mes: string;
+    mes_example?: string;
+    creator_notes?: string;
+    system_prompt?: string;
+    post_history_instructions?: string;
+    alternate_greetings?: string[];
+    tags?: string[];
+    creator?: string;
+    character_version?: string;
+  } | null;
+  notes: string;
+  worldbook: RoleplayWorldbookEntry[];
+  stickers: { total: number; emotions: string[] };
+  memoryScopes: RoleplayMemoryScope[];
+  bindings: RoleplayBinding[];
 }

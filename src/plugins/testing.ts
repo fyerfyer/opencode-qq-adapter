@@ -2,6 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  PluginAdminHandler,
+  PluginAdminMethod,
+  PluginAdminPage,
+  PluginAdminRequestContext,
+  PluginAdminResult,
   PluginAgent,
   PluginAgentCompletion,
   PluginChat,
@@ -63,6 +68,12 @@ export interface HarnessSessionCall {
   actorQq: number;
 }
 
+export interface HarnessAdminRoute {
+  method: PluginAdminMethod;
+  path: string;
+  handler: PluginAdminHandler;
+}
+
 export interface PluginHarness<TOptions = Record<string, unknown>> {
   readonly context: PluginContext<TOptions>;
   readonly commands: Map<string, PluginCommandDefinition>;
@@ -70,12 +81,19 @@ export interface PluginHarness<TOptions = Record<string, unknown>> {
   readonly sent: HarnessSend[];
   readonly sessionCalls: HarnessSessionCall[];
   readonly agentCalls: PluginAgentCompletion[];
+  readonly adminRoutes: HarnessAdminRoute[];
+  readonly adminPages: PluginAdminPage[];
   runCommand(name: string, options?: RunCommandOptions): Promise<string | undefined>;
   resolveProfile(context: PluginProfileContext): Promise<PluginConversationProfile | null>;
   beforePrompt(context: PluginPromptContext): Promise<PluginPromptPatch | undefined>;
   formatReply(context: PluginReplyContext): Promise<PluginReplyPlan | null>;
   afterRun(context: PluginRunContext): Promise<void>;
   emit<K extends keyof PluginEventMap>(type: K, event: PluginEventMap[K]): Promise<void>;
+  dispatchAdmin(
+    method: PluginAdminMethod,
+    path: string,
+    options?: { body?: unknown; actor?: string },
+  ): Promise<PluginAdminResult | null>;
   dispose(): Promise<void>;
 }
 
@@ -104,6 +122,8 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
   const sent: HarnessSend[] = [];
   const sessionCalls: HarnessSessionCall[] = [];
   const agentCalls: PluginAgentCompletion[] = [];
+  const adminRoutes: HarnessAdminRoute[] = [];
+  const adminPages: PluginAdminPage[] = [];
   const disposers: PluginDisposer[] = [];
 
   const agentApi: PluginAgent = {
@@ -173,13 +193,31 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
       ),
   };
 
+  const adminApi = {
+    route: (method: PluginAdminMethod, path: string, handler: PluginAdminHandler): (() => void) => {
+      const route = { method, path, handler };
+      adminRoutes.push(route);
+      return () => {
+        const index = adminRoutes.indexOf(route);
+        if (index >= 0) adminRoutes.splice(index, 1);
+      };
+    },
+    page: (page: PluginAdminPage): (() => void) => {
+      adminPages.push(page);
+      return () => {
+        const index = adminPages.indexOf(page);
+        if (index >= 0) adminPages.splice(index, 1);
+      };
+    },
+  };
+
   const context: PluginContext<TOptions> = {
     manifest: {
       id: "test-plugin",
       name: "Test plugin",
       version: "0.0.0",
       apiVersion: 1,
-      capabilities: ["commands", "hooks", "messages", "sessions", "events"],
+      capabilities: ["commands", "hooks", "messages", "sessions", "events", "admin"],
     },
     config,
     dataDir,
@@ -201,6 +239,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     },
     events: eventsApi,
     agent: agentApi,
+    admin: adminApi,
   };
 
   const disposer = await definition.setup(context);
@@ -214,6 +253,8 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
     sent,
     sessionCalls,
     agentCalls,
+    adminRoutes,
+    adminPages,
     async runCommand(name: string, overrides: RunCommandOptions = {}): Promise<string | undefined> {
       const command = findCommand(commands, name);
       if (command === undefined) throw new Error(`unknown harness command: ${name}`);
@@ -275,6 +316,52 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
         if (subscription.type === type) await subscription.handler(event);
       }
     },
+    async dispatchAdmin(
+      method: PluginAdminMethod,
+      path: string,
+      overrides: {
+        body?: unknown;
+        rawBody?: RequestInit["body"];
+        headers?: Record<string, string>;
+        actor?: string;
+      } = {},
+    ): Promise<PluginAdminResult | null> {
+      const normalizedMethod = method.toUpperCase();
+      const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+      const pathname = normalizedPath.split("?", 1)[0] ?? normalizedPath;
+      for (const route of adminRoutes) {
+        if (route.method.toUpperCase() !== normalizedMethod) continue;
+        const match = matchHarnessPath(route.path, pathname);
+        if (match === null) continue;
+        const body =
+          overrides.rawBody !== undefined
+            ? overrides.rawBody
+            : overrides.body === undefined
+              ? undefined
+              : typeof overrides.body === "string"
+                ? overrides.body
+                : JSON.stringify(overrides.body);
+        const request = new Request(`http://harness${normalizedPath}`, {
+          method: normalizedMethod,
+          ...(body !== undefined ? { body } : {}),
+          headers:
+            overrides.headers ??
+            (overrides.body !== undefined && overrides.rawBody === undefined
+              ? { "content-type": "application/json" }
+              : undefined),
+        });
+        const requestContext: PluginAdminRequestContext = {
+          request,
+          method: normalizedMethod as PluginAdminMethod,
+          path: normalizedPath,
+          params: match,
+          query: new URL(request.url).searchParams,
+          actor: { username: overrides.actor ?? "admin" },
+        };
+        return await route.handler(requestContext);
+      }
+      return null;
+    },
     async dispose(): Promise<void> {
       await definition.stop?.(context);
       for (const dispose of disposers.reverse()) await dispose();
@@ -320,4 +407,26 @@ function silentLogger(): PluginLogger {
     warn: () => undefined,
     error: () => undefined,
   };
+}
+
+function matchHarnessPath(pattern: string, path: string): Record<string, string> | null {
+  const patternSegments = pattern.split("/").filter((segment) => segment.length > 0);
+  const pathSegments = path.split("/").filter((segment) => segment.length > 0);
+  const params: Record<string, string> = {};
+  let index = 0;
+  for (const part of patternSegments) {
+    if (part === "*") {
+      params["*"] = pathSegments.slice(index).join("/");
+      return params;
+    }
+    const value = pathSegments[index];
+    if (value === undefined) return null;
+    if (part.startsWith(":")) {
+      params[part.slice(1)] = decodeURIComponent(value);
+    } else if (part !== value) {
+      return null;
+    }
+    index += 1;
+  }
+  return index === pathSegments.length ? params : null;
 }

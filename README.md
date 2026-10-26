@@ -32,9 +32,9 @@ OpenCode V2 service
 - 群聊 `per_user` / `shared` / `readonly` 模式、@bot、群 allowlist。
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
-- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Prompt、插件、审计、用量和 YAML 编辑。
+- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
-- 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包、Markdown 记忆和分段延迟回复。
+- 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包（WebP 缩略图）、Markdown 记忆和分段延迟回复。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
 
 ## 前置条件
@@ -97,6 +97,11 @@ opencode-qq setup \
 --napcat-url <url>    已有 NapCat 的 WS 地址
 --napcat-token <tok>  NapCat access token
 --admin-password <p>  首次 /admin 登录密码（默认自动生成）
+--with-roleplay       启用 Roleplay 插件与项目
+--roleplay-path <p>   @opencode-qq/roleplay 包目录
+--roleplay-personas <p> 角色卡目录
+--roleplay-project <id> Roleplay 项目 ID（默认 roleplay）
+--reconfigure         合并已有配置（保留注释和自定义项目）
 --yes                 非交互
 --force               覆盖已有配置（会先备份）
 --skip-plugin         不安装 OpenCode 插件
@@ -244,10 +249,12 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 用户与群：角色、项目 allowlist、群模式、@bot、默认项目和可收紧的个人限制。
 - 项目与策略：项目路径、默认策略、agent/model、workspace 模式，以及 permission/shell 规则。
 - 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session。
-- Prompt：编辑 OpenCode 全局 `agents/*.md`，保存前自动备份，可预览/恢复历史版本。
+- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
-- 插件：查看加载状态、命令、能力、数据来源和失败原因；插件代码仍只从 YAML 启用。
+- 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可启用/禁用插件、进入插件自己的管理页，插件代码仍只从 YAML 安装。
+- Roleplay：角色卡导入、备注编辑、世界书只读与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。
+- Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
 
 安全边界：
 
@@ -281,12 +288,16 @@ pnpm dev
 管理前端是 `packages/webui` 下的 Vite + React + shadcn/ui SPA：
 
 ```bash
-pnpm dev:webui       # http://127.0.0.1:5173/admin/，/admin/api 代理到 8787
+pnpm dev:webui       # fixture backend + Vite HMR，http://127.0.0.1:5173/admin/
+pnpm webui dev       # 同上，别名
+pnpm dev:webui --real # 真实 bridge(:8787) + Vite HMR
+pnpm dev:ui          # 只启动 Vite，/admin/api 代理到 8787
+pnpm dev:fixture     # 只启动隔离 fixture（构建后的 UI，给 Playwright/手动看）
 pnpm build:webui     # 构建到 dist/admin，由 bridge 的 Hono 托管
-pnpm build           # tsc + build:webui
+pnpm build           # tsc + build:webui + packages
 ```
 
-`pnpm dev` 不会自动重建前端；改前端时同时开 `pnpm dev:webui`，或者改完后执行一次 `pnpm build:webui` 再刷新 `http://127.0.0.1:8787/admin`。
+`pnpm dev:webui` 默认使用隔离的临时数据、fake OneBot/OpenCode 和真实 Roleplay 插件，不会碰生产数据库；密码默认 `webui-test-password`，后端固定 `8790`，Vite `5173`。`pnpm dev` 只是真实 backend 的 watch 模式，不会启动前端 dev server。
 
 `pnpm setup` 使用仓库内的 `config/config.yaml`，方便开发时直接修改。也可以手动编辑：
 
@@ -416,17 +427,35 @@ pnpm test
 
 仍不在本阶段：
 
-- 主动消息、群聊旁听、多角色同场、WebUI 记忆编辑器、TTS；
+- 主动消息、群聊旁听、多角色同场、TTS；
+- 世界书条目的 WebUI 编辑（当前提供只读列表和关键词调试，编辑仍可通过 `worldbook.json` / 卡导入完成）；
 - 向量/embedding 检索和外部记忆服务；
 - 时间段开场白、备选开场白轮换。
 
 配置片段见 [`config/roleplay.example.yaml`](config/roleplay.example.yaml)，完整说明见 [`packages/roleplay/README.md`](packages/roleplay/README.md)。
+
+从源码安装：
 
 ```bash
 pnpm build:sdk
 pnpm build:memory
 pnpm build:roleplay
 mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
+```
+
+使用 setup 向导启用（会创建 roleplay 项目/策略/插件、personas 目录和 `security.allowed_roots`）：
+
+```bash
+opencode-qq setup --with-roleplay \
+  --roleplay-path /path/to/opencode-qq-adapter/packages/roleplay \
+  --roleplay-personas ~/.local/share/opencode-qq/plugins/roleplay/personas \
+  --yes
+```
+
+已有配置可以合并而不丢注释和自定义项目：
+
+```bash
+opencode-qq setup --with-roleplay --reconfigure --yes
 ```
 
 在 `config.yaml` 中增加 `projects.roleplay`、`policies.roleplay` 和 `plugins.roleplay` 后：
@@ -780,13 +809,15 @@ pnpm config:validate
 
 ```bash
 opencode-qq setup                          # 首次安装向导（npm 安装）
+opencode-qq setup --with-roleplay --reconfigure   # 在已有配置上启用/更新 Roleplay
 opencode-qq start                          # 启动 bridge
 opencode-qq doctor                         # 检查配置、SQLite、OpenCode、OneBot
 opencode-qq config validate                # 校验配置和项目目录
 opencode-qq admin reset-password           # 重置 WebUI 管理员密码并踢出旧会话
 
-pnpm dev                                   # 源码开发模式，tsx watch
-pnpm dev:webui                             # 前端 Vite dev server
+pnpm dev                                   # 真实 backend，tsx watch
+pnpm dev:webui                             # fixture backend + Vite HMR（推荐）
+pnpm dev:fixture                           # 隔离 fixture（无 HMR）
 pnpm build && pnpm start                   # 生产构建（含 WebUI）并启动
 pnpm doctor                                # 源码环境检查
 ```
@@ -907,7 +938,7 @@ src/                    bridge 本体
   qq/                   Markdown 降级、分段、发送
   store/                SQLite
   observability/        日志、health、审计、owner 告警
-  admin/                /admin API、鉴权、配置/Prompt 编辑
+  admin/                /admin API、鉴权、配置/Agents 编辑
   plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk

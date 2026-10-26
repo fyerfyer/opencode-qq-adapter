@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { Command } from "commander";
+import semver from "semver";
 import { ADMIN_USERNAME } from "./admin/auth.js";
 import { generatePassword, hashPassword } from "./admin/password.js";
 import { adminIndexPath } from "./admin/ui.js";
 import { App } from "./app.js";
 import { ConfigError, type LoadedConfig, loadConfig } from "./config/loader.js";
-import { envFilesForConfig, loadEnvFiles, resolveConfigPath } from "./config/paths.js";
+import { configHome, envFilesForConfig, loadEnvFiles, resolveConfigPath } from "./config/paths.js";
 import type { AppConfig } from "./config/schema.js";
 import { buildLogger } from "./observability/logger.js";
 import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { OpenCodeAgent } from "./opencode/agent.js";
 import { SetupError } from "./setup/files.js";
+import { defaultOpenCodeConfigDir } from "./setup/plugin.js";
 import { formatSetupSummary, type NapCatMode, runSetup } from "./setup/wizard.js";
 import { SqliteStore } from "./store/sqlite.js";
 import { VERSION } from "./version.js";
@@ -43,6 +45,12 @@ export async function runCli(argv: string[]): Promise<void> {
     .option("--webui-port <port>", "NapCat WebUI host port", parsePort, 6099)
     .option("--yes", "use defaults and do not prompt", false)
     .option("--force", "back up and overwrite existing config", false)
+    .option("--reconfigure", "merge managed sections into an existing config", false)
+    .option("--with-roleplay", "enable the first-party Roleplay plugin")
+    .option("--roleplay-path <path>", "local @opencode-qq/roleplay package path")
+    .option("--roleplay-personas <path>", "persona data directory")
+    .option("--roleplay-project <id>", "roleplay project id", "roleplay")
+    .option("--roleplay-default-persona <id>", "default persona id")
     .option("--skip-plugin", "do not install the OpenCode image plugin", false)
     .option("--skip-doctor", "skip generated config validation", false)
     .action(async (options: SetupCliOptions) => {
@@ -62,6 +70,14 @@ export async function runCli(argv: string[]): Promise<void> {
           webuiPort: options.webuiPort,
           yes: options.yes,
           force: options.force,
+          reconfigure: options.reconfigure,
+          withRoleplay: options.withRoleplay,
+          roleplayPath: options.roleplayPath,
+          roleplayPersonas: options.roleplayPersonas,
+          roleplayProject: options.roleplayProject,
+          ...(options.roleplayDefaultPersona !== undefined
+            ? { roleplayDefaultPersona: options.roleplayDefaultPersona }
+            : {}),
           skipPlugin: options.skipPlugin,
           skipDoctor: options.skipDoctor,
           output: (line) => console.log(line),
@@ -223,6 +239,12 @@ interface SetupCliOptions {
   webuiPort: number;
   yes: boolean;
   force: boolean;
+  reconfigure: boolean;
+  withRoleplay?: boolean;
+  roleplayPath?: string;
+  roleplayPersonas?: string;
+  roleplayProject: string;
+  roleplayDefaultPersona?: string;
   skipPlugin: boolean;
   skipDoctor: boolean;
 }
@@ -330,11 +352,57 @@ async function doctor(configPath: string): Promise<void> {
   } else if (existsSync(adminIndexPath())) {
     report(true, "admin WebUI", `${adminIndexPath()} (first start creates the admin account)`);
   } else {
-    console.log("! admin WebUI: static assets missing; run `pnpm build:webui`");
+    report(false, "admin WebUI", "static assets missing; run `pnpm build:webui`");
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
     report(true, `project ${id}`, project.path);
+  }
+
+  if (config.plugins.roleplay !== undefined) {
+    const options = config.plugins.roleplay.options;
+    const projectId =
+      typeof options.project_id === "string" && options.project_id.length > 0
+        ? options.project_id
+        : "roleplay";
+    const project = config.projects[projectId];
+    report(project !== undefined, "roleplay project", projectId);
+    if (project !== undefined) {
+      report(project.workspace === "none", "roleplay workspace", project.workspace);
+      const policy = config.policies[project.policy];
+      report(
+        policy !== undefined && policy.edit !== "allow" && policy.shell !== "allow",
+        "roleplay policy",
+        project.policy,
+      );
+      const personasDir =
+        typeof options.personas_dir === "string" && options.personas_dir.length > 0
+          ? resolve(options.personas_dir)
+          : project.path;
+      report(personasDir === resolve(project.path), "personas dir matches project", personasDir);
+      report(existsSync(personasDir), "personas dir exists", personasDir);
+    }
+    const agentDir = defaultOpenCodeConfigDir(configHome(process.env));
+    report(
+      existsSync(join(agentDir, "agents", "qq-rp.md")),
+      "qq-rp agent",
+      join(agentDir, "agents", "qq-rp.md"),
+    );
+    report(
+      existsSync(join(agentDir, "agents", "qq-rp-utility.md")),
+      "qq-rp-utility agent",
+      join(agentDir, "agents", "qq-rp-utility.md"),
+    );
+    const judge = typeof options.sticker_judge === "string" ? options.sticker_judge : "jev";
+    const keyName =
+      typeof options.jev_api_key_env === "string" ? options.jev_api_key_env : "TYPESAFE_API_KEY";
+    if (judge === "jev" || judge === "hybrid") {
+      report(
+        (process.env[keyName] ?? "").trim().length > 0,
+        "Jev API key",
+        `${keyName}${process.env[keyName] ? " (configured)" : " (missing)"}`,
+      );
+    }
   }
 
   try {
@@ -369,6 +437,13 @@ async function doctor(configPath: string): Promise<void> {
         ? `${health.version ?? "unknown"} at ${health.url ?? "discovered service"}`
         : (health.error ?? "unavailable"),
     );
+    if (health.healthy && health.version !== null && config.opencode.service.version !== null) {
+      report(
+        semver.satisfies(health.version, config.opencode.service.version),
+        "OpenCode version",
+        `${health.version} (requires ${config.opencode.service.version})`,
+      );
+    }
   } finally {
     await agent.stop();
   }

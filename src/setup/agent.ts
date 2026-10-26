@@ -15,6 +15,7 @@ export interface AgentInstallResult {
  */
 export function renderQqCodeAgent(): string {
   return `---
+# managed by opencode-qq-adapter
 description: QQ remote coding agent
 mode: primary
 permissions:

@@ -76,7 +76,7 @@ export function LoginPage() {
               coding agent。
             </h1>
             <p className="text-sm leading-7 text-zinc-400">
-              一个只监听本机的管理台：配置用户与项目，查看运行和审计，编辑 Prompt。 YAML
+              一个只监听本机的管理台：配置用户与项目，查看运行和审计，编辑 Agents。 YAML
               仍然是唯一配置源。
             </p>
           </div>

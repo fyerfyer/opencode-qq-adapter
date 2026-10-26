@@ -27,7 +27,8 @@
       "hooks",
       "messages",
       "sessions",
-      "agent"
+      "agent",
+      "admin"
     ],
     "engines": {
       "opencodeQq": ">=0.1.0 <0.3.0"
@@ -42,7 +43,8 @@
     "@character-foundry/character-foundry": "^0.6.0",
     "@opencode-qq/memory": "workspace:*",
     "@opencode-qq/plugin-sdk": "workspace:*",
-    "better-sqlite3": "^12.4.1"
+    "better-sqlite3": "^12.4.1",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

@@ -1,4 +1,10 @@
-import { createInterface, type Interface } from "node:readline/promises";
+import {
+  cancel,
+  confirm as clackConfirm,
+  select as clackSelect,
+  isCancel,
+  text,
+} from "@clack/prompts";
 import { SetupError } from "./files.js";
 
 export interface Prompt {
@@ -12,48 +18,57 @@ export interface Prompt {
   close(): void;
 }
 
+/**
+ * Clack-based interactive prompts. Non-interactive setup (`--yes`) never
+ * constructs this object, so CI and scripted runs stay deterministic.
+ */
 export function createPrompt(): Prompt {
-  const rl: Interface = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: Boolean(process.stdin.isTTY),
-  });
-  let closed = false;
-
   return {
     async ask(question, defaultValue = "") {
-      const suffix = defaultValue.length > 0 ? ` [${defaultValue}]` : "";
-      const answer = (await rl.question(`${question}${suffix}: `)).trim();
+      const value = await text({
+        message: question,
+        ...(defaultValue.length > 0 ? { placeholder: defaultValue, defaultValue } : {}),
+      });
+      if (isCancel(value)) {
+        cancel("Setup cancelled.");
+        throw new SetupError("cancelled", "Setup cancelled.");
+      }
+      const answer = value.trim();
       return answer.length > 0 ? answer : defaultValue;
     },
     async confirm(question, defaultValue) {
-      const hint = defaultValue ? "Y/n" : "y/N";
-      const answer = (await rl.question(`${question} [${hint}]: `)).trim().toLowerCase();
-      if (answer.length === 0) return defaultValue;
-      if (["y", "yes", "是", "1"].includes(answer)) return true;
-      if (["n", "no", "否", "0"].includes(answer)) return false;
-      throw new SetupError("invalid", `Please answer yes or no, got: ${answer}`);
-    },
-    async select(question, options, defaultIndex = 0) {
-      if (options.length === 0) throw new SetupError("invalid", "No options available");
-      const lines = options.map(
-        (option, index) =>
-          `  ${index + 1}) ${option.label}${index === defaultIndex ? " (default)" : ""}`,
-      );
-      const answer = (
-        await rl.question(`${question}\n${lines.join("\n")}\nSelect [${defaultIndex + 1}]: `)
-      ).trim();
-      const index = answer.length === 0 ? defaultIndex : Number(answer) - 1;
-      const selected = options[index];
-      if (selected === undefined) {
-        throw new SetupError("invalid", `Invalid selection: ${answer}`);
+      const value = await clackConfirm({
+        message: question,
+        initialValue: defaultValue,
+      });
+      if (isCancel(value)) {
+        cancel("Setup cancelled.");
+        throw new SetupError("cancelled", "Setup cancelled.");
       }
-      return selected.value;
+      return value;
+    },
+    async select<T extends string>(
+      question: string,
+      options: Array<{ value: T; label: string }>,
+      defaultIndex = 0,
+    ) {
+      if (options.length === 0) throw new SetupError("invalid", "No options available");
+      const value = await clackSelect<string>({
+        message: question,
+        options: options.map((option) => ({
+          value: String(option.value),
+          label: option.label,
+        })),
+        initialValue: String(options[defaultIndex]?.value ?? options[0]?.value ?? ""),
+      });
+      if (isCancel(value)) {
+        cancel("Setup cancelled.");
+        throw new SetupError("cancelled", "Setup cancelled.");
+      }
+      return value as T;
     },
     close() {
-      if (closed) return;
-      closed = true;
-      rl.close();
+      // Clack manages its own readline lifecycle.
     },
   };
 }

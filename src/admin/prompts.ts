@@ -8,6 +8,16 @@ import { defaultOpenCodeConfigDir } from "../setup/plugin.js";
 
 const FILE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.md$/;
 const MAX_PROMPT_BYTES = 512 * 1024;
+const CORE_OWNER = "opencode-qq-adapter";
+const MANAGED_MARKER = /^#\s*managed by\s+([^\n;]+)(?:;[^\n]*)?\s*$/im;
+
+export type PromptOwner = "core" | "plugin" | "user";
+
+export interface PromptOwnership {
+  owner: PromptOwner;
+  managedBy: string | null;
+  editable: boolean;
+}
 
 export class PromptError extends Error {
   readonly status: 400 | 404 | 409 | 500;
@@ -28,6 +38,9 @@ export interface PromptSummary {
   size: number;
   updatedAt: number;
   backups: number;
+  owner: PromptOwner;
+  managedBy: string | null;
+  editable: boolean;
 }
 
 export interface PromptFile extends PromptSummary {
@@ -85,6 +98,7 @@ export class PromptStore {
       throw new PromptError(500, "read_failed", describe(error));
     }
     const meta = parseFrontmatter(content);
+    const ownership = promptOwnership(safeName, content);
     return {
       name: safeName,
       content,
@@ -92,17 +106,31 @@ export class PromptStore {
       updatedAt: info.mtimeMs,
       backups: await this.#backupNames(safeName).then((files) => files.length),
       ...meta,
+      ...ownership,
     };
   }
 
-  async write(name: string, content: string): Promise<PromptFile> {
+  async write(
+    name: string,
+    content: string,
+    options: { override?: boolean } = {},
+  ): Promise<PromptFile> {
     const safeName = this.#validateName(name);
     if (Buffer.byteLength(content, "utf8") > MAX_PROMPT_BYTES) {
       throw new PromptError(400, "prompt_too_large", "Prompt 不能超过 512 KiB。");
     }
     await mkdir(this.#root, { recursive: true, mode: 0o700 });
     const path = join(this.#root, safeName);
-    if (await exists(path)) backupFile(path);
+    const existing = await readFile(path, "utf8").catch(() => null);
+    const ownership = existing === null ? null : promptOwnership(safeName, existing);
+    if (ownership?.owner === "plugin" && options.override !== true) {
+      throw new PromptError(
+        409,
+        "prompt_managed",
+        `此 agent prompt 由 ${ownership.managedBy ?? "插件"} 管理；请使用高级覆盖后再保存。`,
+      );
+    }
+    if (existing !== null) backupFile(path);
     await atomicWrite(path, content);
     return this.read(safeName);
   }
@@ -129,9 +157,13 @@ export class PromptStore {
     }
   }
 
-  async restoreBackup(name: string, backup: string): Promise<PromptFile> {
+  async restoreBackup(
+    name: string,
+    backup: string,
+    options: { override?: boolean } = {},
+  ): Promise<PromptFile> {
     const content = await this.readBackup(name, backup);
-    return this.write(name, content);
+    return this.write(name, content, options);
   }
 
   async #summary(name: string): Promise<PromptSummary> {
@@ -143,6 +175,9 @@ export class PromptStore {
       size: file.size,
       updatedAt: file.updatedAt,
       backups: file.backups,
+      owner: file.owner,
+      managedBy: file.managedBy,
+      editable: file.editable,
     };
   }
 
@@ -177,6 +212,19 @@ export class PromptStore {
     }
     return safe;
   }
+}
+
+export function promptOwnership(name: string, content: string): PromptOwnership {
+  const marker = MANAGED_MARKER.exec(content);
+  if (marker?.[1] !== undefined) {
+    const managedBy = marker[1].trim();
+    const owner: PromptOwner = managedBy.startsWith(CORE_OWNER) ? "core" : "plugin";
+    return { owner, managedBy, editable: owner !== "plugin" };
+  }
+  if (name === "qq-code.md") {
+    return { owner: "core", managedBy: CORE_OWNER, editable: true };
+  }
+  return { owner: "user", managedBy: null, editable: true };
 }
 
 function parseFrontmatter(content: string): { title: string | null; description: string | null } {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseCard, type ExtractedAsset } from "@character-foundry/character-foundry/loader";
 import type { CCv3Data } from "@character-foundry/character-foundry/schemas";
@@ -273,4 +273,62 @@ export async function listPersonas(personasDir: string): Promise<PersonaRecord[]
     if (persona !== null) personas.push(persona);
   }
   return personas.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export async function readPersonaCard(dir: string): Promise<CCv3Data | null> {
+  const raw = await readFile(join(dir, "card.json"), "utf8").catch(() => null);
+  if (raw === null) return null;
+  try {
+    const card = JSON.parse(raw) as CCv3Data;
+    return card !== null && typeof card === "object" ? card : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function readPersonaNotes(dir: string): Promise<string> {
+  return readFile(join(dir, "notes.md"), "utf8").catch(() => "");
+}
+
+/**
+ * Update the user-editable notes and regenerate AGENTS.md while preserving the
+ * stable card content. This is the only persona markdown the WebUI edits.
+ */
+export async function updatePersonaNotes(
+  personasDir: string,
+  id: string,
+  notes: string,
+): Promise<PersonaRecord> {
+  assertId(id);
+  const persona = await getPersona(personasDir, id);
+  if (persona === null) throw new Error(`persona not found: ${id}`);
+  const card = await readPersonaCard(persona.dir);
+  if (card === null) throw new Error(`persona card is missing: ${id}`);
+  const normalized = notes.replace(/\r\n/g, "\n").trim();
+  await writeFile(join(persona.dir, "notes.md"), normalized, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await writeFile(join(persona.dir, "AGENTS.md"), renderAgentsMd(card, normalized), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  const updated: PersonaRecord = { ...persona, updatedAt: Date.now() };
+  await writeFile(join(persona.dir, "persona.json"), `${JSON.stringify(updated, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  return updated;
+}
+
+export async function deletePersona(personasDir: string, id: string): Promise<boolean> {
+  assertId(id);
+  const dir = join(personasDir, id);
+  const exists = await access(dir).then(
+    () => true,
+    () => false,
+  );
+  if (!exists) return false;
+  await rm(dir, { recursive: true, force: true });
+  return true;
 }

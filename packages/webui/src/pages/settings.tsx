@@ -211,7 +211,7 @@ export function SettingsPage() {
                 <dl className="grid gap-4 sm:grid-cols-2">
                   <Info label="版本" value={meta.data.version} />
                   <Info label="配置文件" value={meta.data.configPath ?? "未关联"} mono />
-                  <Info label="Prompt 目录" value={meta.data.promptRoot} mono />
+                  <Info label="Agents 目录" value={meta.data.promptRoot} mono />
                   <Info label="默认项目" value={meta.data.defaultProject ?? "未设置"} />
                   <Info label="管理员会话" value={`${meta.data.admin.sessionHours} 小时`} />
                   <Info label="远程访问" value={meta.data.admin.allowRemote ? "允许" : "仅本机"} />
