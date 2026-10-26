@@ -3,13 +3,27 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
-import type { MetaInfo, PluginInfo } from "@/api/types";
+import type {
+  MetaInfo,
+  PluginInfo,
+  PluginOptionsSaveResult,
+  PluginOptionsSnapshot,
+} from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { useApiQuery } from "@/hooks/use-api-query";
 
 function statusBadge(plugin: PluginInfo) {
@@ -19,9 +33,77 @@ function statusBadge(plugin: PluginInfo) {
   return <Badge variant="secondary">已停止</Badge>;
 }
 
+interface ConfigDialogState {
+  plugin: PluginInfo;
+  text: string;
+  hash: string;
+  error: string | null;
+  snapshotError: string | null;
+}
+
 export function PluginsPage() {
   const { data, error, loading, refresh } = useApiQuery<MetaInfo>("/meta");
   const [busy, setBusy] = useState<string | null>(null);
+  const [config, setConfig] = useState<ConfigDialogState | null>(null);
+  const [configBusy, setConfigBusy] = useState(false);
+
+  const openConfig = async (plugin: PluginInfo) => {
+    setConfigBusy(true);
+    try {
+      const snapshot = await api.get<PluginOptionsSnapshot>(
+        `/plugins/${encodeURIComponent(plugin.id)}/options`,
+      );
+      setConfig({
+        plugin,
+        text: JSON.stringify(snapshot.options ?? {}, null, 2),
+        hash: snapshot.configHash ?? "",
+        error: null,
+        snapshotError: snapshot.error,
+      });
+    } catch (caught) {
+      toast.error(errorMessage(caught));
+    } finally {
+      setConfigBusy(false);
+    }
+  };
+
+  const saveConfig = async () => {
+    if (config === null) return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(config.text);
+    } catch {
+      setConfig({ ...config, error: "配置必须是合法 JSON。" });
+      return;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setConfig({ ...config, error: "插件 options 必须是 JSON 对象。" });
+      return;
+    }
+    setConfigBusy(true);
+    try {
+      const result = await api.put<PluginOptionsSaveResult>(
+        `/plugins/${encodeURIComponent(config.plugin.id)}/options`,
+        {
+          options: parsed as Record<string, unknown>,
+          expectedHash: config.hash.length > 0 ? config.hash : undefined,
+        },
+      );
+      toast.success(
+        result.reload.warnings.length > 0
+          ? `已保存；${result.reload.warnings.join("；")}`
+          : "插件配置已保存并热加载",
+      );
+      setConfig(null);
+      await refresh(true);
+    } catch (caught) {
+      setConfig((current) =>
+        current === null ? null : { ...current, error: errorMessage(caught) },
+      );
+    } finally {
+      setConfigBusy(false);
+    }
+  };
 
   const toggle = async (plugin: PluginInfo, enabled: boolean) => {
     setBusy(plugin.id);
@@ -99,6 +181,14 @@ export function PluginsPage() {
                       <span className="text-xs text-muted-foreground">
                         API {plugin.apiVersion || "-"}
                       </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={configBusy}
+                        onClick={() => void openConfig(plugin)}
+                      >
+                        <Settings2 /> 配置
+                      </Button>
                       <Switch
                         checked={plugin.status !== "disabled"}
                         disabled={busy === plugin.id}
@@ -125,21 +215,22 @@ export function PluginsPage() {
                     )}
                   </div>
                   {plugin.admin.pages.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {plugin.admin.pages.map((page) => (
-                        <Button key={page.id} variant="outline" size="sm" asChild>
-                          <Link to={page.path}>
-                            <ExternalLink /> {page.title}
-                          </Link>
-                        </Button>
-                      ))}
-                      {plugin.id === "roleplay" && (
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link to="/roleplay?tab=settings">
-                            <Settings2 /> 配置
-                          </Link>
-                        </Button>
-                      )}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {plugin.admin.pages.map((page) => {
+                        const to =
+                          page.path ??
+                          `/plugins/${encodeURIComponent(plugin.id)}/${encodeURIComponent(page.id)}`;
+                        return (
+                          <Button key={page.id} variant="outline" size="sm" asChild>
+                            <Link to={to}>
+                              <ExternalLink /> {page.title}
+                              <span className="text-[10px] text-muted-foreground">
+                                {page.kind === "iframe" ? "iframe" : "native"}
+                              </span>
+                            </Link>
+                          </Button>
+                        );
+                      })}
                     </div>
                   )}
                   {plugin.error !== null ? (
@@ -178,6 +269,46 @@ export function PluginsPage() {
           ))}
         </CardContent>
       </Card>
+
+      <Dialog open={config !== null} onOpenChange={(open) => !open && setConfig(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>插件配置 · {config?.plugin.name}</DialogTitle>
+            <DialogDescription>
+              编辑 YAML 中 plugins.{config?.plugin.id}.options；保存前由插件 schema
+              校验，并触发热加载。
+            </DialogDescription>
+          </DialogHeader>
+          {config?.snapshotError !== null && config?.snapshotError !== undefined && (
+            <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+              当前 options 无法通过插件校验：{config.snapshotError}
+            </p>
+          )}
+          <Textarea
+            value={config?.text ?? ""}
+            onChange={(event) =>
+              setConfig((current) =>
+                current === null ? null : { ...current, text: event.target.value, error: null },
+              )
+            }
+            spellCheck={false}
+            className="min-h-72 resize-y font-mono text-xs leading-6"
+          />
+          {config?.error !== null && config?.error !== undefined && (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+              {config.error}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfig(null)}>
+              取消
+            </Button>
+            <Button disabled={configBusy} onClick={() => void saveConfig()}>
+              保存并热加载
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -31,6 +31,10 @@ export default defineConfig({
         target: process.env.VITE_ADMIN_API_PROXY ?? "http://127.0.0.1:8787",
         changeOrigin: false,
       },
+      "/admin/plugin-assets": {
+        target: process.env.VITE_ADMIN_API_PROXY ?? "http://127.0.0.1:8787",
+        changeOrigin: false,
+      },
     },
   },
 });

@@ -23,6 +23,18 @@ export const PLUGIN_CAPABILITIES = [
 
 export type PluginCapability = (typeof PLUGIN_CAPABILITIES)[number];
 
+/**
+ * Optional browser UI bundled with a plugin.
+ *
+ * Assets are served from the plugin package by the core after an authenticated
+ * admin requests the page. `root` is package-relative and defaults to `ui`.
+ * `entry` is relative to `root` and defaults to the page-specific entry.
+ */
+export interface PluginUiManifest {
+  root?: string;
+  entry?: string;
+}
+
 export interface PluginManifest {
   /** Globally unique id. Lowercase letters, digits and dashes. */
   id: string;
@@ -36,6 +48,7 @@ export interface PluginManifest {
     /** semver range checked against the running bridge version. */
     opencodeQq?: string;
   };
+  ui?: PluginUiManifest;
 }
 
 export type PluginChatType = "private" | "group";
@@ -366,13 +379,25 @@ export interface PluginAdminActor {
   username: string;
 }
 
+export type PluginAdminPageKind = "native" | "iframe";
+
 export interface PluginAdminPage {
   /** Stable page id, unique inside the plugin. */
   id: string;
   title: string;
-  /** Core WebUI route, for example `/roleplay`. */
-  path: string;
+  /**
+   * Core WebUI route for native pages. Iframe pages derive
+   * `/plugins/<plugin-id>/<page-id>`; a supplied path is ignored.
+   */
+  path?: string;
   description?: string;
+  /** How the core renders the page. Defaults to `native` for compatibility. */
+  kind?: PluginAdminPageKind;
+  /**
+   * HTML entry relative to `manifest.ui.root`, for iframe pages. Falls back to
+   * `manifest.ui.entry` when omitted.
+   */
+  entry?: string;
 }
 
 export interface PluginAdminRequestContext {

@@ -8,9 +8,9 @@ import {
   XCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { toast } from "sonner";
-import { api, errorMessage } from "@/api/client";
+import { CoreLink } from "@rp/components/core-link";
+import { toast } from "@rp/toast";
+import { api, errorMessage } from "@rp/api/client";
 import type { PluginOptionsSaveResult, PluginOptionsSnapshot, RoleplaySummary } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
 import { Field, SwitchField } from "./shared";
 
 type Options = Record<string, unknown>;
@@ -143,14 +143,14 @@ export function SettingsTab() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" asChild>
-            <Link to="/agents?name=qq-rp.md">
+            <CoreLink to="/agents?name=qq-rp.md">
               <Bot /> 引擎 Prompt
-            </Link>
+            </CoreLink>
           </Button>
           <Button variant="outline" size="sm" asChild>
-            <Link to="/settings">
+            <CoreLink to="/settings">
               <Terminal /> 编辑 YAML
-            </Link>
+            </CoreLink>
           </Button>
           <Button size="sm" disabled={saving || snapshot.data === null} onClick={() => void save()}>
             {saving ? <LoaderCircle className="animate-spin" /> : <Save />} 保存配置

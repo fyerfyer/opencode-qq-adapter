@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { PluginImage } from "@rp/components/plugin-image";
 
 export function Field({
   label,
@@ -118,10 +119,9 @@ export function StickerImage({
   className?: string;
 }) {
   return (
-    <img
-      src={src}
+    <PluginImage
+      path={src}
       alt={alt}
-      loading="lazy"
       className={cn("h-full w-full object-contain", className)}
     />
   );

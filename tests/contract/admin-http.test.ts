@@ -7,7 +7,7 @@ import { App } from "../../src/app.js";
 import { loadConfig } from "../../src/config/loader.js";
 import { buildLogger } from "../../src/observability/logger.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
-import { FakeAgent, FakeOneBot } from "../helpers/fakes.js";
+import { FakeAgent, FakeOneBot, makeIncomingMessage, waitFor } from "../helpers/fakes.js";
 
 const ADMIN_PASSWORD = "test-admin-password";
 const disposers: Array<() => Promise<void>> = [];
@@ -390,6 +390,45 @@ describe("Admin HTTP API", () => {
     });
     expect(overridden.status).toBe(200);
     expect(((await overridden.json()) as { content: string }).content).toBe("changed");
+  });
+
+  it("lists models/agents and switches conversation preferences", async () => {
+    const harness = await startAdminApp();
+    const models = await request(harness, "/admin/api/models?projectId=demo");
+    expect(models.status).toBe(200);
+    const modelBody = (await models.json()) as {
+      models: Array<{ id: string; capabilities: { input: string[] } }>;
+    };
+    expect(modelBody.models[0]).toMatchObject({
+      id: "fake/model-a",
+      capabilities: { input: ["text", "image"] },
+    });
+
+    const agents = await request(harness, "/admin/api/agents?projectId=demo");
+    expect(agents.status).toBe(200);
+    expect(((await agents.json()) as { agents: unknown[] }).agents).toHaveLength(1);
+
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun === null,
+      3000,
+      "run completion",
+    );
+
+    const patched = await request(harness, "/admin/api/conversations/private%3A20000/preferences", {
+      method: "PATCH",
+      body: { model: "fake/model-b", agent: "build" },
+    });
+    expect(patched.status).toBe(200);
+
+    const conversations = await request(harness, "/admin/api/conversations");
+    const body = (await conversations.json()) as {
+      conversations: Array<{ chatKey: string; model: string; agent: string }>;
+    };
+    expect(body.conversations.find((item) => item.chatKey === "private:20000")).toMatchObject({
+      model: "fake/model-b",
+      agent: "build",
+    });
   });
 
   it("returns dashboard and session data", async () => {

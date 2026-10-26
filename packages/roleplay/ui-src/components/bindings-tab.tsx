@@ -1,7 +1,7 @@
 import { Link2, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
-import { api, errorMessage } from "@/api/client";
+import { toast } from "@rp/toast";
+import { api, errorMessage } from "@rp/api/client";
 import type { RoleplayBinding } from "@/api/types";
 import { ConfirmDelete } from "@/components/common/confirm-delete";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/data-state";
@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
 import { formatDate } from "@/lib/utils";
 
 export function BindingsTab() {

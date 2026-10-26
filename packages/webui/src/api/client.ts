@@ -26,17 +26,45 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const method = options.method ?? "GET";
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const isForm = options.body instanceof FormData;
-  if (options.body !== undefined && !isForm) headers["Content-Type"] = "application/json";
-  if (method !== "GET" && csrfToken !== null) headers["X-CSRF-Token"] = csrfToken;
-  if (options.configHash !== undefined) headers["X-Config-Hash"] = options.configHash;
+export interface ApiFetchOptions {
+  method?: string;
+  body?: BodyInit | null;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+}
 
+/**
+ * Low-level authenticated fetch used by the plugin iframe bridge. It injects
+ * CSRF for unsafe methods but leaves body/header handling to the caller.
+ */
+export async function apiFetch(path: string, options: ApiFetchOptions = {}): Promise<Response> {
+  const method = (options.method ?? "GET").toUpperCase();
+  const headers: Record<string, string> = { Accept: "application/json", ...options.headers };
+  if (method !== "GET" && method !== "HEAD" && csrfToken !== null) {
+    headers["X-CSRF-Token"] = csrfToken;
+  }
   const response = await fetch(`/admin/api${path}`, {
     method,
     credentials: "same-origin",
+    headers,
+    ...(options.body !== undefined && options.body !== null ? { body: options.body } : {}),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
+  });
+  if (response.status === 401) {
+    window.dispatchEvent(new CustomEvent("admin:unauthorized"));
+  }
+  return response;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const method = options.method ?? "GET";
+  const headers: Record<string, string> = {};
+  const isForm = options.body instanceof FormData;
+  if (options.body !== undefined && !isForm) headers["Content-Type"] = "application/json";
+  if (options.configHash !== undefined) headers["X-Config-Hash"] = options.configHash;
+
+  const response = await apiFetch(path, {
+    method,
     headers,
     ...(options.body !== undefined
       ? { body: isForm ? (options.body as FormData) : JSON.stringify(options.body) }
@@ -50,9 +78,6 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     : await response.text();
 
   if (!response.ok) {
-    if (response.status === 401) {
-      window.dispatchEvent(new CustomEvent("admin:unauthorized"));
-    }
     const body = payload as
       | { error?: string; message?: string; details?: string[] }
       | string

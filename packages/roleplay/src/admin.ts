@@ -129,8 +129,8 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
   admin.page({
     id: "roleplay",
     title: "Roleplay",
-    path: "/roleplay",
-    description: "角色卡、表情包、记忆和聊天绑定",
+    kind: "iframe",
+    description: "角色卡、世界书、表情包、记忆和聊天绑定",
   });
 
   route("GET", "/summary", async () => summarize(deps));

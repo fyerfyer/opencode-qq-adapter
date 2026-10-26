@@ -79,6 +79,12 @@ export interface AgentEventStatus {
   lastError: string | null;
 }
 
+export interface AgentModelCapabilities {
+  tools: boolean;
+  input: string[];
+  output: string[];
+}
+
 export interface AgentModel {
   /** `provider/modelID`, suitable for `!model`. */
   id: string;
@@ -87,6 +93,7 @@ export interface AgentModel {
   name: string;
   enabled: boolean;
   variants: string[];
+  capabilities: AgentModelCapabilities | null;
 }
 
 export interface AgentSummary {

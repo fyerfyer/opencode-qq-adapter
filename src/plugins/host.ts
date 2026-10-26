@@ -1,4 +1,4 @@
-import { mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Logger } from "pino";
 import type { AppConfig, PluginConfig } from "../config/schema.js";
@@ -44,6 +44,12 @@ import type {
   PluginSessionMutationResult,
 } from "./sdk.js";
 import { PluginDataStorage } from "./storage.js";
+import {
+  isPathInside,
+  normalizeUiRelativePath,
+  pluginUiCacheControl,
+  pluginUiContentType,
+} from "./ui-path.js";
 
 const COMMAND_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const HOOK_TIMEOUT_MS = 2_000;
@@ -126,6 +132,20 @@ export interface PluginReloadReport {
   removed: number;
 }
 
+export interface PluginUiPageInfo {
+  page: PluginAdminPage;
+  /** Normalized HTML entry relative to the UI root. */
+  entry: string;
+  /** Absolute UI root; internal to the host, never sent to the browser. */
+  root: string;
+}
+
+export interface PluginUiAssetInfo {
+  path: string;
+  contentType: string;
+  cacheControl: string;
+}
+
 interface RegisteredCommand {
   definition: PluginCommandDefinition;
   names: string[];
@@ -162,6 +182,7 @@ interface PluginInstance {
   manifest: PluginManifest | null;
   definition: PluginDefinition<unknown> | null;
   context: PluginContext<unknown> | null;
+  packageRoot: string | null;
   dataDir: string;
   commands: Map<string, RegisteredCommand>;
   hooks: RegisteredHook[];
@@ -359,6 +380,73 @@ export class PluginHost {
       `admin route ${method} ${selected.route.pattern} of ${pluginId}`,
     );
     return result;
+  }
+
+  /**
+   * Resolve an iframe admin page and its HTML entry. The returned root is
+   * internal; callers must never expose it to the browser.
+   */
+  adminUiPage(pluginId: string, pageId?: string): PluginUiPageInfo | null {
+    const instance = this.#instances.get(pluginId);
+    if (instance === undefined || instance.status !== "loaded") return null;
+    const manifest = instance.manifest;
+    if (manifest === null || instance.packageRoot === null) return null;
+    const pages = instance.adminPages.filter((page) => page.kind === "iframe");
+    const page = pageId === undefined ? pages[0] : pages.find((item) => item.id === pageId);
+    if (page === undefined) return null;
+    const entry = page.entry ?? manifest.ui?.entry;
+    if (entry === undefined) return null;
+    let normalizedEntry: string;
+    try {
+      normalizedEntry = normalizeUiRelativePath(entry, "page entry");
+    } catch {
+      return null;
+    }
+    const rootName = manifest.ui?.root ?? "ui";
+    let root: string;
+    try {
+      root = resolve(instance.packageRoot, normalizeUiRelativePath(rootName, "ui.root"));
+    } catch {
+      return null;
+    }
+    return { page, entry: normalizedEntry, root };
+  }
+
+  /** Resolve a static UI asset, following symlinks only when they stay in root. */
+  async resolveAdminUiAsset(
+    pluginId: string,
+    assetPath: string,
+  ): Promise<PluginUiAssetInfo | null> {
+    const instance = this.#instances.get(pluginId);
+    if (instance === undefined || instance.status !== "loaded" || instance.packageRoot === null) {
+      return null;
+    }
+    let relativePath: string;
+    try {
+      relativePath = normalizeUiRelativePath(assetPath, "UI asset path");
+    } catch {
+      return null;
+    }
+    const rootName = instance.manifest?.ui?.root ?? "ui";
+    let root: string;
+    try {
+      root = resolve(instance.packageRoot, normalizeUiRelativePath(rootName, "ui.root"));
+    } catch {
+      return null;
+    }
+    const rootReal = await realpath(root).catch(() => null);
+    if (rootReal === null) return null;
+    const candidate = resolve(root, relativePath);
+    if (!isPathInside(root, candidate)) return null;
+    const info = await stat(candidate).catch(() => null);
+    if (info === null || !info.isFile()) return null;
+    const real = await realpath(candidate).catch(() => null);
+    if (real === null || !isPathInside(rootReal, real)) return null;
+    return {
+      path: real,
+      contentType: pluginUiContentType(relativePath),
+      cacheControl: pluginUiCacheControl(relativePath),
+    };
   }
 
   /** Return true when a plugin handled the command (including permission denial). */
@@ -800,6 +888,7 @@ export class PluginHost {
       manifest: null,
       definition: null,
       context: null,
+      packageRoot: null,
       dataDir: join(this.#pluginsDir, id),
       commands: new Map(),
       hooks: [],
@@ -821,6 +910,7 @@ export class PluginHost {
       manifest: null,
       definition: null,
       context: null,
+      packageRoot: null,
       dataDir: join(this.#pluginsDir, id),
       commands: new Map(),
       hooks: [],
@@ -835,6 +925,7 @@ export class PluginHost {
       const loaded = await loadPluginModule(spec, id, this.#coreVersion);
       instance.manifest = loaded.manifest;
       instance.definition = loaded.definition;
+      instance.packageRoot = loaded.packageRoot;
       await mkdir(instance.dataDir, { recursive: true, mode: 0o700 });
       this.#utilityAbort.set(id, new AbortController());
       const options = parseOptions(loaded, spec.options);
@@ -1078,7 +1169,7 @@ export class PluginHost {
       },
       page: (page: PluginAdminPage): (() => void) => {
         requireCapability(instance, "admin");
-        const normalized = normalizeAdminPage(page);
+        const normalized = normalizeAdminPage(page, instance.id, manifest);
         if (instance.adminPages.some((item) => item.id === normalized.id)) {
           throw new Error(`duplicate admin page '${normalized.id}'`);
         }
@@ -1777,7 +1868,11 @@ function adminSpecificity(route: RegisteredAdminRoute): number {
   return score + route.segments.length;
 }
 
-function normalizeAdminPage(page: PluginAdminPage): PluginAdminPage {
+function normalizeAdminPage(
+  page: PluginAdminPage,
+  pluginId: string,
+  manifest: PluginManifest,
+): PluginAdminPage {
   if (!isRecord(page)) throw new Error("admin page must be an object");
   const id = typeof page.id === "string" ? page.id.trim() : "";
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(id)) {
@@ -1787,18 +1882,58 @@ function normalizeAdminPage(page: PluginAdminPage): PluginAdminPage {
   if (title.length === 0 || title.length > 120) {
     throw new Error("admin page title must be 1-120 characters");
   }
-  const path = normalizeAdminPath(page.path);
-  if (path === "/admin" || path.startsWith("/admin/")) {
-    throw new Error("admin page path must be a core UI route outside /admin");
+  const kind = page.kind ?? "native";
+  if (kind !== "native" && kind !== "iframe") {
+    throw new Error("admin page kind must be 'native' or 'iframe'");
   }
   const description =
     typeof page.description === "string" && page.description.trim().length > 0
       ? page.description.trim().slice(0, 500)
       : undefined;
+
+  if (kind === "iframe") {
+    if (manifest.ui === undefined && page.entry === undefined) {
+      throw new Error(`iframe admin page '${id}' requires manifest.ui or a page entry`);
+    }
+    const entry = page.entry ?? manifest.ui?.entry;
+    if (entry === undefined) {
+      throw new Error(`iframe admin page '${id}' requires an HTML entry`);
+    }
+    let normalizedEntry: string;
+    try {
+      normalizedEntry = normalizeUiRelativePath(entry, "page entry");
+    } catch (error) {
+      throw new Error(
+        `invalid entry for iframe admin page '${id}': ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (!normalizedEntry.toLowerCase().endsWith(".html")) {
+      throw new Error(`iframe admin page '${id}' entry must point to an HTML file`);
+    }
+    return {
+      id,
+      title,
+      path: `/plugins/${pluginId}/${id}`,
+      kind,
+      entry: normalizedEntry,
+      ...(description !== undefined ? { description } : {}),
+    };
+  }
+
+  if (page.path === undefined) {
+    throw new Error(`native admin page '${id}' requires a path`);
+  }
+  const path = normalizeAdminPath(page.path);
+  if (path === "/admin" || path.startsWith("/admin/")) {
+    throw new Error("admin page path must be a core UI route outside /admin");
+  }
   return {
     id,
     title,
     path,
+    kind,
     ...(description !== undefined ? { description } : {}),
   };
 }

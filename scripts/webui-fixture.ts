@@ -4,7 +4,7 @@
  * temporary database and a known password. Used for manual Playwright smoke
  * tests; never touches the production bridge data.
  */
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { stringify } from "yaml";
@@ -25,6 +25,15 @@ const configPath = join(root, "config.yaml");
 const promptRoot = join(root, "prompts");
 const password = process.env.WEBUI_FIXTURE_PASSWORD ?? "webui-test-password";
 const roleplayPath = resolve("packages/roleplay");
+const uiFixturePath = resolve("tests/fixtures/plugins/ui");
+const uiDemoPath = resolve("examples/ui-plugin");
+await Promise.all([
+  copyFile(
+    resolve("packages/plugin-ui/dist/index.js"),
+    resolve("tests/fixtures/plugins/ui/ui/sdk.js"),
+  ),
+  copyFile(resolve("packages/plugin-ui/dist/index.js"), resolve("examples/ui-plugin/ui/sdk.js")),
+]);
 
 await mkdir(projectPath, { recursive: true });
 await mkdir(personasDir, { recursive: true });
@@ -137,6 +146,14 @@ const configSource = stringify({
     },
   },
   plugins: {
+    "ui-fixture": {
+      enabled: true,
+      path: uiFixturePath,
+    },
+    "ui-demo": {
+      enabled: true,
+      path: uiDemoPath,
+    },
     roleplay: {
       enabled: true,
       path: roleplayPath,
@@ -172,6 +189,17 @@ const requestedPort = Number(process.env.WEBUI_FIXTURE_PORT ?? "0");
 config.server.port = Number.isInteger(requestedPort) && requestedPort > 0 ? requestedPort : 0;
 config.logging.level = "warn";
 const store = new SqliteStore(":memory:");
+store.conversations.upsert({
+  chatKey: "private:20000",
+  projectId: "demo",
+  workspaceId: null,
+  sessionId: null,
+  actorQq: 20000,
+  agent: null,
+  model: null,
+  createdAt: Date.now(),
+  lastActiveAt: Date.now(),
+});
 const onebot = new FakeOneBot();
 const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "warn" } });
 const app = new App(config, {

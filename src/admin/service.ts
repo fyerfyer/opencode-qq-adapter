@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { Logger } from "pino";
 import type { ConfigReloadResult } from "../config/reload.js";
 import type {
@@ -14,7 +16,8 @@ import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
 import type { PluginHost, PluginHostStatus } from "../plugins/host.js";
 import type { PluginAdminActor, PluginAdminResult } from "../plugins/sdk.js";
-import type { AgentPort, AgentSession } from "../ports/agent.js";
+import { PLUGIN_UI_PROTOCOL_VERSION } from "../plugins/ui-protocol.js";
+import type { AgentModel, AgentPort, AgentSession, AgentSummary } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import {
   AdminAuth,
@@ -28,10 +31,11 @@ import {
   type ConfigSaveResult,
   type ConfigSnapshot,
 } from "./config-editor.js";
+import { PluginUiTokenSigner } from "./plugin-ui-token.js";
 import { type PromptFile, PromptStore, type PromptSummary } from "./prompts.js";
 
 export class AdminError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 415 | 500 | 503;
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 500 | 503;
   readonly code: string;
   readonly details: string[];
 
@@ -58,6 +62,24 @@ export interface AdminServiceOptions {
   reloadConfig: () => Promise<ConfigReloadResult>;
   initialPassword?: string;
   promptRoot?: string;
+  /** Test hook for token expiry. */
+  now?: () => number;
+}
+
+export interface PluginUiPageDescriptor {
+  pluginId: string;
+  pageId: string;
+  title: string;
+  description?: string;
+  entry: string;
+  protocol: typeof PLUGIN_UI_PROTOCOL_VERSION;
+  url: string;
+}
+
+export interface PluginUiAssetPayload {
+  body: Uint8Array;
+  contentType: string;
+  cacheControl: string;
 }
 
 export interface AccessSnapshot {
@@ -100,6 +122,7 @@ export class AdminService {
   readonly #plugins: PluginHost | undefined;
   readonly #logger: Logger;
   readonly #reloadConfig: () => Promise<ConfigReloadResult>;
+  readonly #pluginUiTokens: PluginUiTokenSigner;
 
   constructor(options: AdminServiceOptions) {
     this.#config = options.config;
@@ -113,6 +136,9 @@ export class AdminService {
     this.#plugins = options.plugins;
     this.#logger = options.logger;
     this.#reloadConfig = options.reloadConfig;
+    this.#pluginUiTokens = new PluginUiTokenSigner(randomBytes(32), {
+      ...(options.now !== undefined ? { now: options.now } : {}),
+    });
     this.auth = new AdminAuth({
       store: options.store,
       sessionHours: options.config.admin.session_hours,
@@ -382,6 +408,56 @@ export class AdminService {
     }
   }
 
+  async conversationModels(projectId?: string): Promise<AgentModel[]> {
+    const directory = this.#projectDirectory(projectId);
+    try {
+      return await this.#agent.listModels(directory);
+    } catch (error) {
+      throw new AdminError(
+        503,
+        "opencode_unavailable",
+        `无法读取 OpenCode 模型：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async conversationAgents(projectId?: string): Promise<AgentSummary[]> {
+    const directory = this.#projectDirectory(projectId);
+    try {
+      return await this.#agent.listAgents(directory);
+    } catch (error) {
+      throw new AdminError(
+        503,
+        "opencode_unavailable",
+        `无法读取 OpenCode agents：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async setConversationPreferences(
+    chatKey: string,
+    preferences: { agent?: string; model?: string },
+  ): Promise<void> {
+    if (this.#store.conversations.get(chatKey) === null) {
+      throw new AdminError(404, "conversation_not_found", "会话不存在。");
+    }
+    const result = await this.#conversations.setPreferences(chatKey, preferences);
+    if (!result.ok) {
+      throw new AdminError(409, "conversation_busy", result.reason ?? "切换失败。");
+    }
+    this.record({
+      action: "admin.conversation.preferences",
+      detail: { chatKey, ...preferences },
+    });
+  }
+
+  #projectDirectory(projectId: string | undefined): string | undefined {
+    if (projectId === undefined || projectId.length === 0) return undefined;
+    const project = this.#config.projects[projectId];
+    if (project === undefined) throw new AdminError(404, "project_not_found", "项目不存在。");
+    return project.path;
+  }
+
   async switchConversationSession(chatKey: string, sessionId: string): Promise<void> {
     const conversation = this.#store.conversations.get(chatKey);
     if (conversation === null) throw new AdminError(404, "conversation_not_found", "会话不存在。");
@@ -595,6 +671,69 @@ export class AdminService {
       error: null,
       configHash: result.hash,
       configPath: result.path,
+    };
+  }
+
+  pluginUiPage(pluginId: string, pageId?: string): PluginUiPageDescriptor {
+    const plugin = this.#requirePlugin(pluginId);
+    if (plugin.status !== "loaded") {
+      throw new AdminError(409, "plugin_not_loaded", `插件未加载：${pluginId}`);
+    }
+    if (this.#plugins === undefined) {
+      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
+    }
+    const page = this.#plugins.adminUiPage(pluginId, pageId);
+    if (page === null) {
+      throw new AdminError(
+        404,
+        "plugin_ui_page_not_found",
+        `插件没有可用的 iframe 页面：${pluginId}`,
+      );
+    }
+    const token = this.#pluginUiTokens.sign(pluginId);
+    const entry = page.entry.split("/").map(encodeURIComponent).join("/");
+    return {
+      pluginId,
+      pageId: page.page.id,
+      title: page.page.title,
+      ...(page.page.description !== undefined ? { description: page.page.description } : {}),
+      entry: page.entry,
+      protocol: PLUGIN_UI_PROTOCOL_VERSION,
+      url: `/admin/plugin-assets/${encodeURIComponent(token)}/${encodeURIComponent(pluginId)}/${entry}`,
+    };
+  }
+
+  async readPluginUiAsset(
+    token: string,
+    pluginId: string,
+    relativePath: string,
+  ): Promise<PluginUiAssetPayload> {
+    const verified = this.#pluginUiTokens.verify(token);
+    if (verified === null || verified.pluginId !== pluginId) {
+      throw new AdminError(403, "plugin_ui_token_invalid", "插件页面资源令牌无效或已过期。");
+    }
+    const plugin = this.#requirePlugin(pluginId);
+    if (plugin.status !== "loaded") {
+      throw new AdminError(404, "plugin_not_loaded", `插件未加载：${pluginId}`);
+    }
+    if (this.#plugins === undefined) {
+      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
+    }
+    const asset = await this.#plugins.resolveAdminUiAsset(pluginId, relativePath);
+    if (asset === null) {
+      throw new AdminError(404, "plugin_ui_asset_not_found", "插件页面资源不存在。");
+    }
+    const bytes = await readFile(asset.path).catch(() => null);
+    if (bytes === null) {
+      throw new AdminError(404, "plugin_ui_asset_not_found", "插件页面资源不存在。");
+    }
+    if (bytes.byteLength > 32 * 1024 * 1024) {
+      throw new AdminError(413, "plugin_ui_asset_too_large", "插件页面资源过大。");
+    }
+    return {
+      body: new Uint8Array(bytes),
+      contentType: asset.contentType,
+      cacheControl: asset.cacheControl,
     };
   }
 

@@ -21,7 +21,7 @@ const children = new Set<ChildProcess>();
 let stopping = false;
 
 function buildPackages(): void {
-  for (const script of ["build:sdk", "build:memory", "build:roleplay"]) {
+  for (const script of ["build:sdk", "build:plugin-ui", "build:memory", "build:roleplay"]) {
     console.log(`[dev:webui] ${script}`);
     execFileSync(pnpm, [script], { cwd: root, stdio: "inherit" });
   }

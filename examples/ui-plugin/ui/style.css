@@ -1,0 +1,150 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    "Inter", "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--background, #fff);
+  color: var(--foreground, #111);
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 52rem;
+  padding: 1.5rem;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+h1 {
+  margin: 0.15rem 0 0.4rem;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground, #71717a);
+}
+
+.muted {
+  margin: 0;
+  color: var(--muted-foreground, #71717a);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.badge {
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: 999px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  color: var(--muted-foreground, #71717a);
+  white-space: nowrap;
+}
+
+.badge.ok {
+  color: var(--foreground, #111);
+  border-color: var(--foreground, #111);
+}
+
+.panel {
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: var(--radius, 0.625rem);
+  background: var(--card, #fff);
+  padding: 1rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--input, #e4e4e7);
+  border-radius: calc(var(--radius, 0.625rem) - 0.15rem);
+  background: var(--background, #fff);
+  color: inherit;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--primary, #18181b);
+  border-radius: calc(var(--radius, 0.625rem) - 0.15rem);
+  background: var(--primary, #18181b);
+  color: var(--primary-foreground, #fafafa);
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button.ghost {
+  background: transparent;
+  color: inherit;
+  border-color: var(--border, #e4e4e7);
+}
+
+button:hover {
+  opacity: 0.88;
+}
+
+ul {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: calc(var(--radius, 0.625rem) - 0.2rem);
+  padding: 0.5rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+li button {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.7rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.meta {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.68rem;
+  color: var(--muted-foreground, #71717a);
+  word-break: break-all;
+}
+
+.empty {
+  margin-top: 0.75rem;
+}

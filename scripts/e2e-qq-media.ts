@@ -12,7 +12,8 @@
  *   QQ_PEER_HTTP / QQ_PEER_TOKEN / QQ_PEER_ID
  *   QQ_E2E_CHART   path (in the bridge workspace) used for outbound image test
  *   QQ_E2E_IMAGE   local image sent to the bot (default tests/fixtures/red.png)
- *   QQ_E2E_MODEL   optional hint for the inbound prompt
+ *   QQ_E2E_PROJECT project id used by !use (default: demo)
+ *   QQ_E2E_MODEL   optional vision-capable model, e.g. provider/model
  */
 import { readFile } from "node:fs/promises";
 
@@ -33,11 +34,17 @@ const botId = Number(required("QQ_BOT_ID"));
 const peerId = Number(required("QQ_PEER_ID"));
 const chartPath = env.QQ_E2E_CHART ?? "var/e2e-chart.png";
 const imagePath = env.QQ_E2E_IMAGE ?? "tests/fixtures/red.png";
+const project = env.QQ_E2E_PROJECT ?? "demo";
+const model = env.QQ_E2E_MODEL?.trim() ?? "";
 
 async function main(): Promise<void> {
   const started = Math.floor(Date.now() / 1000) - 1;
-  await send("!use demo");
+  await send(`!use ${project}`);
   await delay(500);
+  if (model.length > 0) {
+    await send(`!model ${model}`);
+    await delay(500);
+  }
   await send("!new");
   await delay(500);
 

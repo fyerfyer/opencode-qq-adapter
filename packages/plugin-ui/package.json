@@ -1,0 +1,33 @@
+{
+  "name": "@opencode-qq/plugin-ui",
+  "version": "0.1.0",
+  "description": "Framework-agnostic postMessage bridge for opencode-qq plugin iframe UIs",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist/",
+    "styles.css",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./styles.css"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-qq/plugin-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@opencode-qq/plugin-sdk": "workspace:*",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.11"
+  }
+}

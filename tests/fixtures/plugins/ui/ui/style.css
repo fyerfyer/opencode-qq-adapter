@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  padding: 2rem;
+  background: var(--background, #fff);
+  color: var(--foreground, #111);
+}
+main {
+  display: grid;
+  gap: 1rem;
+  max-width: 40rem;
+}
+button {
+  justify-self: start;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--card, transparent);
+  color: inherit;
+}

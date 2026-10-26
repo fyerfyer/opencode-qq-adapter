@@ -216,6 +216,31 @@ export interface AgentSession {
   tokens: unknown;
 }
 
+export interface AgentModelCapabilities {
+  tools: boolean;
+  input: string[];
+  output: string[];
+}
+
+export interface AgentModelRecord {
+  id: string;
+  providerID: string;
+  modelID: string;
+  name: string;
+  enabled: boolean;
+  variants: string[];
+  capabilities: AgentModelCapabilities | null;
+}
+
+export interface AgentSummaryRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  mode: "primary" | "subagent" | "all";
+  model: string | null;
+  hidden: boolean;
+}
+
 export interface ConfigSnapshot {
   path: string;
   content: string;
@@ -302,8 +327,20 @@ export interface PluginInfo {
 export interface PluginAdminPage {
   id: string;
   title: string;
-  path: string;
+  path?: string;
   description?: string;
+  kind?: "native" | "iframe";
+  entry?: string;
+}
+
+export interface PluginUiPageDescriptor {
+  pluginId: string;
+  pageId: string;
+  title: string;
+  description?: string;
+  entry: string;
+  protocol: 1;
+  url: string;
 }
 
 export interface PluginOptionsSnapshot {

@@ -1,8 +1,8 @@
 import { ImagePlus, LoaderCircle, Pencil, Search, Send, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { toast } from "sonner";
-import { api, errorMessage } from "@/api/client";
+import { toast } from "@rp/toast";
+import { api, errorMessage } from "@rp/api/client";
 import type { RoleplayPersonaSummary, RoleplayStickerFile, RoleplayStickerSet } from "@/api/types";
 import { ConfirmDelete } from "@/components/common/confirm-delete";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
@@ -25,9 +25,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
 import { formatDate } from "@/lib/utils";
 import { EmptyHint, Field, SizeBadge, StickerImage } from "./shared";
+import { PluginImage } from "@rp/components/plugin-image";
 
 export function StickersTab({ initialPersonaId }: { initialPersonaId?: string | null }) {
   const personas = useApiQuery<{ personas: RoleplayPersonaSummary[] }>(
@@ -271,8 +272,8 @@ export function StickersTab({ initialPersonaId }: { initialPersonaId?: string | 
           </DialogHeader>
           {preview !== null && (
             <div className="flex max-h-[70vh] items-center justify-center overflow-hidden rounded-lg border bg-muted/30 p-4">
-              <img
-                src={preview.file.url}
+              <PluginImage
+                path={preview.file.url}
                 alt={preview.file.name}
                 className="max-h-[64vh] object-contain"
               />

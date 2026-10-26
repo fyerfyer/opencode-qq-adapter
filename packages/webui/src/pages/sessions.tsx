@@ -1,17 +1,45 @@
-import { ExternalLink, MessagesSquare, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
+import {
+  ExternalLink,
+  MessagesSquare,
+  RefreshCw,
+  RotateCcw,
+  Settings2,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
-import type { AgentSession, ConversationRecord } from "@/api/types";
+import type {
+  AgentModelRecord,
+  AgentSession,
+  AgentSummaryRecord,
+  ConversationRecord,
+} from "@/api/types";
 import { ConfirmDelete } from "@/components/common/confirm-delete";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Sheet,
   SheetContent,
@@ -40,6 +68,7 @@ export function SessionsPage() {
   const filter = searchParams.get("project") ?? "";
   const [filterText, setFilterText] = useState(filter);
   const [selected, setSelected] = useState<ConversationRecord | null>(null);
+  const [preferences, setPreferences] = useState<ConversationRecord | null>(null);
 
   const act = async (path: string, body?: unknown, success = "操作成功") => {
     try {
@@ -212,6 +241,14 @@ export function SessionsPage() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
+                          title="切换 Agent / 模型"
+                          onClick={() => setPreferences(conversation)}
+                        >
+                          <Settings2 />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
                           title="查看项目会话"
                           onClick={() => setSelected(conversation)}
                         >
@@ -234,7 +271,175 @@ export function SessionsPage() {
           onChanged={() => void refresh(true)}
         />
       )}
+
+      {preferences !== null && (
+        <PreferencesDialog
+          conversation={preferences}
+          onClose={() => setPreferences(null)}
+          onChanged={() => void refresh(true)}
+        />
+      )}
     </div>
+  );
+}
+
+function PreferencesDialog({
+  conversation,
+  onClose,
+  onChanged,
+}: {
+  conversation: ConversationRecord;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const projectQuery = encodeURIComponent(conversation.projectId);
+  const models = useApiQuery<{ models: AgentModelRecord[] }>(`/models?projectId=${projectQuery}`);
+  const agents = useApiQuery<{ agents: AgentSummaryRecord[] }>(`/agents?projectId=${projectQuery}`);
+  const [model, setModel] = useState(conversation.model ?? "");
+  const [agent, setAgent] = useState(conversation.agent ?? "");
+  const [query, setQuery] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const visibleModels = (models.data?.models ?? [])
+    .filter((item) => item.enabled)
+    .filter((item) => {
+      const target = query.trim().toLowerCase();
+      if (target.length === 0) return true;
+      return (
+        item.id.toLowerCase().includes(target) ||
+        item.name.toLowerCase().includes(target) ||
+        item.providerID.toLowerCase().includes(target)
+      );
+    });
+  const primaryAgents = (agents.data?.agents ?? []).filter(
+    (item) => !item.hidden && item.mode !== "subagent",
+  );
+
+  const save = async () => {
+    if (model.length === 0 && agent.length === 0) {
+      toast.error("请至少选择一个模型或 Agent。");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.patch(`/conversations/${encodeURIComponent(conversation.chatKey)}/preferences`, {
+        ...(model.length > 0 ? { model } : {}),
+        ...(agent.length > 0 ? { agent } : {}),
+      });
+      toast.success("已切换当前会话的 Agent / 模型");
+      onChanged();
+      onClose();
+    } catch (caught) {
+      toast.error(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>切换 Agent / 模型</DialogTitle>
+          <DialogDescription>
+            {conversation.chatKey} · 当前 {conversation.agent ?? "默认 agent"} /{" "}
+            {conversation.model ?? "默认 model"}。切换会同时更新 OpenCode session。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">Agent</p>
+            <Select
+              value={agent.length > 0 ? agent : "__keep"}
+              onValueChange={(value) => setAgent(value === "__keep" ? "" : value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="保持当前 Agent" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__keep">保持当前（{conversation.agent ?? "默认"}）</SelectItem>
+                {primaryAgents.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name} · {item.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {agents.error !== null && (
+              <p className="text-[11px] text-destructive">{agents.error}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">Model</p>
+              <span className="text-[11px] text-muted-foreground">
+                当前：{conversation.model ?? "默认"}
+              </span>
+            </div>
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索 provider / model"
+            />
+            {models.loading && models.data === null && <LoadingState rows={3} />}
+            {models.error !== null && <ErrorState message={models.error} />}
+            {models.data !== null && (
+              <ScrollArea className="h-64 rounded-lg border">
+                <div className="space-y-1 p-2">
+                  {visibleModels.length === 0 && (
+                    <p className="p-4 text-center text-xs text-muted-foreground">没有匹配模型。</p>
+                  )}
+                  {visibleModels.map((item) => {
+                    const active = item.id === model;
+                    const vision = item.capabilities?.input.includes("image") ?? false;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setModel(item.id)}
+                        className={`flex w-full flex-col gap-1 rounded-lg border p-2 text-left transition-colors ${
+                          active
+                            ? "border-foreground/40 bg-muted/60"
+                            : "border-transparent hover:bg-muted/40"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium">{item.name}</span>
+                          {vision && <Badge variant="secondary">vision</Badge>}
+                          {item.capabilities?.tools === true && (
+                            <Badge variant="outline">tools</Badge>
+                          )}
+                          {active && <Badge>当前选择</Badge>}
+                        </div>
+                        <span className="break-all font-mono text-[10px] text-muted-foreground">
+                          {item.id}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
+            )}
+            {model.length > 0 && !visibleModels.some((item) => item.id === model) && (
+              <p className="text-[11px] text-muted-foreground">
+                当前选择 {model} 不在搜索结果中，保存仍会使用它。
+              </p>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            取消
+          </Button>
+          <Button disabled={saving} onClick={() => void save()}>
+            保存并切换
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

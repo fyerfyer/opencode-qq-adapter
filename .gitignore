@@ -30,3 +30,15 @@ logs/
 
 # Local design/plan notes
 docs/
+
+# Generated fixture/example assets (copied from packages/plugin-ui/dist)
+tests/fixtures/plugins/ui/ui/sdk.js
+examples/ui-plugin/ui/sdk.js
+
+# Roleplay plugin iframe build output
+packages/roleplay/ui/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+.playwright-mcp/

@@ -1,13 +1,12 @@
-import { BookOpen, IdCard, Import, LoaderCircle, MemoryStick, Search, Users } from "lucide-react";
+import { IdCard, Import, LoaderCircle, MemoryStick, Search, Users } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { toast } from "sonner";
-import { api, errorMessage } from "@/api/client";
+import { toast } from "@rp/toast";
+import { api, errorMessage } from "@rp/api/client";
 import type {
   RoleplayMemoryScope,
   RoleplayPersonaDetail,
   RoleplayPersonaSummary,
-  RoleplayWorldbookEntry,
 } from "@/api/types";
 import { ConfirmDelete } from "@/components/common/confirm-delete";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
@@ -32,7 +31,9 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
+import { PluginImage } from "@rp/components/plugin-image";
+import { WorldbookEditor } from "@rp/components/worldbook-editor";
 import { formatDate } from "@/lib/utils";
 import { EmptyHint, Field, MarkdownEditor } from "./shared";
 
@@ -215,8 +216,8 @@ export function PersonasTab({
                 {persona.avatarUrl === null ? (
                   persona.name.slice(0, 1)
                 ) : (
-                  <img
-                    src={`${persona.avatarUrl}?v=${persona.updatedAt}`}
+                  <PluginImage
+                    path={`${persona.avatarUrl}?v=${persona.updatedAt}`}
                     alt={persona.name}
                     className="h-full w-full object-cover"
                   />
@@ -464,19 +465,11 @@ function PersonaSheet({
                     {worldbookResult}
                   </pre>
                 )}
-                {data.worldbook.length === 0 ? (
-                  <EmptyHint
-                    title="世界书为空"
-                    description="这张卡没有 Character Book 条目。"
-                    icon={<BookOpen />}
-                  />
-                ) : (
-                  <div className="space-y-2.5">
-                    {data.worldbook.map((entry) => (
-                      <WorldbookRow key={`${entry.name}-${entry.insertionOrder}`} entry={entry} />
-                    ))}
-                  </div>
-                )}
+                <WorldbookEditor
+                  personaId={id}
+                  entries={data.worldbook}
+                  onSaved={() => void refresh()}
+                />
               </TabsContent>
 
               <TabsContent value="memory" className="mt-4 space-y-2">
@@ -578,41 +571,6 @@ function ScopeRow({
         ))}
       </div>
     </div>
-  );
-}
-
-function WorldbookRow({ entry }: { entry: RoleplayWorldbookEntry }) {
-  return (
-    <details className="group rounded-xl border border-border/60 bg-card/50 p-4 transition-colors open:bg-card/80">
-      <summary className="cursor-pointer list-none">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{entry.name}</span>
-          {entry.constant && <Badge>常驻</Badge>}
-          {entry.selective && <Badge variant="secondary">主+次</Badge>}
-          {entry.matchWholeWords === true && <Badge variant="outline">整词</Badge>}
-          <span className="text-[11px] text-muted-foreground">
-            优先级 {entry.priority} · 顺序 {entry.insertionOrder} · {entry.position}
-          </span>
-        </div>
-      </summary>
-      <div className="mt-3 space-y-2.5 border-t border-border/50 pt-3">
-        <div className="flex flex-wrap gap-1.5">
-          {entry.keys.map((key) => (
-            <Badge key={`k-${key}`} variant="outline" className="font-mono text-[10px]">
-              {key}
-            </Badge>
-          ))}
-          {entry.secondaryKeys.map((key) => (
-            <Badge key={`s-${key}`} variant="secondary" className="font-mono text-[10px]">
-              {key}
-            </Badge>
-          ))}
-        </div>
-        <p className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-          {entry.content}
-        </p>
-      </div>
-    </details>
   );
 }
 

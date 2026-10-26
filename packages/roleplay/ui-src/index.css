@@ -1,0 +1,14 @@
+@import "../../webui/src/index.css";
+
+@source "../../webui/src/components";
+@source "./";
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}

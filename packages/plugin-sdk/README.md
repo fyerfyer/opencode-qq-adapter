@@ -31,7 +31,8 @@ my-plugin/
     "description": "Example plugin",
     "capabilities": ["commands", "messages", "hooks", "admin"],
     "engines": { "opencodeQq": ">=0.1.0 <0.2.0" },
-    "entry": "./src/index.ts"
+    "entry": "./src/index.ts",
+    "ui": { "root": "ui", "entry": "index.html" }
   },
   "dependencies": {
     "@opencode-qq/plugin-sdk": "*"
@@ -122,13 +123,33 @@ context.admin.route("GET", "/media/:file", async ({ params }) => {
 });
 
 context.admin.page({
-  id: "my-plugin",
+  id: "overview",
   title: "My Plugin",
-  path: "/my-plugin",
+  kind: "iframe",
+  // entry defaults to manifest.ui.entry
 });
 ```
 
-The core mounts the routes at `/admin/api/plugins/<plugin-id>/*`, blocks HTML responses, enforces CSRF on writes, audits mutations, and supports `Response` passthrough for images/files. The current core WebUI only ships first-party pages; third-party plugin pages are planned as restricted iframes with a postMessage bridge.
+Native pages are reserved for first-party core routes; use `kind: "iframe"` for
+third-party UI. The core derives the route `/plugins/<plugin-id>/<page-id>` and
+serves the built assets from `manifest.ui.root` through short-lived signed URLs.
+
+Iframe pages must use [`@opencode-qq/plugin-ui`](../plugin-ui) to connect:
+
+```ts
+import { connectPluginUi } from "@opencode-qq/plugin-ui";
+
+const bridge = await connectPluginUi();
+const result = await bridge.api.get("/items");
+await bridge.ui.toast("saved", "success");
+```
+
+The iframe has no cookies, `localStorage`, or arbitrary network access. The
+parent injects CSRF, restricts API paths to this plugin, and brokers storage,
+toasts, confirms and core navigation. For a complete example see
+[`examples/ui-plugin`](../../examples/ui-plugin).
+
+The core mounts the routes at `/admin/api/plugins/<plugin-id>/*`, blocks HTML responses, enforces CSRF on writes, audits mutations, and supports `Response` passthrough for images/files.
 
 ## Commands
 

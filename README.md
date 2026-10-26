@@ -33,6 +33,7 @@ OpenCode V2 service
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
 - 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
+- 第三方插件 UI：插件自带静态页面，在 opaque-origin sandbox iframe 中运行，通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 使用受控 API。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
 - 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包（WebP 缩略图）、Markdown 记忆和分段延迟回复。
 - `/health` 健康检查、JSON 日志和密钥脱敏。
@@ -248,12 +249,13 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 概览：OneBot / OpenCode / SQLite / 事件流状态、活跃 run、今日用量、待审批和审计。
 - 用户与群：角色、项目 allowlist、群模式、@bot、默认项目和可收紧的个人限制。
 - 项目与策略：项目路径、默认策略、agent/model、workspace 模式，以及 permission/shell 规则。
-- 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session。
+- 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session；可直接切换当前会话的 Agent/model，模型列表会标注 vision/tools capability。
 - Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可启用/禁用插件、进入插件自己的管理页，插件代码仍只从 YAML 安装。
-- Roleplay：角色卡导入、备注编辑、世界书只读与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。
+- 第三方插件页面：插件自带 `ui/` 静态资源，由核心在 `sandbox` iframe 中挂载；页面通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 调用本插件 admin API，不接触管理员 cookie 和 CSRF。
+- Roleplay：角色卡导入、备注编辑、世界书条目新增/编辑/删除/启停与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。Roleplay 页面本身也已迁移到 iframe。
 - Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
 
 安全边界：
@@ -294,7 +296,8 @@ pnpm dev:webui --real # 真实 bridge(:8787) + Vite HMR
 pnpm dev:ui          # 只启动 Vite，/admin/api 代理到 8787
 pnpm dev:fixture     # 只启动隔离 fixture（构建后的 UI，给 Playwright/手动看）
 pnpm build:webui     # 构建到 dist/admin，由 bridge 的 Hono 托管
-pnpm build           # tsc + build:webui + packages
+pnpm build           # SDK、WebUI、插件 UI、与 server 全量构建
+pnpm test:e2e        # 构建后用 Playwright 跑插件 iframe / Roleplay 世界书测试
 ```
 
 `pnpm dev:webui` 默认使用隔离的临时数据、fake OneBot/OpenCode 和真实 Roleplay 插件，不会碰生产数据库；密码默认 `webui-test-password`，后端固定 `8790`，Vite `5173`。`pnpm dev` 只是真实 backend 的 watch 模式，不会启动前端 dev server。
@@ -364,7 +367,7 @@ plugins:
 | `messages` | 发送文本、图片、文件（受数据目录和大小限制） |
 | `sessions` | 只读查看当前会话绑定 |
 | `events` | 订阅 `run.finished` / `config.reloaded` |
-| `admin` | 预留：插件管理页面 |
+| `admin` | 插件管理 API、原生页面或 iframe 页面（`@opencode-qq/plugin-ui`） |
 
 最小示例：
 
@@ -396,7 +399,33 @@ export default definePlugin({
 !sticker        # media-demo 示例插件发送图片
 ```
 
-示例位于 [`examples/`](examples)，SDK 源码和文档位于 [`packages/plugin-sdk`](packages/plugin-sdk)。开发流程：
+第三方 iframe 页面在 `package.json` 的 `opencodeQq.ui` 声明静态目录，并注册 `kind: "iframe"`：
+
+```json
+{
+  "opencodeQq": {
+    "ui": { "root": "ui", "entry": "index.html" }
+  }
+}
+```
+
+```ts
+context.admin.page({ id: "overview", title: "My Plugin", kind: "iframe" });
+```
+
+页面侧使用 `@opencode-qq/plugin-ui`：
+
+```ts
+import { connectPluginUi } from "@opencode-qq/plugin-ui";
+
+const bridge = await connectPluginUi();
+const summary = await bridge.api.get("/summary");
+await bridge.ui.toast("已保存", "success");
+```
+
+静态资源由核心通过短时签名 URL 托管；iframe 没有 cookie、`localStorage` 和直接网络访问，所有 API 请求由父页面注入 CSRF 并限制在当前插件前缀内。完整示例见 [`examples/ui-plugin`](examples/ui-plugin)。
+
+示例位于 [`examples/`](examples)，SDK 源码和文档位于 [`packages/plugin-sdk`](packages/plugin-sdk)，浏览器 bridge 位于 [`packages/plugin-ui`](packages/plugin-ui)。开发流程：
 
 ```bash
 pnpm install
@@ -428,7 +457,6 @@ pnpm test
 仍不在本阶段：
 
 - 主动消息、群聊旁听、多角色同场、TTS；
-- 世界书条目的 WebUI 编辑（当前提供只读列表和关键词调试，编辑仍可通过 `worldbook.json` / 卡导入完成）；
 - 向量/embedding 检索和外部记忆服务；
 - 时间段开场白、备选开场白轮换。
 
@@ -942,10 +970,11 @@ src/                    bridge 本体
   plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk
+packages/plugin-ui/     @opencode-qq/plugin-ui（iframe bridge 客户端）
 packages/memory/         @opencode-qq/memory（通用记忆基础设施）
-packages/roleplay/       @opencode-qq/roleplay（角色扮演，实验）
+packages/roleplay/       @opencode-qq/roleplay（角色扮演 + 独立 iframe UI，实验）
 packages/webui/         Vite + React + shadcn/ui 管理前端
-examples/               示例 QQ 插件（hello / notes / media-demo）
+examples/               示例 QQ 插件（hello / notes / media-demo / ui-demo）
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）
 deploy/systemd/         systemd 常驻服务
 tests/                  单元 / 契约 / 集成测试

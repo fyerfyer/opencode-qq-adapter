@@ -1,0 +1,32 @@
+{
+  "name": "@opencode-qq/ui-demo-plugin",
+  "version": "0.1.0",
+  "description": "Example QQ plugin with an iframe admin page",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "opencodeQq": {
+    "id": "ui-demo",
+    "name": "UI Demo",
+    "version": "0.1.0",
+    "apiVersion": 1,
+    "description": "Example iframe page using @opencode-qq/plugin-ui",
+    "capabilities": [
+      "commands",
+      "admin"
+    ],
+    "engines": {
+      "opencodeQq": ">=0.1.0 <0.3.0"
+    },
+    "ui": {
+      "root": "ui",
+      "entry": "index.html"
+    },
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opencode-qq/plugin-sdk": "workspace:*"
+  }
+}

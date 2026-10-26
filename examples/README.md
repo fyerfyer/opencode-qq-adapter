@@ -7,6 +7,7 @@ These packages are real plugins loaded by the bridge's plugin host. They also se
 | [`hello-plugin`](hello-plugin) | `hello` | commands, hooks, options, prompt context injection |
 | [`notes-plugin`](notes-plugin) | `notes` | per-chat persistent data via `ctx.storage` |
 | [`media-plugin`](media-plugin) | `media-demo` | `sendImage` / `sendFile` from the plugin data directory |
+| [`ui-plugin`](ui-plugin) | `ui-demo` | sandboxed iframe page + `@opencode-qq/plugin-ui` bridge |
 
 ## Enable in development
 
@@ -15,6 +16,8 @@ From the repository root:
 ```bash
 pnpm install
 pnpm build:sdk
+pnpm build:plugin-ui
+cp packages/plugin-ui/dist/index.js examples/ui-plugin/ui/sdk.js
 ```
 
 Add entries to `config/config.yaml`:
@@ -32,7 +35,11 @@ plugins:
       maxNotes: 50
   media-demo:
     path: ../examples/media-plugin
+  ui-demo:
+    path: ../examples/ui-plugin
 ```
+
+`ui-demo` registers an iframe page; open `/admin/plugins/ui-demo` after the bridge starts.
 
 The path is resolved relative to the config file. The key (`hello`, `notes`, `media-demo`) must match the plugin's `opencodeQq.id` in its `package.json`.
 

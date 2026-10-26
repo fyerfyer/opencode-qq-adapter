@@ -61,6 +61,29 @@ describe("ConversationManager", () => {
     expect(status.activeRun).toBeNull();
   });
 
+  it("applies admin agent/model preferences to the current session", async () => {
+    const { store, agent, manager } = await setup();
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+    await waitFor(() => manager.status("private:20000").activeRun === null, 3000, "run completion");
+
+    const result = await manager.setPreferences("private:20000", {
+      model: "fake/model-b",
+      agent: "build",
+    });
+    expect(result.ok).toBe(true);
+    expect(agent.switchedModels).toEqual([
+      { sessionId: store.conversations.get("private:20000")?.sessionId, model: "fake/model-b" },
+    ]);
+    expect(agent.switchedAgents).toEqual([
+      { sessionId: store.conversations.get("private:20000")?.sessionId, agent: "build" },
+    ]);
+    expect(store.conversations.get("private:20000")).toMatchObject({
+      model: "fake/model-b",
+      agent: "build",
+    });
+  });
+
   it("interrupts the active run and suppresses the final answer", async () => {
     const { store, agent, onebot, manager } = await setup();
     agent.autoComplete = false;

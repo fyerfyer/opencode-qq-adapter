@@ -15,6 +15,7 @@
  *   QQ_BOT_ID            bot QQ number
  *   QQ_PEER_ID           peer QQ number
  *   QQ_E2E_PROMPT        optional prompt (default: 请只回复：qq-opencode-ok)
+ *   QQ_E2E_PROJECT       project id used by !use (default: demo)
  *   QQ_E2E_STOP          set to 1 to also verify !stop
  *   QQ_E2E_APPROVAL      set to 1 to verify the QQ approval flow
  */
@@ -35,6 +36,7 @@ const peerToken = required("QQ_PEER_TOKEN");
 const botId = Number(required("QQ_BOT_ID"));
 const peerId = Number(required("QQ_PEER_ID"));
 const prompt = env.QQ_E2E_PROMPT ?? "请只回复：qq-opencode-ok";
+const project = env.QQ_E2E_PROJECT ?? "demo";
 
 async function main(): Promise<void> {
   const started = Math.floor(Date.now() / 1000) - 1;
@@ -43,7 +45,7 @@ async function main(): Promise<void> {
   const pong = await waitForReply(started, (raw) => raw.endsWith("pong"));
   console.log(`✓ !ping -> ${pong}`);
 
-  await send("!use demo");
+  await send(`!use ${project}`);
   await delay(500);
   await send("!new");
   await delay(500);

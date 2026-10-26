@@ -8,37 +8,47 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import type { MetaInfo, RoleplaySummary } from "@/api/types";
+import { useEffect, useState } from "react";
+import type { RoleplaySummary } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
-import { BindingsTab } from "@/components/roleplay/bindings-tab";
-import { MemoryTab } from "@/components/roleplay/memory-tab";
-import { type MemoryTarget, PersonasTab } from "@/components/roleplay/personas-tab";
-import { SettingsTab } from "@/components/roleplay/settings-tab";
-import { StickersTab } from "@/components/roleplay/stickers-tab";
+import { BindingsTab } from "@rp/components/bindings-tab";
+import { MemoryTab } from "@rp/components/memory-tab";
+import { type MemoryTarget, PersonasTab } from "@rp/components/personas-tab";
+import { SettingsTab } from "@rp/components/settings-tab";
+import { StickersTab } from "@rp/components/stickers-tab";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
+
+function readTab(): string {
+  const hash = location.hash.replace(/^#/, "");
+  return hash.length > 0 ? hash : "overview";
+}
 
 export function RoleplayPage() {
-  const [params, setParams] = useSearchParams();
-  const tab = params.get("tab") ?? "overview";
-  const meta = useApiQuery<MetaInfo>("/meta");
+  const [tab, setTabState] = useState(readTab);
   const summary = useApiQuery<RoleplaySummary>("/plugins/roleplay/summary", {
     intervalMs: 30_000,
   });
   const [memoryTarget, setMemoryTarget] = useState<MemoryTarget | null>(null);
   const [stickerPersona, setStickerPersona] = useState<string | null>(null);
 
-  const plugin = meta.data?.plugins.plugins.find((item) => item.id === "roleplay");
-  const enabled = plugin?.status === "loaded";
+  useEffect(() => {
+    const onHash = () => setTabState(readTab());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   const setTab = (value: string) => {
-    setParams(value === "overview" ? {} : { tab: value });
+    setTabState(value);
+    try {
+      location.hash = value === "overview" ? "" : value;
+    } catch {
+      // Opaque-origin sandboxes can reject some navigation APIs; state still works.
+    }
   };
 
   const openMemory = (target: MemoryTarget) => {
@@ -53,9 +63,7 @@ export function RoleplayPage() {
         description="角色卡、世界书、表情包、Markdown 记忆和 QQ 会话绑定。"
         actions={
           <div className="flex items-center gap-2">
-            <Badge variant={enabled ? "default" : "destructive"}>
-              {enabled ? "插件已加载" : plugin === undefined ? "未找到插件" : plugin.status}
-            </Badge>
+            <Badge variant="outline">iframe bridge</Badge>
             <Button variant="outline" size="sm" onClick={() => void summary.refresh(true)}>
               <RefreshCw /> 刷新
             </Button>
@@ -63,74 +71,49 @@ export function RoleplayPage() {
         }
       />
 
-      {!enabled && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Roleplay 插件未加载</CardTitle>
-            <CardDescription>
-              在 YAML 的 plugins.roleplay 中启用插件，并确认 personas_dir 与 projects.roleplay.path
-              一致。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            {plugin?.error !== null && plugin?.error !== undefined && (
-              <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-destructive">
-                {plugin.error}
-              </p>
-            )}
-            <p>保存配置后会自动热加载；如果失败，先看「插件」页的错误详情。</p>
-            <Button variant="outline" size="sm" asChild>
-              <a href="/admin/plugins">前往插件页</a>
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="personas">角色</TabsTrigger>
+          <TabsTrigger value="stickers">表情包</TabsTrigger>
+          <TabsTrigger value="memory">记忆</TabsTrigger>
+          <TabsTrigger value="bindings">绑定</TabsTrigger>
+          <TabsTrigger value="settings">设置</TabsTrigger>
+        </TabsList>
 
-      {enabled && (
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="overview">概览</TabsTrigger>
-            <TabsTrigger value="personas">角色</TabsTrigger>
-            <TabsTrigger value="stickers">表情包</TabsTrigger>
-            <TabsTrigger value="memory">记忆</TabsTrigger>
-            <TabsTrigger value="bindings">绑定</TabsTrigger>
-            <TabsTrigger value="settings">设置</TabsTrigger>
-          </TabsList>
+        <TabsContent value="overview" className="mt-4">
+          <OverviewTab
+            summary={summary}
+            onOpen={(target) => {
+              if (target === "personas") setTab("personas");
+              if (target === "stickers") setTab("stickers");
+              if (target === "memory") setTab("memory");
+            }}
+          />
+        </TabsContent>
 
-          <TabsContent value="overview" className="mt-4">
-            <OverviewTab
-              summary={summary}
-              onOpen={(target) => {
-                if (target === "personas") setTab("personas");
-                if (target === "stickers") setTab("stickers");
-                if (target === "memory") setTab("memory");
-              }}
-            />
-          </TabsContent>
-
-          <TabsContent value="personas" className="mt-4">
-            <PersonasTab
-              onOpenMemory={openMemory}
-              onOpenStickers={(personaId) => {
-                setStickerPersona(personaId);
-                setTab("stickers");
-              }}
-            />
-          </TabsContent>
-          <TabsContent value="stickers" className="mt-4">
-            <StickersTab initialPersonaId={stickerPersona} />
-          </TabsContent>
-          <TabsContent value="memory" className="mt-4">
-            <MemoryTab initial={memoryTarget} />
-          </TabsContent>
-          <TabsContent value="bindings" className="mt-4">
-            <BindingsTab />
-          </TabsContent>
-          <TabsContent value="settings" className="mt-4">
-            <SettingsTab />
-          </TabsContent>
-        </Tabs>
-      )}
+        <TabsContent value="personas" className="mt-4">
+          <PersonasTab
+            onOpenMemory={openMemory}
+            onOpenStickers={(personaId) => {
+              setStickerPersona(personaId);
+              setTab("stickers");
+            }}
+          />
+        </TabsContent>
+        <TabsContent value="stickers" className="mt-4">
+          <StickersTab initialPersonaId={stickerPersona} />
+        </TabsContent>
+        <TabsContent value="memory" className="mt-4">
+          <MemoryTab initial={memoryTarget} />
+        </TabsContent>
+        <TabsContent value="bindings" className="mt-4">
+          <BindingsTab />
+        </TabsContent>
+        <TabsContent value="settings" className="mt-4">
+          <SettingsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

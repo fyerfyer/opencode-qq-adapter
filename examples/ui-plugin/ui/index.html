@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UI Demo</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">OpenCode QQ Plugin</p>
+          <h1>UI Demo</h1>
+          <p class="muted">这个页面由插件包内的静态资源提供，通过 MessageChannel 调用插件自己的 admin API。</p>
+        </div>
+        <span id="connection" class="badge">连接中…</span>
+      </header>
+
+      <section class="panel">
+        <div class="row">
+          <input id="text" placeholder="写一条只在插件内存里的记录" />
+          <button id="add" type="button">添加</button>
+        </div>
+        <ul id="items"></ul>
+        <p id="empty" class="muted">还没有记录。</p>
+      </section>
+
+      <section class="actions">
+        <button id="toast" type="button" class="ghost">显示 toast</button>
+        <button id="confirm" type="button" class="ghost">核心 confirm</button>
+        <button id="plugins" type="button" class="ghost">返回插件页</button>
+      </section>
+
+      <p id="meta" class="meta"></p>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

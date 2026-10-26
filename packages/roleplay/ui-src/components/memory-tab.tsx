@@ -1,7 +1,7 @@
 import { History, LoaderCircle, MemoryStick, RefreshCw, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
-import { api, errorMessage } from "@/api/client";
+import { toast } from "@rp/toast";
+import { api, errorMessage } from "@rp/api/client";
 import type {
   RoleplayMemoryDoc,
   RoleplayMemoryHistoryEntry,
@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApiQuery } from "@/hooks/use-api-query";
+import { useApiQuery } from "@rp/hooks/use-api-query";
 import { formatDate } from "@/lib/utils";
 import type { MemoryTarget } from "./personas-tab";
 import { DiffPreview, MarkdownEditor, MarkdownPreview } from "./shared";

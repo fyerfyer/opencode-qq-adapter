@@ -16,6 +16,7 @@
   "include": [
     "../../src/plugins/sdk.ts",
     "../../src/plugins/storage.ts",
-    "../../src/plugins/testing.ts"
+    "../../src/plugins/testing.ts",
+    "../../src/plugins/ui-protocol.ts"
   ]
 }

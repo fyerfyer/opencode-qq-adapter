@@ -210,6 +210,16 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     return context.json(result);
   });
 
+  api.get("/models", async (context) => {
+    const projectId = context.req.query("projectId");
+    return context.json({ models: await service.conversationModels(projectId) });
+  });
+
+  api.get("/agents", async (context) => {
+    const projectId = context.req.query("projectId");
+    return context.json({ agents: await service.conversationAgents(projectId) });
+  });
+
   api.get("/conversations", async (context) =>
     context.json({ conversations: await service.conversations() }),
   );
@@ -220,6 +230,27 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   api.post("/conversations/:chatKey/stop", async (context) =>
     context.json(await service.stopConversation(decodeURIComponent(context.req.param("chatKey")))),
   );
+  api.patch("/conversations/:chatKey/preferences", async (context) => {
+    const chatKey = decodeURIComponent(context.req.param("chatKey"));
+    const body = await readJson(
+      context,
+      z
+        .object({
+          agent: z.string().min(1).max(200).optional(),
+          model: z.string().min(1).max(200).optional(),
+        })
+        .strict()
+        .refine((value) => value.agent !== undefined || value.model !== undefined, {
+          message: "agent 或 model 至少提供一个。",
+        }),
+    );
+    await service.setConversationPreferences(chatKey, {
+      ...(body.agent !== undefined ? { agent: body.agent } : {}),
+      ...(body.model !== undefined ? { model: body.model } : {}),
+    });
+    return context.json({ ok: true });
+  });
+
   api.post("/conversations/:chatKey/switch", async (context) => {
     const body = await readJson(context, z.object({ sessionId: z.string().min(1) }));
     await service.switchConversationSession(
@@ -333,6 +364,16 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     return context.json(
       await service.setPluginEnabled(id, body.enabled, body.expectedHash ?? configHash(context)),
     );
+  });
+
+  api.get("/plugins/:id/ui", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    return context.json(service.pluginUiPage(id));
+  });
+
+  api.get("/plugins/:id/ui/:pageId", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    return context.json(service.pluginUiPage(id, context.req.param("pageId")));
   });
 
   api.all("/plugins/:id/*", async (context) => {

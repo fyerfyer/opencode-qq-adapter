@@ -14,7 +14,7 @@ Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Worldbook select
 - Consolidates memory in the background through a hidden, tool-free `qq-rp-utility` agent using section-level JSON operations.
 - Splits replies into 1-4 QQ bubbles with typing delays.
 - Supports private chats, group `per_user`, group `shared`, and group `readonly`.
-- Ships an admin WebUI (`/admin/roleplay`) for cards, worldbook inspection, stickers, Markdown memory, bindings and plugin options.
+- Ships an iframe admin WebUI (`/admin/plugins/roleplay`) for cards, worldbook editing, stickers, Markdown memory, bindings and plugin options.
 
 ## Worldbook lite+
 
@@ -140,7 +140,6 @@ There is no hardcoded "memorable word" regex. The model sees the current Markdow
 - Vector/embedding retrieval and external memory services (mem0/Letta/Memobase).
 - Proactive messages, passive group observation, multi-character scenes, TTS.
 - Time-aware or alternate greetings.
-- A full worldbook entry editor in the WebUI (read-only list + keyword trace only).
 
 ## Install
 
@@ -258,14 +257,16 @@ Existing user-owned files are never overwritten. After the first install, reload
 
 ## WebUI
 
-The bridge mounts the plugin admin API at `/admin/api/plugins/roleplay/*` and a first-party page at `/admin/roleplay`:
+The bridge mounts the plugin admin API at `/admin/api/plugins/roleplay/*` and an iframe page at `/admin/plugins/roleplay` (legacy `/admin/roleplay` redirects):
 
 - Overview: persona/sticker/memory/binding counts, agent/Jev/path diagnostics.
-- Personas: drag-and-drop CCv2/V3 import, card preview, notes (`notes.md` → `AGENTS.md`), read-only worldbook with keyword trace, per-persona memory/bindings.
+- Personas: drag-and-drop CCv2/V3 import, card preview, notes (`notes.md` → `AGENTS.md`), worldbook add/edit/delete/enable and keyword trace, per-persona memory/bindings.
 - Stickers: per-persona/`_global` grid, multi-upload with magic-byte + SHA-256 dedupe, WebP thumbnails via `sharp`, emotion rename/delete, preview and a test send to a bound QQ chat.
 - Memory: scope tree, Markdown editor/preview, protected `手动记忆`, history diff/restore, raw FTS search, background refresh jobs and scope purge.
 - Bindings: enable/disable/delete chat → persona bindings.
 - Settings: structured YAML-backed options; saves validate, back up, atomically replace and hot-reload. Secrets only show configured/missing.
+
+The page is built into `packages/roleplay/ui` and talks to the core through `@opencode-qq/plugin-ui`: a sandboxed iframe with no cookies or `localStorage`, a MessageChannel bridge, and parent-brokered admin API calls. Images are fetched as blobs through the same bridge.
 
 All routes inherit the core admin session, CSRF, loopback restriction and audit. Plugin data stays under `storage.plugins_dir/roleplay`; the core never reads the plugin tables directly.
 

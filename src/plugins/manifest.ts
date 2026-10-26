@@ -11,8 +11,16 @@ import {
   type PluginDefinition,
   type PluginManifest,
 } from "./sdk.js";
+import { normalizeUiRelativePath } from "./ui-path.js";
 
 const capabilitySchema = z.enum(PLUGIN_CAPABILITIES);
+
+const uiManifestSchema = z
+  .object({
+    root: z.string().min(1).max(200).optional(),
+    entry: z.string().min(1).max(300).optional(),
+  })
+  .strict();
 
 export const manifestSchema = z
   .object({
@@ -35,8 +43,36 @@ export const manifestSchema = z
       .optional(),
     /** Package-relative ESM entry; ignored by the public runtime manifest. */
     entry: z.string().min(1).optional(),
+    ui: uiManifestSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.ui?.root !== undefined) {
+      try {
+        normalizeUiRelativePath(value.ui.root, "ui.root");
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ui", "root"],
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (value.ui?.entry !== undefined) {
+      try {
+        normalizeUiRelativePath(value.ui.entry, "ui.entry");
+        if (!value.ui.entry.toLowerCase().endsWith(".html")) {
+          throw new Error("ui.entry must point to an HTML file");
+        }
+      } catch (error) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["ui", "entry"],
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  });
 
 export interface PackageManifest extends PluginManifest {
   entry?: string;

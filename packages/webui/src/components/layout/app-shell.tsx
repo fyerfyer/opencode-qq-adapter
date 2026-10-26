@@ -9,6 +9,7 @@ import {
   LogOut,
   MessagesSquare,
   Moon,
+  Puzzle,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -99,10 +100,16 @@ export function AppShell() {
   const overview = useApiQuery<Overview>("/overview", { intervalMs: 30_000 });
   const meta = useApiQuery<MetaInfo>("/meta", { intervalMs: 60_000 });
   const status = overview.data?.status;
-  const roleplayLoaded =
-    meta.data?.plugins.plugins.some(
-      (plugin) => plugin.id === "roleplay" && plugin.status === "loaded",
-    ) ?? false;
+  const pluginPages =
+    meta.data?.plugins.plugins.flatMap((plugin) =>
+      plugin.status === "loaded" ? plugin.admin.pages.map((page) => ({ plugin, page })) : [],
+    ) ?? [];
+  const pluginPageTitle = pluginPages.find(
+    ({ plugin, page }) =>
+      page.path === location.pathname ||
+      location.pathname === `/plugins/${plugin.id}` ||
+      (page.kind === "iframe" && location.pathname.startsWith(`/plugins/${plugin.id}/${page.id}`)),
+  )?.page.title;
 
   return (
     <SidebarProvider>
@@ -152,23 +159,36 @@ export function AppShell() {
               </SidebarGroupContent>
             </SidebarGroup>
           ))}
-          {roleplayLoaded && (
+          {pluginPages.length > 0 && (
             <SidebarGroup>
               <SidebarGroupLabel>插件</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={location.pathname.startsWith("/roleplay")}
-                      tooltip="Roleplay"
-                    >
-                      <NavLink to="/roleplay">
-                        <Clapperboard />
-                        <span>Roleplay</span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+                  {pluginPages.map(({ plugin, page }) => {
+                    const to =
+                      page.path ??
+                      `/plugins/${encodeURIComponent(plugin.id)}/${encodeURIComponent(page.id)}`;
+                    const Icon = plugin.id === "roleplay" ? Clapperboard : Puzzle;
+                    return (
+                      <SidebarMenuItem key={`${plugin.id}:${page.id}`}>
+                        <SidebarMenuButton
+                          asChild
+                          isActive={
+                            location.pathname === to ||
+                            location.pathname.startsWith(`${to}/`) ||
+                            (page.kind === "iframe" &&
+                              location.pathname === `/plugins/${plugin.id}`)
+                          }
+                          tooltip={page.title}
+                        >
+                          <NavLink to={to}>
+                            <Icon />
+                            <span>{page.title}</span>
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -241,7 +261,9 @@ export function AppShell() {
           <SidebarTrigger className="md:hidden" />
           <SidebarTrigger className="hidden md:inline-flex" />
           <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
-          <span className="text-sm font-medium">{titles[location.pathname] ?? "Admin"}</span>
+          <span className="text-sm font-medium">
+            {pluginPageTitle ?? titles[location.pathname] ?? "Admin"}
+          </span>
           <div className="ml-auto flex items-center gap-1.5">
             <StatusPill label="OneBot" online={status?.onebot.connected ?? false} />
             <StatusPill label="OpenCode" online={status?.opencode.healthy ?? false} />

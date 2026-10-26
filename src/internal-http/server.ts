@@ -5,7 +5,7 @@ import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createAdminApi } from "../admin/routes.js";
-import type { AdminService } from "../admin/service.js";
+import { AdminError, type AdminService } from "../admin/service.js";
 import { adminBuildHint, adminDistRoot, readAdminIndex } from "../admin/ui.js";
 import type { AppConfig } from "../config/schema.js";
 import { PluginMediaError, type PluginMediaService } from "../media/plugin.js";
@@ -205,9 +205,74 @@ export class InternalHttpServer {
     );
   }
 
+  #mountPluginUiAssets(app: Hono, admin: AdminService): void {
+    const commonHeaders = (context: Context): void => {
+      context.header("Access-Control-Allow-Origin", "*");
+      context.header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      context.header("Cross-Origin-Resource-Policy", "cross-origin");
+      context.header("Referrer-Policy", "no-referrer");
+      context.header("X-Content-Type-Options", "nosniff");
+      context.header("X-Robots-Tag", "noindex, nofollow");
+      context.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    };
+
+    app.options("/admin/plugin-assets/*", (context) => {
+      commonHeaders(context);
+      context.header("Access-Control-Max-Age", "600");
+      return context.body(null, 204);
+    });
+
+    app.on(["GET", "HEAD"], "/admin/plugin-assets/*", async (context) => {
+      commonHeaders(context);
+      const pathname = new URL(context.req.url).pathname;
+      const match = /^\/admin\/plugin-assets\/([^/]+)\/([^/]+)\/(.+)$/.exec(pathname);
+      if (match === null) {
+        return context.text("插件页面资源不存在。", 404);
+      }
+      let token: string;
+      let pluginId: string;
+      let relativePath: string;
+      try {
+        token = decodeURIComponent(match[1] as string);
+        pluginId = decodeURIComponent(match[2] as string);
+        relativePath = decodeURIComponent(match[3] as string);
+      } catch {
+        return context.text("插件页面资源路径不合法。", 400);
+      }
+      try {
+        const asset = await admin.readPluginUiAsset(token, pluginId, relativePath);
+        const html = asset.contentType.startsWith("text/html");
+        context.header("Content-Type", asset.contentType);
+        context.header("Cache-Control", html ? "no-store" : asset.cacheControl);
+        if (html) {
+          context.header("X-Frame-Options", "SAMEORIGIN");
+          context.header("Content-Security-Policy", pluginUiCsp(this.#config, context));
+        }
+        if (context.req.method === "HEAD") {
+          return context.body(null, 200);
+        }
+        const body = asset.body.buffer.slice(
+          asset.body.byteOffset,
+          asset.body.byteOffset + asset.body.byteLength,
+        ) as ArrayBuffer;
+        return context.body(body, 200);
+      } catch (error) {
+        if (error instanceof AdminError) {
+          return context.text(error.message, error.status as 400);
+        }
+        throw error;
+      }
+    });
+  }
+
   #mountAdmin(app: Hono, admin: AdminService): void {
     const distRoot = adminDistRoot();
     app.use("/admin/*", async (context, next) => {
+      // Plugin UI assets have their own token, CSP, CORS and framing policy.
+      if (context.req.path.startsWith("/admin/plugin-assets/")) {
+        await next();
+        return;
+      }
       context.header("X-Content-Type-Options", "nosniff");
       context.header("X-Frame-Options", "DENY");
       context.header("Referrer-Policy", "no-referrer");
@@ -229,6 +294,8 @@ export class InternalHttpServer {
       }),
     );
 
+    this.#mountPluginUiAssets(app, admin);
+
     app.use("/admin/assets/*", async (context, next) => {
       context.header("Cache-Control", "public, max-age=31536000, immutable");
       await next();
@@ -237,6 +304,7 @@ export class InternalHttpServer {
     app.get("/admin/assets/*", (context) => context.json({ error: "asset_not_found" }, 404));
 
     const serveIndex = async (context: Context): Promise<Response> => {
+      if (context.req.path.startsWith("/admin/plugin-assets/")) return context.notFound();
       if (!this.#config.admin.enabled) return context.notFound();
       const html = await readAdminIndex();
       if (html === null) {
@@ -265,4 +333,38 @@ export class InternalHttpServer {
     });
     this.#logger.info("Internal HTTP server stopped");
   }
+}
+
+function pluginUiCsp(config: AppConfig, context: Context): string {
+  const forwardedProto = context.req.header("x-forwarded-proto");
+  const protocol =
+    config.admin.trust_proxy && forwardedProto !== undefined
+      ? forwardedProto.split(",")[0]?.trim()
+      : undefined;
+  const host =
+    context.req.header("x-forwarded-host") ??
+    context.req.header("host") ??
+    new URL(context.req.url).host;
+  let origin: string | null = null;
+  try {
+    origin = new URL(`${protocol ?? new URL(context.req.url).protocol.replace(":", "")}://${host}`)
+      .origin;
+  } catch {
+    origin = null;
+  }
+  const source = origin === null ? "'self'" : `'self' ${origin}`;
+  return [
+    "default-src 'none'",
+    `script-src ${source}`,
+    `style-src ${source} 'unsafe-inline'`,
+    `img-src ${source} data: blob:`,
+    `font-src ${source} data:`,
+    `media-src ${source} blob:`,
+    "connect-src 'none'",
+    "worker-src 'none'",
+    "manifest-src 'none'",
+    "form-action 'none'",
+    "base-uri 'none'",
+    `frame-ancestors ${origin === null ? "'self'" : `'self' ${origin}`}`,
+  ].join("; ");
 }

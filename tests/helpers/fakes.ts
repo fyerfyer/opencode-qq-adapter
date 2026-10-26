@@ -52,6 +52,7 @@ export class FakeAgent implements AgentPort {
       name: "Fake Model A",
       enabled: true,
       variants: [],
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
     },
     {
       id: "fake/model-b",
@@ -60,6 +61,7 @@ export class FakeAgent implements AgentPort {
       name: "Fake Model B",
       enabled: true,
       variants: ["fast"],
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
     },
   ];
   readonly agents: AgentSummary[] = [

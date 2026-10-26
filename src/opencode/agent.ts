@@ -193,6 +193,13 @@ export class OpenCodeAgent implements AgentPort {
       name: model.name,
       enabled: model.enabled,
       variants: model.variants.map((variant) => variant.id),
+      capabilities: model.capabilities
+        ? {
+            tools: model.capabilities.tools,
+            input: [...model.capabilities.input],
+            output: [...model.capabilities.output],
+          }
+        : null,
     }));
   }
 
