@@ -112,27 +112,23 @@ describe("QQ management commands", () => {
     expect(app.conversations.getConversation("private:20000")?.sessionId).toBe(firstSession);
   });
 
-  it("restricts model switching in a shared group to owner/admin", async () => {
+  it("restricts config reload to owner/admin", async () => {
     const { app, onebot } = await startApp();
-    app.config.users["30000"] = { role: "member", projects: ["demo"] };
-    app.config.groups["90000"] = {
-      enabled: true,
-      mode: "shared",
-      require_mention: false,
-      allowed_users: ["30000"],
+    app.config.users["30000"] = {
+      role: "member",
       projects: ["demo"],
+      write_projects: [],
+      limits: {},
     };
     onebot.emit({
-      ...messageEvent("!model fake/model-a"),
-      message_type: "group",
-      group_id: 90000,
+      ...messageEvent("!reload"),
       user_id: 30000,
       sender: { user_id: 30000, nickname: "Member" },
     });
     await waitFor(
-      () => onebot.texts().some((text) => text.includes("shared 群只有 owner/admin")),
+      () => onebot.texts().some((text) => text.includes("只有 owner/admin 可以热加载配置")),
       3000,
-      "shared restriction",
+      "reload restriction",
     );
   });
 });

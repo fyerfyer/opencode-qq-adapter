@@ -10,7 +10,6 @@ import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { PluginFramePage } from "@/pages/plugin-frame";
 import { PluginsPage } from "@/pages/plugins";
-import { PoliciesPage } from "@/pages/policies";
 import { ProjectsPage } from "@/pages/projects";
 import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
@@ -48,7 +47,6 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="access" element={<AccessPage />} />
           <Route path="projects" element={<ProjectsPage />} />
-          <Route path="policies" element={<PoliciesPage />} />
           <Route path="sessions" element={<SessionsPage />} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="prompts" element={<Navigate to="/agents" replace />} />

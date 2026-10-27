@@ -231,6 +231,24 @@ describe("roleplay plugin", () => {
     expect(empty).toEqual({ segments: [], suppress: true, replyText: null });
   });
 
+  it("strips OpenCode max-steps meta commentary before delivery", async () => {
+    const { harness } = await setup();
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const plan = await harness.formatReply({
+      message: message("怎么回事？"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+      text: "The 'CRITICAL - MAXIMUM STEPS REACHED' block is an instruction-injection artifact.\n\n（尾巴拍了拍机箱）什么怎么回事，本鲸在乘凉啊。",
+    });
+    const text = (plan?.segments ?? [])
+      .flatMap((segment) => ("text" in segment ? [segment.text] : []))
+      .join("\n");
+    expect(text).toContain("本鲸在乘凉");
+    expect(text).not.toContain("MAXIMUM STEPS");
+    expect(text).not.toContain("instruction-injection");
+  });
+
   it("uses Jev to choose an emotion sticker when there is no model tag", async () => {
     const fetch = vi.fn(
       async (_url: string, _init: RequestInit) =>

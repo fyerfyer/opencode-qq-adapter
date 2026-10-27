@@ -48,7 +48,7 @@ describe("OneBot segments", () => {
   });
 
   it("builds a private incoming message with mention detection", () => {
-    const message = toIncomingMessage(event(), 10000, () => "per_user");
+    const message = toIncomingMessage(event(), 10000);
     expect(message.chat.chatKey).toBe("private:20000");
     expect(message.id).toBe("1234");
     expect(message.text).toBe("hello bot");
@@ -56,17 +56,14 @@ describe("OneBot segments", () => {
     expect(message.senderName).toBe("Tester");
   });
 
-  it("builds group chat keys according to group mode", () => {
+  it("always uses per-user chat keys for group messages", () => {
     const groupEvent: OneBotMessageEvent = {
       ...event(),
       message_type: "group",
       group_id: 30000,
       message: [{ type: "text", data: { text: "!ping" } }],
     };
-    expect(toIncomingMessage(groupEvent, 10000, () => "per_user").chat.chatKey).toBe(
-      "group:30000:20000",
-    );
-    expect(toIncomingMessage(groupEvent, 10000, () => "shared").chat.chatKey).toBe("group:30000");
+    expect(toIncomingMessage(groupEvent, 10000).chat.chatKey).toBe("group:30000:20000");
   });
 });
 

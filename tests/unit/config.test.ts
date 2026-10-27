@@ -22,7 +22,7 @@ describe("config loader", () => {
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: test-token
@@ -49,7 +49,7 @@ default_project: demo
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -68,7 +68,7 @@ projects:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: \${MISSING_ONEBOT_TOKEN}
@@ -93,7 +93,7 @@ projects: {}
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -108,14 +108,12 @@ onebot:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
 users:
-groups:
 projects:
-policies:
 workspaces:
 logging:
 features:
@@ -131,7 +129,7 @@ features:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -151,7 +149,7 @@ projects:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -170,7 +168,7 @@ projects:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -193,7 +191,7 @@ projects:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -212,7 +210,7 @@ projects:
   it("requires a valid Base32 secret when owner 2FA is enabled", async () => {
     const root = await workspace();
     const base = `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -264,7 +262,7 @@ security:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -289,7 +287,7 @@ storage:
   it("rejects malformed plugin entries", async () => {
     const root = await workspace();
     const base = `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -331,7 +329,7 @@ projects:
     const path = await writeConfig(
       root,
       `
-version: 1
+version: 2
 onebot:
   url: ws://127.0.0.1:3001
   access_token: token
@@ -344,6 +342,111 @@ plugins:
 `,
     );
     await expect(loadConfig(path, { env: {}, checkPaths: true })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+
+  it("rejects the old config version and removed policy/group sections", async () => {
+    const root = await workspace();
+    const oldVersion = await writeConfig(
+      root,
+      `
+version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    await expect(loadConfig(oldVersion, { env: {} })).rejects.toMatchObject({ code: "schema" });
+
+    const groups = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+groups:
+  "20001":
+    enabled: true
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    await expect(loadConfig(groups, { env: {} })).rejects.toMatchObject({ code: "schema" });
+  });
+
+  it("validates write_projects against the user's accessible projects", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+users:
+  "10001":
+    role: member
+    projects: [demo]
+    write_projects: [other]
+projects:
+  demo:
+    path: ./project
+  other:
+    path: ./project
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: false })).rejects.toMatchObject({
+      code: "semantic",
+    });
+  });
+
+  it("accepts a wildcard project grant with a specific write project", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+users:
+  "10001":
+    role: owner
+    projects: ["*"]
+    write_projects: [demo]
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: false });
+    expect(loaded.config.users["10001"]?.write_projects).toEqual(["demo"]);
+  });
+
+  it("rejects a hidden default project", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+default_project: roleplay
+projects:
+  roleplay:
+    path: ./project
+    workspace: none
+    hidden: true
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: false })).rejects.toMatchObject({
       code: "semantic",
     });
   });

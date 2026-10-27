@@ -100,7 +100,7 @@ bindings.set({
 bindings.close();
 
 const configSource = stringify({
-  version: 1,
+  version: 2,
   server: { host: "127.0.0.1", port: 0 },
   onebot: { url: "ws://127.0.0.1:1", access_token: "fixture" },
   opencode: {
@@ -114,35 +114,21 @@ const configSource = stringify({
     admin_2fa: {},
   },
   default_project: "demo",
-  users: { "20000": { role: "owner", projects: ["*"] } },
-  groups: {},
+  users: {
+    "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
+  },
   projects: {
     demo: {
       path: projectPath,
-      policy: "standard",
       workspace: "shared",
-      allowed_users: ["20000"],
     },
     roleplay: {
       path: personasDir,
       description: "Roleplay personas",
-      policy: "roleplay",
       workspace: "none",
       agent: "qq-rp",
-      allowed_users: ["20000"],
-    },
-  },
-  policies: {
-    standard: { read: "allow", edit: "ask", shell: "ask" },
-    roleplay: {
-      read: "allow",
-      glob: "deny",
-      grep: "deny",
-      edit: "deny",
-      shell: "deny",
-      webfetch: "deny",
-      websearch: "deny",
-      external_directory: "deny",
+      hidden: true,
+      managed_by: "roleplay",
     },
   },
   plugins: {

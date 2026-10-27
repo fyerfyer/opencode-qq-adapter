@@ -35,6 +35,7 @@ export interface PromptSummary {
   name: string;
   title: string | null;
   description: string | null;
+  model: string | null;
   size: number;
   updatedAt: number;
   backups: number;
@@ -135,6 +136,18 @@ export class PromptStore {
     return this.read(safeName);
   }
 
+  /** Set or remove the `model:` frontmatter field without touching the body. */
+  async setModel(
+    name: string,
+    model: string | null,
+    options: { override?: boolean } = {},
+  ): Promise<PromptFile> {
+    const existing = await this.read(name);
+    const next = applyAgentModel(existing.content, model);
+    if (next === existing.content) return existing;
+    return this.write(name, next, options);
+  }
+
   async backups(name: string): Promise<Array<{ name: string; size: number; updatedAt: number }>> {
     const safeName = this.#validateName(name);
     const files = await this.#backupNames(safeName);
@@ -172,6 +185,7 @@ export class PromptStore {
       name: file.name,
       title: file.title,
       description: file.description,
+      model: file.model,
       size: file.size,
       updatedAt: file.updatedAt,
       backups: file.backups,
@@ -227,14 +241,54 @@ export function promptOwnership(name: string, content: string): PromptOwnership 
   return { owner: "user", managedBy: null, editable: true };
 }
 
-function parseFrontmatter(content: string): { title: string | null; description: string | null } {
-  if (!content.startsWith("---")) return { title: null, description: null };
+function parseFrontmatter(content: string): {
+  title: string | null;
+  description: string | null;
+  model: string | null;
+} {
+  if (!content.startsWith("---")) return { title: null, description: null, model: null };
   const end = content.indexOf("\n---", 3);
-  if (end < 0) return { title: null, description: null };
+  if (end < 0) return { title: null, description: null, model: null };
   const block = content.slice(3, end);
   const title = /^title:\s*(.+)$/m.exec(block)?.[1]?.trim() ?? null;
   const description = /^description:\s*(.+)$/m.exec(block)?.[1]?.trim() ?? null;
-  return { title: stripQuotes(title), description: stripQuotes(description) };
+  const model = /^model:\s*(.+)$/m.exec(block)?.[1]?.trim() ?? null;
+  return {
+    title: stripQuotes(title),
+    description: stripQuotes(description),
+    model: stripQuotes(model),
+  };
+}
+
+/**
+ * Set or clear `model:` in the YAML frontmatter. The implementation is
+ * line-based on purpose: it preserves comments (`# managed by ...`) and the
+ * rest of the Markdown body instead of re-serializing YAML.
+ */
+export function applyAgentModel(content: string, model: string | null): string {
+  const normalized = model?.trim().length ? model.trim() : null;
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(content);
+  if (frontmatter === null) {
+    if (normalized === null) return content;
+    return `---\nmodel: ${normalized}\n---\n\n${content}`;
+  }
+
+  const block = frontmatter[1] ?? "";
+  const rest = content.slice(frontmatter[0].length);
+  const lines = block.split(/\r?\n/).filter((line) => !/^\s*model\s*:/.test(line));
+  if (normalized !== null) {
+    const descriptionIndex = lines.findIndex((line) => /^\s*description\s*:/.test(line));
+    const titleIndex = lines.findIndex((line) => /^\s*title\s*:/.test(line));
+    const insertAt =
+      descriptionIndex >= 0
+        ? descriptionIndex + 1
+        : titleIndex >= 0
+          ? titleIndex + 1
+          : lines.length;
+    lines.splice(insertAt, 0, `model: ${normalized}`);
+  }
+  const nextBlock = lines.join("\n");
+  return `---${nextBlock.length > 0 ? `\n${nextBlock}\n` : "\n"}---${frontmatter[2] ?? "\n"}${rest}`;
 }
 
 function stripQuotes(value: string | null): string | null {

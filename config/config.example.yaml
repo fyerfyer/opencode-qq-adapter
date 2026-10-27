@@ -1,4 +1,4 @@
-version: 1
+version: 2
 
 server:
   host: 127.0.0.1
@@ -43,10 +43,22 @@ opencode:
   health_cache_ms: 5000
 
 security:
-  default_effect: deny
   allowed_roots:
     - ..
   require_mention_in_group: true
+  # Extra shell rules for writable projects. Shell commands ask for approval by
+  # default; these rules can allow safe read-only commands or deny dangerous ones.
+  shell_rules:
+    - pattern: "git status *"
+      effect: allow
+    - pattern: "git diff *"
+      effect: allow
+    - pattern: "git log *"
+      effect: allow
+    - pattern: "sudo *"
+      effect: deny
+    - pattern: "rm -rf *"
+      effect: deny
   max_prompt_chars: 8000
   max_images_per_message: 4
   max_image_bytes: 10485760
@@ -78,41 +90,44 @@ users:
   "10001":
     role: owner
     projects: ["*"]
+    # Owner may modify every visible project. For a read-only owner, remove "*".
+    write_projects: ["*"]
   # Optional per-user limits can only tighten the global security limits.
   # "10002":
   #   role: member
   #   projects: ["demo"]
+  #   # Omit or use [] to allow Q&A only; writes are denied directly.
+  #   write_projects: ["demo"]
   #   limits:
   #     prompts_per_minute: 3
   #     runs_per_hour: 10
   #     daily_cost_usd: 1.5
   #     daily_tokens: 500000
 
-groups:
-  # "20001":
-  #   enabled: true
-  #   mode: per_user
-  #   require_mention: true
-  #   allowed_users: ["10001"]
-  #   projects: ["demo"]
+# Group chats need no configuration. Every user listed above may use the bot in
+# private chats and any group; each member gets an independent conversation.
 
 projects:
   demo:
     # Relative paths are resolved against this config file's directory.
     path: ..
     description: OpenCode QQ Adapter demo project
-    policy: standard
     workspace: shared
     agent: null
     model: null
-    allowed_users: ["10001"]
     setup: []
   # blog:
   #   path: /home/me/code/blog
   #   description: Personal blog
-  #   policy: standard
   #   workspace: shared
-  #   allowed_users: ["10001"]
+  # Internal projects (created by plugins) set hidden: true and are excluded
+  # from !projects, default-project pickers and the member project list.
+  # roleplay:
+  #   path: ~/.local/share/opencode-qq/plugins/roleplay/personas
+  #   workspace: none
+  #   agent: qq-rp
+  #   hidden: true
+  #   managed_by: roleplay
 
 # QQ plugin SDK (experimental). Plugins are trusted code loaded only from this
 # file, never from QQ or the WebUI. Paths are relative to this config file.
@@ -137,47 +152,6 @@ plugins: {}
 #     fallback_project: demo
 #     sticker_judge: tag
 #     memory_enabled: true
-
-policies:
-  readonly:
-    read: allow
-    glob: allow
-    grep: allow
-    edit: deny
-    shell: deny
-    webfetch: ask
-    websearch: ask
-    external_directory: deny
-  standard:
-    read: allow
-    glob: allow
-    grep: allow
-    edit: ask
-    shell: ask
-    webfetch: ask
-    websearch: ask
-    external_directory: deny
-    shell_rules:
-      - pattern: "git status *"
-        effect: allow
-      - pattern: "git diff *"
-        effect: allow
-      - pattern: "git push *"
-        effect: deny
-      - pattern: "rm -rf *"
-        effect: deny
-  trusted:
-    read: allow
-    glob: allow
-    grep: allow
-    edit: allow
-    shell: allow
-    webfetch: allow
-    websearch: allow
-    external_directory: deny
-    shell_rules:
-      - pattern: "sudo *"
-        effect: deny
 
 workspaces:
   default_mode: shared

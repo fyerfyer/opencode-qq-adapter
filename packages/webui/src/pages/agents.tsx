@@ -1,5 +1,7 @@
 import {
   Bot,
+  Check,
+  ChevronDown,
   FileClock,
   FileText,
   History,
@@ -7,13 +9,20 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
-import type { PromptBackup, PromptFile, PromptOwner, PromptSummary } from "@/api/types";
+import type {
+  AgentModelRecord,
+  PromptBackup,
+  PromptFile,
+  PromptOwner,
+  PromptSummary,
+} from "@/api/types";
 import { EmptyState, ErrorState, LoadingState } from "@/components/common/data-state";
 import { PageHeader } from "@/components/common/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -30,6 +39,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -97,6 +107,7 @@ const OWNER_GROUPS: Array<{
 
 export function AgentsPage() {
   const list = useApiQuery<{ root: string; prompts: PromptSummary[] }>("/prompts");
+  const models = useApiQuery<{ models: AgentModelRecord[] }>("/models");
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedName = searchParams.get("name");
   const [selectedName, setSelectedName] = useState<string | null>(requestedName);
@@ -153,6 +164,7 @@ export function AgentsPage() {
   const selected =
     prompt.data ?? list.data?.prompts.find((item) => item.name === selectedName) ?? null;
   const locked = selected !== null && !selected.editable && !override;
+  const modelList = (models.data?.models ?? []).filter((model) => model.enabled);
 
   const save = async () => {
     if (selectedName === null || locked) return;
@@ -166,10 +178,49 @@ export function AgentsPage() {
       toast.success("Agent 已保存，旧版本已备份");
       await list.refresh(true);
       await prompt.refresh(true);
+      await reloadOpenCode();
     } catch (caught) {
       toast.error(errorMessage(caught));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changeModel = async (value: string) => {
+    if (selectedName === null || locked || saving) return;
+    setSaving(true);
+    try {
+      const result = await api.put<{
+        prompt: PromptFile;
+        reload: { ok: boolean; warnings: string[]; error?: string };
+      }>(`/prompts/${encodeURIComponent(selectedName)}/model`, {
+        model: value === "__inherit" ? null : value,
+        override: selected !== null && !selected.editable,
+      });
+      setDraft(result.prompt.content);
+      setOriginal(result.prompt.content);
+      if (result.reload.ok) {
+        toast.success("模型已保存，OpenCode 配置已热重载");
+      } else {
+        toast.warning(`模型已保存，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
+      }
+      await list.refresh(true);
+      await prompt.refresh(true);
+    } catch (caught) {
+      toast.error(errorMessage(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reloadOpenCode = async () => {
+    try {
+      const result = await api.post<{ ok: boolean; error?: string }>("/opencode/reload");
+      if (!result.ok) {
+        toast.warning(`Agent 已保存，但 OpenCode 重载失败：${result.error ?? "未知错误"}`);
+      }
+    } catch (caught) {
+      toast.warning(`Agent 已保存，但 OpenCode 重载失败：${errorMessage(caught)}`);
     }
   };
 
@@ -212,6 +263,46 @@ export function AgentsPage() {
           }
         />
       )}
+
+      <Card className="sticky top-0 z-20 border bg-background/95 shadow-sm backdrop-blur">
+        <CardContent className="flex flex-wrap items-center gap-3 p-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Bot className="size-4 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">默认模型</p>
+              <p className="text-xs text-muted-foreground">
+                写入当前 Agent 的 frontmatter；选择后立即保存并热重载 OpenCode。
+              </p>
+            </div>
+          </div>
+          <ModelPicker
+            value={selected?.model ?? null}
+            models={modelList}
+            fallbackModel={
+              selected?.model !== null &&
+              selected?.model !== undefined &&
+              !modelList.some((model) => model.id === selected.model)
+                ? selected.model
+                : null
+            }
+            disabled={
+              selectedName === null ||
+              locked ||
+              saving ||
+              dirty ||
+              models.loading ||
+              models.error !== null
+            }
+            onChange={(value) => void changeModel(value)}
+          />
+          {models.error !== null && (
+            <span className="text-xs text-destructive">模型列表不可用：{models.error}</span>
+          )}
+          {models.data !== null && modelList.length === 0 && models.error === null && (
+            <span className="text-xs text-muted-foreground">OpenCode 没有返回可用模型。</span>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">
@@ -296,6 +387,7 @@ export function AgentsPage() {
                   {selected.managedBy !== null && (
                     <span className="font-mono text-[10px]">{selected.managedBy}</span>
                   )}
+                  <Badge variant="secondary">{selected.model ?? "默认模型"}</Badge>
                 </span>
               )}
             </CardDescription>
@@ -382,6 +474,131 @@ export function AgentsPage() {
         />
       )}
     </div>
+  );
+}
+
+function ModelPicker({
+  value,
+  models,
+  fallbackModel,
+  disabled,
+  onChange,
+}: {
+  value: string | null;
+  models: AgentModelRecord[];
+  fallbackModel: string | null;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const options = useMemo(() => {
+    const list = models.map((model) => ({ id: model.id, name: model.name }));
+    if (fallbackModel !== null && !list.some((model) => model.id === fallbackModel)) {
+      list.unshift({ id: fallbackModel, name: "当前配置" });
+    }
+    return list;
+  }, [models, fallbackModel]);
+  const query = search.trim().toLowerCase();
+  const filtered =
+    query.length === 0
+      ? options
+      : options.filter(
+          (model) =>
+            model.id.toLowerCase().includes(query) || model.name.toLowerCase().includes(query),
+        );
+  const label = value ?? "继承 OpenCode 默认";
+
+  const select = (next: string | null) => {
+    setOpen(false);
+    setSearch("");
+    onChange(next ?? "__inherit");
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setSearch("");
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-label="Agent 默认模型"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full max-w-md justify-between font-normal"
+        >
+          <span className="truncate">{label}</span>
+          <ChevronDown className="size-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[min(32rem,calc(100vw-2rem))] p-0"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <div className="sticky top-0 z-10 border-b bg-popover p-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              autoFocus
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索模型 ID 或名称…"
+              aria-label="搜索模型"
+              className="h-8 pl-8 text-sm"
+            />
+          </div>
+        </div>
+        <div
+          className="max-h-72 overflow-y-auto overscroll-contain p-1"
+          role="listbox"
+          aria-label="模型列表"
+        >
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === null}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+            onClick={() => select(null)}
+          >
+            <Check className={`size-4 shrink-0 ${value === null ? "opacity-100" : "opacity-0"}`} />
+            继承 OpenCode 默认
+          </button>
+          {filtered.map((model) => (
+            <button
+              key={model.id}
+              type="button"
+              role="option"
+              aria-selected={value === model.id}
+              className="flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => select(model.id)}
+            >
+              <Check
+                className={`mt-0.5 size-4 shrink-0 ${
+                  value === model.id ? "opacity-100" : "opacity-0"
+                }`}
+              />
+              <span className="min-w-0">
+                <span className="block truncate font-mono text-xs">{model.id}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {model.name}
+                </span>
+              </span>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <p className="px-2 py-6 text-center text-xs text-muted-foreground">没有匹配的模型。</p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

@@ -90,6 +90,19 @@ test("session page switches the current agent and model", async ({ page }) => {
   await expect(row.getByText("build · fake/model-b")).toBeVisible();
 });
 
+test("agent page changes the model and hot-reloads OpenCode", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/agents?name=qq-code.md");
+  const select = page.getByRole("combobox", { name: "Agent 默认模型" });
+  await expect(select).toBeVisible();
+  await select.click();
+  await page.getByRole("textbox", { name: "搜索模型" }).fill("model-b");
+  await expect(page.getByRole("option", { name: /fake\/model-a/ })).toHaveCount(0);
+  await page.getByRole("option", { name: /fake\/model-b/ }).click();
+  await expect(page.getByText("模型已保存，OpenCode 配置已热重载").first()).toBeVisible();
+  await expect(select).toContainText("fake/model-b");
+});
+
 test("plugin options dialog loads the YAML options as JSON", async ({ page }) => {
   await login(page);
   await page.goto("/admin/plugins");
@@ -162,6 +175,18 @@ test("roleplay iframe loads, edits worldbook and renders bridge-backed images", 
     .toBeGreaterThan(0);
 });
 
+test("roleplay settings save the Jev key and report it as configured", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/plugins/roleplay");
+  const frame = page.frameLocator('iframe[title^="Roleplay"]');
+  await frame.getByRole("tab", { name: "设置", exact: true }).click();
+  await frame.getByRole("tab", { name: "表情", exact: true }).click();
+  await frame.getByPlaceholder("留空保持现有值").fill("test-jev-api-key");
+  await frame.getByRole("button", { name: "保存配置" }).click();
+  await expect(page.getByText("Roleplay 配置与 Jev 密钥已保存并热加载").first()).toBeVisible();
+  await expect(frame.getByText(/密钥已配置/)).toBeVisible();
+});
+
 test("settings connections shows NapCat status and Jev secret management", async ({ page }) => {
   await login(page);
   await page.goto("/admin/settings");
@@ -171,7 +196,10 @@ test("settings connections shows NapCat status and Jev secret management", async
   await expect(page.getByText("已连接", { exact: true })).toBeVisible();
   await expect(page.getByLabel("NapCat WebSocket URL")).toHaveValue("ws://127.0.0.1:1");
   await expect(page.getByText("Jev / Roleplay", { exact: true })).toBeVisible();
-  await expect(page.getByText("JEV_API_KEY", { exact: true })).toBeVisible();
+  await expect(page.getByText("TYPESAFE_API_KEY", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Jev Base URL")).toBeVisible();
+  await expect(page.getByLabel("Jev Endpoint")).toBeVisible();
+  await expect(page.getByLabel("Jev Model")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存连接配置" })).toBeVisible();
 
   await page.getByLabel("NapCat WebSocket URL").fill("ws://127.0.0.1:3002");
@@ -180,4 +208,9 @@ test("settings connections shows NapCat status and Jev secret management", async
   await expect(page.getByText(/需要重启 bridge：onebot/)).toBeVisible();
   await expect(page.getByText(/NapCat URL\/Token 已保存/)).toBeVisible();
   await expect(page.getByLabel("NapCat Access Token")).toHaveValue("");
+
+  await page.getByLabel("Jev Base URL").fill("https://jev.example/v1");
+  await page.getByRole("button", { name: "保存并重载 Roleplay" }).click();
+  await expect(page.getByText(/Jev 配置已保存/)).toBeVisible();
+  await expect(page.getByLabel("Jev Base URL")).toHaveValue("https://jev.example/v1");
 });

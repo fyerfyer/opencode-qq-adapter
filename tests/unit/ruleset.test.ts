@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PermissionRule } from "../../src/domain/permission.js";
-import { compilePermissionRuleset, effectivePolicyEffects } from "../../src/policy/ruleset.js";
+import { compilePermissionRuleset, permissionEffects } from "../../src/policy/ruleset.js";
 
 function lastMatch(
   rules: PermissionRule[],
@@ -22,64 +22,67 @@ function matches(pattern: string, value: string): boolean {
 }
 
 describe("compilePermissionRuleset", () => {
-  it("starts from a safe baseline with read allowed and external directories denied", () => {
-    const rules = compilePermissionRuleset({});
+  it("allows read-only discovery without granting writes or commands", () => {
+    const rules = compilePermissionRuleset({ writable: false });
 
-    expect(rules[0]).toEqual({ action: "*", resource: "*", effect: "ask" });
     expect(lastMatch(rules, "read", "src/app.ts")?.effect).toBe("allow");
-    expect(lastMatch(rules, "external_directory", "/etc/passwd")?.effect).toBe("deny");
+    expect(lastMatch(rules, "glob", "src/**")?.effect).toBe("allow");
+    expect(lastMatch(rules, "grep", "TODO")?.effect).toBe("allow");
+    expect(lastMatch(rules, "edit", "src/app.ts")?.effect).toBe("deny");
+    expect(lastMatch(rules, "shell", "npm test")?.effect).toBe("deny");
+    expect(lastMatch(rules, "execute", "*")?.effect).toBe("deny");
+    expect(lastMatch(rules, "external_directory", "/etc")?.effect).toBe("deny");
+    expect(lastMatch(rules, "subagent", "*")?.effect).toBe("deny");
+  });
+
+  it("allows edits and asks before shell commands for writable projects", () => {
+    const rules = compilePermissionRuleset({ writable: true });
+
+    expect(lastMatch(rules, "read", "src/app.ts")?.effect).toBe("allow");
+    expect(lastMatch(rules, "edit", "src/app.ts")?.effect).toBe("allow");
     expect(lastMatch(rules, "shell", "npm test")?.effect).toBe("ask");
+    expect(lastMatch(rules, "execute", "*")?.effect).toBe("allow");
+    expect(lastMatch(rules, "external_directory", "/etc")?.effect).toBe("deny");
+    expect(lastMatch(rules, "subagent", "*")?.effect).toBe("deny");
   });
 
   it("denies .env reads after the broad read allow rule", () => {
-    const rules = compilePermissionRuleset({});
+    const rules = compilePermissionRuleset({ writable: true });
     expect(lastMatch(rules, "read", ".env")?.effect).toBe("deny");
     expect(lastMatch(rules, "read", "config/.env.local")?.effect).toBe("deny");
     expect(lastMatch(rules, "read", "config/.env.example")?.effect).toBe("allow");
   });
 
-  it("combines project, group and user policies using the most restrictive effect", () => {
-    const rules = compilePermissionRuleset({
-      project: { shell: "ask", edit: "allow" },
-      group: { shell: "allow", edit: "deny" },
-      user: { shell: "deny", edit: "allow" },
+  it("applies shell rules only when shell commands are available", () => {
+    const writable = compilePermissionRuleset({
+      writable: true,
+      shellRules: [
+        { pattern: "git status *", effect: "allow" },
+        { pattern: "rm -rf *", effect: "deny" },
+      ],
     });
-    expect(lastMatch(rules, "shell", "npm test")?.effect).toBe("deny");
-    expect(lastMatch(rules, "edit", "src/app.ts")?.effect).toBe("deny");
-  });
+    expect(lastMatch(writable, "shell", "git status --short")?.effect).toBe("allow");
+    expect(lastMatch(writable, "shell", "rm -rf /tmp/x")?.effect).toBe("deny");
 
-  it("puts shell rules last so specific deny rules win over broad allows", () => {
-    const rules = compilePermissionRuleset({
-      project: {
-        shell: "allow",
-        shell_rules: [
-          { pattern: "git status *", effect: "allow" },
-          { pattern: "rm -rf *", effect: "deny" },
-        ],
-      },
+    const readonly = compilePermissionRuleset({
+      writable: false,
+      shellRules: [{ pattern: "git status *", effect: "allow" }],
     });
-    expect(lastMatch(rules, "shell", "git status --short")?.effect).toBe("allow");
-    expect(lastMatch(rules, "shell", "rm -rf /tmp/x")?.effect).toBe("deny");
-  });
-
-  it("forces write-capable actions to deny in readonly groups", () => {
-    const rules = compilePermissionRuleset({
-      project: { edit: "allow", shell: "allow", external_directory: "allow" },
-      groupMode: "readonly",
-    });
-    expect(lastMatch(rules, "edit", "src/app.ts")?.effect).toBe("deny");
-    expect(lastMatch(rules, "write", "src/app.ts")?.effect).toBe("deny");
-    expect(lastMatch(rules, "shell", "npm test")?.effect).toBe("deny");
-    expect(lastMatch(rules, "external_directory", "/tmp")?.effect).toBe("deny");
-    expect(lastMatch(rules, "read", "src/app.ts")?.effect).toBe("allow");
+    expect(lastMatch(readonly, "shell", "git status")?.effect).toBe("deny");
   });
 
   it("exposes a compact effect summary for status output", () => {
-    const effects = effectivePolicyEffects({
-      project: { shell: "ask", edit: "deny" },
-      user: { shell: "allow" },
+    expect(permissionEffects({ writable: true })).toMatchObject({
+      read: "allow",
+      edit: "allow",
+      shell: "ask",
+      external_directory: "deny",
     });
-    expect(effects.shell).toBe("ask");
-    expect(effects.edit).toBe("deny");
+    expect(permissionEffects({ writable: false })).toMatchObject({
+      read: "allow",
+      edit: "deny",
+      shell: "deny",
+      external_directory: "deny",
+    });
   });
 });

@@ -81,7 +81,7 @@ class FakeNapCatClient implements NapCatClientLike {
 }
 
 const config = configSchema.parse({
-  version: 1,
+  version: 2,
   onebot: {
     url: "ws://127.0.0.1:3001",
     access_token: "token",

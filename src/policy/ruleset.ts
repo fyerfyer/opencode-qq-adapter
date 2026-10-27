@@ -1,106 +1,87 @@
-import type { PolicyConfig } from "../config/schema.js";
-import type { GroupMode } from "../domain/chat.js";
+import type { ShellRuleConfig } from "../config/schema.js";
 import {
   EFFECT_RANK,
   type PermissionEffect,
   type PermissionRule,
   type PermissionRuleset,
-  stricterEffect,
 } from "../domain/permission.js";
 
-export interface PolicyRuleSources {
-  project?: PolicyConfig | undefined;
-  group?: PolicyConfig | undefined;
-  user?: PolicyConfig | undefined;
-  groupMode?: GroupMode | undefined;
+export interface PermissionProfile {
+  /** True when the actor may modify this project. */
+  writable: boolean;
+  /** Optional shell allow/deny refinements; only applied to writable projects. */
+  shellRules?: readonly ShellRuleConfig[];
 }
 
-interface ShellRule {
-  pattern: string;
-  effect: PermissionEffect;
-}
-
-const POLICY_ACTIONS = [
-  "read",
-  "glob",
-  "grep",
-  "edit",
-  "write",
-  "shell",
-  "webfetch",
-  "websearch",
-  "external_directory",
-] as const;
-
-type PolicyAction = (typeof POLICY_ACTIONS)[number];
-
-const BASELINE_EFFECTS: Record<PolicyAction, PermissionEffect> = {
-  read: "allow",
-  glob: "allow",
-  grep: "allow",
-  edit: "ask",
-  write: "ask",
-  shell: "ask",
-  webfetch: "ask",
-  websearch: "ask",
-  external_directory: "deny",
-};
-
-const WRITE_ACTIONS: readonly PolicyAction[] = ["edit", "write", "shell", "external_directory"];
+const DISCOVERY_ACTIONS = ["read", "glob", "grep"] as const;
 
 /**
- * Resolve the effective effect per action. Policy sources are combined with
- * "most restrictive wins" semantics so a user-level policy can never loosen a
- * project or group restriction.
+ * Build the effective effects for one user/project pair. There is no longer a
+ * project/group/user policy merge: a project is either writable or read-only.
  */
-export function effectivePolicyEffects(
-  sources: PolicyRuleSources,
-): Record<string, PermissionEffect> {
-  const effects: Record<string, PermissionEffect> = { ...BASELINE_EFFECTS };
-  const policies = [sources.project, sources.group, sources.user].filter(
-    (policy): policy is PolicyConfig => policy !== undefined,
-  );
-
-  for (const action of POLICY_ACTIONS) {
-    for (const policy of policies) {
-      const current = effects[action] ?? BASELINE_EFFECTS[action];
-      effects[action] = stricterEffect(current, policy[action]) ?? current;
-    }
-  }
-
-  if (sources.groupMode === "readonly") {
-    for (const action of WRITE_ACTIONS) effects[action] = "deny";
-  }
-
-  return effects;
+export function permissionEffects(profile: PermissionProfile): Record<string, PermissionEffect> {
+  return {
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+    edit: profile.writable ? "allow" : "deny",
+    shell: profile.writable ? "ask" : "deny",
+    webfetch: "allow",
+    websearch: "allow",
+    external_directory: "deny",
+    subagent: "deny",
+    execute: profile.writable ? "allow" : "deny",
+  };
 }
 
 /**
- * Compile YAML policy into a V2 permission ruleset.
+ * Compile one user/project permission profile into an OpenCode V2 ruleset.
  *
- * OpenCode evaluates rules in order and the last matching rule wins. The
- * baseline is deliberately explicit: read/search are allowed, external paths
- * and .env files are denied, and everything else asks unless a policy says
- * otherwise. Shell rules are appended last so narrow denies cannot be
- * accidentally relaxed by broad policy allows.
+ * Read-only projects deny every mutating action directly (no approval prompt).
+ * Writable projects allow edits and ask before shell commands; shell rules can
+ * narrow that further (for example deny `sudo *` or allow `git status *`).
+ *
+ * Rules are ordered broad-to-specific because OpenCode uses the last matching
+ * rule. `.env` and external-directory denies intentionally stay at the end.
  */
-export function compilePermissionRuleset(sources: PolicyRuleSources): PermissionRuleset {
-  const rules: PermissionRule[] = [{ action: "*", resource: "*", effect: "ask" }];
+export function compilePermissionRuleset(profile: PermissionProfile): PermissionRuleset {
+  const rules: PermissionRule[] = [];
 
-  for (const action of POLICY_ACTIONS) {
-    if (action === "external_directory") continue;
-    rules.push({ action, resource: "*", effect: BASELINE_EFFECTS[action] });
+  if (profile.writable) {
+    // Unknown tools (for example MCP tools) ask instead of silently failing.
+    rules.push({ action: "*", resource: "*", effect: "ask" });
+  } else {
+    rules.push({ action: "*", resource: "*", effect: "deny" });
   }
+
+  for (const action of DISCOVERY_ACTIONS) {
+    rules.push({ action, resource: "*", effect: "allow" });
+  }
+  for (const action of ["webfetch", "websearch", "question", "skill"] as const) {
+    rules.push({ action, resource: "*", effect: "allow" });
+  }
+
+  rules.push({
+    action: "edit",
+    resource: "*",
+    effect: profile.writable ? "allow" : "deny",
+  });
+  rules.push({
+    action: "shell",
+    resource: "*",
+    effect: profile.writable ? "ask" : "deny",
+  });
+  rules.push({
+    action: "execute",
+    resource: "*",
+    effect: profile.writable ? "allow" : "deny",
+  });
   rules.push({ action: "external_directory", resource: "*", effect: "deny" });
+  // Subagents can carry their own, broader ruleset, so never let a QQ user
+  // launch one as a permission bypass.
+  rules.push({ action: "subagent", resource: "*", effect: "deny" });
 
-  const effects = effectivePolicyEffects(sources);
-  for (const action of POLICY_ACTIONS) {
-    const effect = effects[action];
-    if (effect === undefined) continue;
-    rules.push({ action, resource: "*", effect });
-  }
-
-  // Keep secret files protected even when policy allows reads broadly.
+  // Keep secret files protected even when reads are broadly allowed.
   rules.push(
     { action: "read", resource: ".env", effect: "deny" },
     { action: "read", resource: "*.env", effect: "deny" },
@@ -109,31 +90,19 @@ export function compilePermissionRuleset(sources: PolicyRuleSources): Permission
     { action: "read", resource: ".env.example", effect: "allow" },
   );
 
-  for (const rule of collectShellRules([sources.project, sources.group, sources.user])) {
-    rules.push({ action: "shell", resource: rule.pattern, effect: rule.effect });
-  }
-
-  // Read-only groups must stay read-only even if a policy or shell rule says
-  // otherwise. These rules intentionally come last.
-  if (sources.groupMode === "readonly") {
-    for (const action of WRITE_ACTIONS) {
-      rules.push({ action, resource: "*", effect: "deny" });
+  if (profile.writable) {
+    for (const rule of sortShellRules(profile.shellRules ?? [])) {
+      rules.push({ action: "shell", resource: rule.pattern, effect: rule.effect });
     }
   }
 
   return dedupeRules(rules);
 }
 
-function collectShellRules(policies: Array<PolicyConfig | undefined>): ShellRule[] {
-  const rules = policies.flatMap((policy) =>
-    (policy?.shell_rules ?? []).map((rule) => ({
-      pattern: rule.pattern,
-      effect: rule.effect,
-    })),
-  );
-  // Within the same specificity, deny must win over ask and allow. Because the
-  // last matching rule wins, emit the least restrictive effects first.
-  return rules.sort((a, b) => EFFECT_RANK[a.effect] - EFFECT_RANK[b.effect]);
+function sortShellRules(rules: readonly ShellRuleConfig[]): ShellRuleConfig[] {
+  // Because the last matching rule wins, emit the least restrictive effects
+  // first so a specific deny can override a broad allow.
+  return [...rules].sort((a, b) => EFFECT_RANK[a.effect] - EFFECT_RANK[b.effect]);
 }
 
 function dedupeRules(rules: PermissionRuleset): PermissionRuleset {

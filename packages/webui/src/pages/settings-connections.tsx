@@ -34,16 +34,30 @@ export function ConnectionsSettings() {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [jevBaseUrl, setJevBaseUrl] = useState("");
+  const [jevEndpoint, setJevEndpoint] = useState("");
+  const [jevModel, setJevModel] = useState("");
   const [napcatBusy, setNapcatBusy] = useState(false);
   const [jevBusy, setJevBusy] = useState(false);
   const [napcatResult, setNapcatResult] = useState<ConnectionSaveResult | null>(null);
   const [jevResult, setJevResult] = useState<ConnectionSaveResult | null>(null);
   const urlInitialized = useRef(false);
+  const jevInitialized = useRef(false);
 
   useEffect(() => {
     if (connections.data !== null && !urlInitialized.current) {
       setUrl(connections.data.napcat.url);
       urlInitialized.current = true;
+    }
+  }, [connections.data]);
+
+  useEffect(() => {
+    const jev = connections.data?.jev;
+    if (jev != null && !jevInitialized.current) {
+      setJevBaseUrl(jev.baseUrl ?? "");
+      setJevEndpoint(jev.endpoint ?? "");
+      setJevModel(jev.model ?? "");
+      jevInitialized.current = true;
     }
   }, [connections.data]);
 
@@ -94,16 +108,24 @@ export function ConnectionsSettings() {
     setJevResult(null);
     try {
       const result = await api.put<ConnectionSaveResult>("/connections/jev", {
-        apiKey: apiKey.trim(),
+        ...(apiKey.trim().length > 0 ? { apiKey: apiKey.trim() } : {}),
+        ...(jevBaseUrl.trim().length > 0 ? { baseUrl: jevBaseUrl.trim() } : {}),
+        ...(jevEndpoint.trim().length > 0 ? { endpoint: jevEndpoint.trim() } : {}),
+        ...(jevModel.trim().length > 0 ? { model: jevModel.trim() } : {}),
         expectedEnvHash: connections.data.envHash,
       });
       setJevResult(result);
       setApiKey("");
+      if (result.jev !== null) {
+        setJevBaseUrl(result.jev.baseUrl ?? "");
+        setJevEndpoint(result.jev.endpoint ?? "");
+        setJevModel(result.jev.model ?? "");
+      }
       await connections.refresh(true);
       if (result.reload?.ok === false) {
-        toast.warning(`Jev 密钥已保存，但 Roleplay 重载失败：${result.reload.error ?? "未知错误"}`);
+        toast.warning(`Jev 配置已保存，但 Roleplay 重载失败：${result.reload.error ?? "未知错误"}`);
       } else {
-        toast.success("Jev 密钥已保存并重新加载 Roleplay");
+        toast.success("Jev 配置已保存并重新加载 Roleplay");
       }
     } catch (caught) {
       toast.error(errorMessage(caught));
@@ -111,6 +133,13 @@ export function ConnectionsSettings() {
       setJevBusy(false);
     }
   };
+
+  const jevDirty =
+    jev !== null &&
+    (apiKey.trim().length > 0 ||
+      jevBaseUrl.trim() !== (jev.baseUrl ?? "") ||
+      jevEndpoint.trim() !== (jev.endpoint ?? "") ||
+      jevModel.trim() !== (jev.model ?? ""));
 
   if (connections.loading && connections.data === null) return <LoadingState rows={4} />;
   if (connections.error !== null && connections.data === null) {
@@ -244,7 +273,8 @@ export function ConnectionsSettings() {
             <KeyRound className="size-4" /> Jev / Roleplay
           </CardTitle>
           <CardDescription>
-            只管理 API Key；Base URL、Endpoint 和模型仍在 Roleplay 页面维护。
+            API Key 写入 <span className="font-mono">.env</span>；Base URL、Endpoint 和模型写入
+            Roleplay 插件配置。保存后会自动重载 Roleplay。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -254,7 +284,7 @@ export function ConnectionsSettings() {
               <AlertTitle>Roleplay 未配置</AlertTitle>
               <AlertDescription>
                 当前配置没有 <span className="font-mono">plugins.roleplay</span>，因此没有 Jev
-                密钥可管理。
+                配置可管理。
               </AlertDescription>
             </Alert>
           ) : (
@@ -272,12 +302,39 @@ export function ConnectionsSettings() {
                 </span>
               </div>
 
-              <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="sm:col-span-2 xl:col-span-1">
-                  <Info label="Base URL" value={jev.baseUrl ?? "—"} wrap />
+                  <Field label="Base URL">
+                    <Input
+                      value={jevBaseUrl}
+                      onChange={(event) => setJevBaseUrl(event.target.value)}
+                      placeholder="https://api.typesafe.ai/v1"
+                      aria-label="Jev Base URL"
+                      spellCheck={false}
+                      className="font-mono text-xs"
+                    />
+                  </Field>
                 </div>
-                <Info label="Endpoint" value={jev.endpoint ?? "—"} />
-                <Info label="模型" value={jev.model ?? "—"} />
+                <Field label="Endpoint">
+                  <Input
+                    value={jevEndpoint}
+                    onChange={(event) => setJevEndpoint(event.target.value)}
+                    placeholder="decisions"
+                    aria-label="Jev Endpoint"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                </Field>
+                <Field label="模型">
+                  <Input
+                    value={jevModel}
+                    onChange={(event) => setJevModel(event.target.value)}
+                    placeholder="jev-latest"
+                    aria-label="Jev Model"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+                </Field>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -297,7 +354,7 @@ export function ConnectionsSettings() {
                 </div>
                 <Button
                   variant="outline"
-                  disabled={jevBusy || apiKey.trim().length === 0}
+                  disabled={jevBusy || !jevDirty}
                   onClick={() => void saveJev()}
                 >
                   {jevBusy ? <LoaderCircle className="animate-spin" /> : <KeyRound />} 保存并重载
@@ -306,11 +363,11 @@ export function ConnectionsSettings() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>端点/模型请在</span>
+                <span>角色卡、世界书和会话绑定请在</span>
                 <Link className="underline underline-offset-4" to="/plugins/roleplay">
                   Roleplay 页面
                 </Link>
-                <span>调整。</span>
+                <span>管理。</span>
               </div>
             </>
           )}

@@ -25,7 +25,7 @@ describe.skipIf(!enabled)("OpenCode plugin media integration", () => {
     const projectPath = await mkdtemp(join(tmpdir(), "qq-plugin-e2e-"));
     await writeFile(join(projectPath, "chart.png"), PNG);
     const config = configSchema.parse({
-      version: 1,
+      version: 2,
       server: { host: "127.0.0.1", port: bridgePort, internal_token: internalToken },
       onebot: { url: "ws://127.0.0.1:3001", access_token: "unused" },
       opencode: {
@@ -41,9 +41,11 @@ describe.skipIf(!enabled)("OpenCode plugin media integration", () => {
       storage: { database_path: ":memory:", inbox_dir: join(projectPath, ".inbox") },
       workspaces: { root: join(projectPath, ".workspaces") },
       default_project: "demo",
-      users: { "20000": { role: "owner", projects: ["*"] } },
+      users: {
+        "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
+      },
       projects: {
-        demo: { path: projectPath, policy: "standard", workspace: "shared" },
+        demo: { path: projectPath, workspace: "shared" },
       },
     });
     const store = new SqliteStore(":memory:");

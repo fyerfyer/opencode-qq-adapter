@@ -24,15 +24,15 @@ OpenCode V2 service
 
 - QQ 私聊 / 群聊中使用 OpenCode。
 - 项目切换、会话新建/恢复、运行中断、队列管理。
-- YAML 定义用户、群、项目、权限策略和预算。
+- YAML 定义用户、项目、可访问/可修改权限和预算。
 - 危险操作通过 QQ 审批：允许一次 / 本会话总是允许 / 拒绝。
 - 入站图片：QQ 发图，agent 能看图。
 - 出站图片/文件：agent 调用 `qq_send_image` / `qq_send_file` 把 workspace 内媒体发回 QQ。
 - shared workspace 锁：同一项目跨 QQ 会话串行执行；bridge 重启后自动恢复遗留锁。
-- 群聊 `per_user` / `shared` / `readonly` 模式、@bot、群 allowlist。
+- 群聊零配置：任何已授权 QQ 在私聊或群里都按同一套权限使用；群内默认每人独立会话，@bot 可全局配置。
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
-- 本机 WebUI：登录、状态、用户/群/项目/策略、会话、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
+- 本机 WebUI：登录、状态、成员/项目、会话、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
 - 第三方插件 UI：插件自带静态页面，在 opaque-origin sandbox iframe 中运行，通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 使用受控 API。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
 - 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包（WebP 缩略图）、Markdown 记忆和分段延迟回复。
@@ -133,6 +133,23 @@ pnpm start
 ```bash
 npm_config_audit=false npm_config_fund=false \
   npx -y -p ./opencode-qq-adapter-0.1.2.tgz opencode-qq start
+```
+
+### 停止与端口
+
+在 `pnpm start` / `opencode-qq start` 的终端按一次 `Ctrl+C` 会先关闭 HTTP 监听端口，再清理 OneBot、插件和 OpenCode；如果清理超过 15 秒会强制退出。再按一次 `Ctrl+C` 也会立即强制退出。这样重启时不会因为旧的清理流程继续占用 `8787`。
+
+NapCat 的 `3001`（WebSocket）和 `6099`（WebUI）由 Docker 容器独立持有，Ctrl+C 停止 bridge **不会**停止 NapCat。需要停止它时运行：
+
+```bash
+docker stop opencode-qq-napcat
+```
+
+如果端口仍被占用，先确认是不是旧的 node 进程：
+
+```bash
+ss -ltnp | grep 8787
+ps -ef | grep 'dist/main.js start'
 ```
 
 ### OpenCode agent
@@ -247,14 +264,14 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 管理台提供：
 
 - 概览：OneBot / OpenCode / SQLite / 事件流状态、活跃 run、今日用量、待审批和审计。
-- 用户与群：角色、项目 allowlist、群模式、@bot、默认项目和可收紧的个人限制。
-- 项目与策略：项目路径、默认策略、agent/model、workspace 模式，以及 permission/shell 规则。
+- 成员：QQ、Bot 角色（所有者/管理员/使用者）、可访问项目、可修改项目、可收紧的个人限制。
+- 项目：项目路径、agent/model、workspace 模式；插件内部项目默认隐藏。
 - 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session；可直接切换当前会话的 Agent/model，模型列表会标注 vision/tools capability。
-- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。角色卡和记忆仍在 Roleplay 页面。
+- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。
-- 设置：配置 YAML、管理员密码、运行时信息，以及“连接”页管理 NapCat WebSocket URL/Access Token 和 Roleplay 的 Jev API Key；密钥只写入 `.env`，页面只显示“已配置/未配置”。
+- 设置：配置 YAML、管理员密码、运行时信息，以及“连接”页管理 NapCat WebSocket URL/Access Token 和 Roleplay 的 Jev API Key、Base URL、Endpoint、模型；密钥只写入 `.env`，Jev 端点写入 Roleplay 配置，页面只显示“已配置/未配置”。Roleplay 页面的“设置 → 表情”里也可以直接填写 Jev Base URL、API Key，并用“测试连接”按钮做一次真实请求。
 - 第三方插件页面：插件自带 `ui/` 静态资源，由核心在 `sandbox` iframe 中挂载；页面通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 调用本插件 admin API，不接触管理员 cookie 和 CSRF。
 - Roleplay：角色卡导入、备注编辑、世界书条目新增/编辑/删除/启停与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。Roleplay 页面本身也已迁移到 iframe。
 - Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
@@ -264,7 +281,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 默认 `admin.allow_remote: false`，非 loopback 请求会被拒绝。
 - 管理员密码用 scrypt 哈希存入 SQLite；浏览器只保留 HttpOnly session cookie。
 - 所有写操作要求 CSRF token 和同源 Origin 校验。
-- WebUI 只在“设置 → 连接”页写入受控的 `.env` 键（NapCat URL/Token、Jev API Key），不在前端回显密钥，也不写进 YAML。
+- WebUI 只在“设置 → 连接”页或插件自己的管理页写入受控的 `.env` 键（NapCat URL/Token、Jev API Key）；插件密钥接口只允许写入该插件 options 已引用的环境变量名，不在前端回显密钥。
 - 如果确实需要局域网访问，请显式开启 `admin.allow_remote`，并放在 TLS 反向代理后。
 
 ### 连接与密钥
@@ -273,7 +290,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 
 - 查看 NapCat WebSocket 连接状态、Bot QQ、最后连接/事件和错误。
 - 修改 NapCat WebSocket URL 和 Access Token；保存到 `config/.env`，需要重启 bridge 后生效。URL 不要带 token/query，Token 单独填写。
-- 查看 Roleplay 的 Jev 密钥环境变量名和“已配置/未配置”状态；保存 Key 后会自动重载 Roleplay 插件。
+- 配置 Roleplay 的 Jev API Key、Base URL、Endpoint 和模型；Key 写入 `.env`，其余写入 Roleplay 插件配置，保存后会自动重载 Roleplay 插件。
 - 密钥字段始终是 write-only，留空表示保持现有值。
 
 NapCat 的进程/容器保活由 Docker `restart: unless-stopped` 和 `deploy/systemd/opencode-qq.service` 的 `Restart=always` 负责；bridge 的 OneBot SDK 也会自动重连。QQ 登录态失效时 HTTP `get_login_info` 会失败，WebUI 会显示“QQ 登录态失效”，这需要你到 NapCat WebUI 重新扫码或快速登录，不能靠自动重启绕过。
@@ -492,18 +509,19 @@ zip -r ../my-plugin-0.1.0.zip package.json dist ui
 
 `packages/roleplay` 提供角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书与 Markdown 长期记忆、把回复拆成多条短消息并加打字延迟。
 
-当前 0.4 能力：
+当前 0.4.1 能力：
 
-- 私聊 + 群聊 `per_user` / `shared` / `readonly`；私聊一个 chat 一个角色，`per_user` 群每个成员各自绑定，`shared` 群由 owner/admin 管理；
-- 长期记忆是一份可读、可手改的 `memory.md`（shared 群为 `scene.md` + 每人 `users/<qq>.md`），原文保存在 SQLite 供 FTS5 检索；
+- 私聊 + 群聊；核心群聊是零配置的每人独立会话，每个成员各自绑定角色、各自维护记忆；
+- 长期记忆是一份可读、可手改的 `memory.md`，原文保存在 SQLite 供 FTS5 检索；
 - 后台 consolidation：隐藏的 `qq-rp-utility` 临时 session，工具全 deny，按 section 级 JSON 操作更新 MD；
 - `memory_events` 记录每次 consolidate/manual_add/manual_delete，`history/` 保留最近版本；
 - 触发条件是每 N 轮或 idle debounce，不再使用硬编码的“记忆关键词”正则；
 - `!remember` 写入手动记忆，`!memory diff|history|search|refresh`，`!forget section|confirm`；
 - 中文原文检索使用 FTS5 trigram OR 查询 + 短查询 LIKE 回退；
-- 群聊记忆详情私聊发送；`shared` 群仅 owner/admin 可查看/清空；
+- 群聊记忆详情私聊发送；
 - 世界书 lite：常驻/关键词/次关键词、默认 1 轮额外递归、按 entry 的 ASCII 整词匹配、`!worldbook check <text>` 调试；
-- 表情包：`dataDir/stickers/<persona>/<emotion>/`，每条回复最多 1 张；`sticker_judge: jev` 用 Jev 对当前对话做情绪分类；`hybrid`/`tag` 模式仍支持 `[emotion:xxx]` 标签，失败自动降级为纯文本；
+- 表情包：`dataDir/stickers/<persona>/<emotion>/`，每条回复最多 1 张；`sticker_judge: jev` 用 Jev 对当前对话做情绪分类；`hybrid`/`tag` 模式仍支持 `[emotion:xxx]` 标签，失败自动降级为纯文本；Jev Base URL / API Key / 模型可在 Roleplay 设置页配置，并提供“测试连接”健康检查；
+- 角色扮演引擎不再设置 `steps: 1`，避免 OpenCode 在 final step 注入 max-steps 提示导致模型输出元叙述；回复还会经过一层 meta guard；
 - 通用记忆基础设施抽到 `@opencode-qq/memory`（transcript/FTS、Markdown 文档、retrieval）；roleplay 只保留 persona/scope/section/prompt 策略。
 
 仍不在本阶段：
@@ -523,7 +541,7 @@ pnpm build:roleplay
 mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
 ```
 
-使用 setup 向导启用（会创建 roleplay 项目/策略/插件、personas 目录和 `security.allowed_roots`）：
+使用 setup 向导启用（会创建 hidden 的 roleplay 项目、插件、personas 目录和 `security.allowed_roots`）：
 
 ```bash
 opencode-qq setup --with-roleplay \
@@ -538,7 +556,7 @@ opencode-qq setup --with-roleplay \
 opencode-qq setup --with-roleplay --reconfigure --yes
 ```
 
-在 `config.yaml` 中增加 `projects.roleplay`、`policies.roleplay` 和 `plugins.roleplay` 后：
+在 `config.yaml` 中增加 `projects.roleplay`（`hidden: true`）和 `plugins.roleplay` 后：
 
 ```text
 !card import /path/to/card.png blue-fat-fish
@@ -592,13 +610,13 @@ OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/READM
 | --- | --- |
 | `!ping` | 返回 `pong` |
 | `!help` | 命令帮助（按会话 / 项目 / 模型 / 管理分组） |
-| `!whoami` | 显示 QQ、角色、群号、chatKey、可用项目 |
-| `!projects` | 列出可用项目 |
+| `!whoami` | 显示 QQ、角色、群号、chatKey、可用项目和可修改项目 |
+| `!projects` | 列出可用项目，并标记「可修改 / 只读问答」 |
 | `!use <项目>` / `!cd <项目>` | 切换项目并重置会话 |
 | `!new` | 清除当前会话，保留模型/agent 偏好 |
 | `!status` | OneBot / OpenCode / 项目 / 工作区锁 / 会话 / 运行状态 |
 | `!sessions` | 列出当前项目最近 20 个 OpenCode 会话 |
-| `!switch <ID前缀>` | 恢复指定会话（shared 群仅 owner/admin） |
+| `!switch <ID前缀>` | 恢复指定会话 |
 | `!diff` | 当前会话 diff + 工作区 git 改动摘要 |
 | `!ws` | 当前工作区、锁持有者和租约 |
 | `!ws list` | 列出可用工作区及状态 |
@@ -610,7 +628,7 @@ OpenCode 1.x 请使用 `plugin/v1-opencode-qq-plugin.ts`，详见 [`plugin/READM
 | `!agent` | 查看当前 agent |
 | `!agent list` | 列出 primary agents |
 | `!agent <ID>` | 切换当前会话 agent |
-| `!reload` | 热加载配置（owner，仅私聊） |
+| `!reload` | 热加载配置（owner/admin，仅私聊） |
 | `!plugins` | 查看已加载插件的状态、命令和错误 |
 | `!sudo <TOTP>` | 为 owner 危险操作开启短窗口（仅私聊） |
 | `!approvals` | 查看当前会话待审批请求 |
@@ -692,70 +710,47 @@ workspaces:
 
 ## 群聊
 
-支持三种模式：
+群聊不需要任何配置。只要发送者在 `users` 中，私聊和群聊都按同一套权限执行；同一个人在任意群里的权限相同。
 
-| 模式 | 行为 |
-| --- | --- |
-| `per_user` | 每个群成员独立 Conversation，默认 |
-| `shared` | 整个群共用一个 Conversation；审批只允许 owner/admin |
-| `readonly` | 只读问答；`edit/write/shell/external_directory` 强制 deny |
-
-示例：
-
-```yaml
-groups:
-  "20001":
-    enabled: true
-    mode: per_user
-    require_mention: true
-    allowed_users: ["10001", "10002"]
-    projects: ["demo"]
-```
-
-群消息必须同时满足：
-
-- 群在 `groups` 中且 `enabled: true`
-- 发送者在 `allowed_users`
-- 项目在群可用项目内
-- 非命令消息满足 @bot 要求
-
-未授权用户/群默认静默忽略，只写审计。
-
-> 当前群 `per_user` 隔离的是 Conversation；workspace 仍按项目共享。需要独立目录时请使用独立的 `projects.<id>.path`。
+- 群内默认每个成员一个独立 Conversation（`group:<群号>:<QQ>`）。
+- 非命令消息是否必须 @bot 由全局 `security.require_mention_in_group` 控制。
+- 未在 `users` 中的 QQ 在群里发消息会被静默忽略，只写审计。
+- workspace 仍按项目共享；需要独立目录时请使用独立的 `projects.<id>.path`。
 
 ## 权限与审批
 
-YAML 策略会编译成 OpenCode V2 permission ruleset，在创建/复用 session 时下发。策略来源包括项目、群、用户，多个来源按“最严格”合并：
-
-```text
-deny > ask > allow
-```
-
-示例：
+权限完全由用户配置决定，不再有 project/group/user 三层策略合并：
 
 ```yaml
-policies:
-  standard:
-    read: allow
-    glob: allow
-    grep: allow
-    edit: ask
-    shell: ask
-    webfetch: ask
-    websearch: ask
-    external_directory: deny
-    shell_rules:
-      - pattern: "git status *"
-        effect: allow
-      - pattern: "git diff *"
-        effect: allow
-      - pattern: "git push *"
-        effect: deny
-      - pattern: "rm -rf *"
-        effect: deny
+users:
+  "10001":
+    role: owner          # owner | admin | member
+    projects: ["*"]      # 可访问项目，* 表示所有可见项目
+    write_projects: ["*"] # 可修改项目；未列出的项目只能问答
+
+  "10002":
+    role: member
+    projects: ["demo"]
+    write_projects: []    # 只能问答，写入直接返回无权限
 ```
 
-当 OpenCode 触发 `permission.asked`：
+生成规则：
+
+- 项目在 `projects` 中但不在 `write_projects`：`read/glob/grep/webfetch/websearch` 允许；`edit/shell/external_directory` 直接拒绝，不会发审批。
+- 项目在 `write_projects` 中：`edit` 允许；`shell` 默认需要 QQ 审批；项目外目录仍然拒绝。
+- `hidden: true` 的插件内部项目不会出现在 `!projects`、默认项目下拉和成员项目选择中，只能由插件内部切换。
+- `security.shell_rules` 可以进一步允许安全的只读命令或拒绝危险命令；规则最后匹配，写在 `security` 下：
+
+```yaml
+security:
+  shell_rules:
+    - pattern: "git status *"
+      effect: allow
+    - pattern: "sudo *"
+      effect: deny
+```
+
+当 OpenCode 触发 `permission.asked`（例如可修改项目里的 shell 命令）：
 
 1. bridge 发送 QQ 审批消息
 2. 用户回复 `1` / `2` / `3`，或引用审批消息回复
@@ -765,10 +760,8 @@ policies:
 
 审批人规则：
 
-- 私聊：发起者本人，或项目内 owner/admin
-- 群 `per_user` / `readonly`：发起者本人，或群内 owner/admin
-- 群 `shared`：只允许 owner/admin
-- 群外 admin 不能审批该群请求
+- 发起该 run 的本人，或 owner/admin。
+- 不再区分私聊/群聊，也不再有群 allowlist。
 
 ## 预算、限流与 2FA
 
@@ -843,7 +836,7 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 热加载：
 
 - 私聊 owner 发送 `!reload`，或给进程发送 `SIGHUP`。
-- 立即生效：`users`、`groups`、`projects`、`policies`、`plugins`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
+- 立即生效：`users`、`projects`、`plugins`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
 - 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`admin.enabled`、`logging.pretty`。
 - 校验失败时保留旧配置，不会中断正在运行的任务。
 
@@ -951,8 +944,8 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 
 - 只绑定 loopback 或内网，不要把 NapCat WebUI、bridge、OpenCode service 暴露到公网。
 - Access Token、internal token 通过环境变量或 `0600` 文件注入。
-- 未授权用户默认静默忽略；群聊必须同时满足群和用户 allowlist。
-- 权限边界落在 OpenCode permission ruleset，不依赖 prompt。
+- 未授权用户默认静默忽略；群聊不需要 allowlist，已授权用户在任何群按同一权限使用。
+- 权限边界落在 OpenCode permission ruleset，不依赖 prompt；只读项目的写入直接 deny，不进入审批。
 - `external_directory` 默认 deny，`.env` 系列文件默认 deny。
 - 入站图片限制类型、数量、大小，并默认拒绝私有地址。
 - `qq_send_image` 只允许 workspace 内文件，拒绝 symlink 逃逸。

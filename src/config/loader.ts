@@ -135,9 +135,7 @@ const NULLABLE_SECTIONS = new Set([
   "rate_limit",
   "budgets",
   "users",
-  "groups",
   "projects",
-  "policies",
   "plugins",
   "workspaces",
   "cleanup",
@@ -205,8 +203,13 @@ async function resolveAndValidate(
     );
   }
 
-  if (config.default_project !== null && !projectIds.has(config.default_project)) {
-    errors.push(`default_project '${config.default_project}' does not exist in projects`);
+  if (config.default_project !== null) {
+    const defaultProject = config.projects[config.default_project];
+    if (defaultProject === undefined) {
+      errors.push(`default_project '${config.default_project}' does not exist in projects`);
+    } else if (defaultProject.hidden) {
+      errors.push(`default_project '${config.default_project}' is an internal project`);
+    }
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
@@ -257,55 +260,28 @@ async function resolveAndValidate(
         errors.push(`users.${qq}.projects references unknown project '${project}'`);
       }
     }
-    if (user.policy !== undefined && config.policies[user.policy] === undefined) {
-      errors.push(`users.${qq}.policy references unknown policy '${user.policy}'`);
-    }
-  }
-
-  for (const [groupId, group] of Object.entries(config.groups)) {
-    for (const project of group.projects) {
+    for (const project of user.write_projects) {
       if (project !== "*" && !projectIds.has(project)) {
-        errors.push(`groups.${groupId}.projects references unknown project '${project}'`);
+        errors.push(`users.${qq}.write_projects references unknown project '${project}'`);
+        continue;
       }
-    }
-    if (group.default_project !== undefined && !projectIds.has(group.default_project)) {
-      errors.push(
-        `groups.${groupId}.default_project references unknown project '${group.default_project}'`,
-      );
-    }
-    if (group.policy !== undefined && config.policies[group.policy] === undefined) {
-      errors.push(`groups.${groupId}.policy references unknown policy '${group.policy}'`);
-    }
-    for (const member of group.allowed_users) {
-      if (config.users[member] === undefined) {
-        warnings.push(
-          `groups.${groupId}.allowed_users includes '${member}' which is not present in users`,
+      if (project !== "*" && !user.projects.includes("*") && !user.projects.includes(project)) {
+        errors.push(
+          `users.${qq}.write_projects includes '${project}' which is not in users.${qq}.projects`,
         );
       }
     }
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
-    for (const user of project.allowed_users ?? []) {
-      if (config.users[user] === undefined) {
-        warnings.push(
-          `projects.${id}.allowed_users includes '${user}' which is not present in users`,
-        );
-      }
-    }
-    for (const group of project.allowed_groups ?? []) {
-      if (config.groups[group] === undefined) {
-        warnings.push(
-          `projects.${id}.allowed_groups includes '${group}' which is not present in groups`,
-        );
-      }
-    }
-    if (project.policy !== "" && config.policies[project.policy] === undefined) {
-      warnings.push(`projects.${id}.policy '${project.policy}' is not defined in policies`);
-    }
     if (project.workspace === "per_user" || project.workspace === "worktree") {
       warnings.push(
         `projects.${id}.workspace '${project.workspace}' is not implemented yet; shared mode will be used`,
+      );
+    }
+    if (project.hidden && project.workspace !== "none") {
+      warnings.push(
+        `projects.${id} is hidden but does not use workspace: none; plugin profiles may not work as expected`,
       );
     }
   }

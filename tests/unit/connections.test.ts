@@ -124,7 +124,10 @@ describe("AdminConnectionService Jev key", () => {
       pluginStatus: "loaded",
     });
 
-    const result = await service.saveJev("new-jev-secret", before.envHash);
+    const result = await service.saveJev({
+      apiKey: "new-jev-secret",
+      expectedEnvHash: before.envHash,
+    });
     expect(result.jev?.apiKeyConfigured).toBe(true);
     expect(result.reload).toMatchObject({ ok: true });
     expect(reloads).toEqual(["roleplay"]);
@@ -139,5 +142,77 @@ describe("AdminConnectionService Jev key", () => {
         apiKeyEnv: "JEV_API_KEY",
       },
     );
+  });
+
+  it("updates Roleplay Jev endpoint settings without requiring a new API key", async () => {
+    process.env.JEV_API_KEY = "old-key";
+    const { service, configPath, reloads, audits } = await makeService();
+    const before = await service.snapshot();
+
+    const result = await service.saveJev({
+      baseUrl: "https://jev.example/v1",
+      endpoint: "decisions",
+      model: "jev-1.14",
+      expectedEnvHash: before.envHash,
+    });
+
+    expect(result.jev).toMatchObject({
+      baseUrl: "https://jev.example/v1",
+      endpoint: "decisions",
+      model: "jev-1.14",
+      apiKeyConfigured: true,
+    });
+    expect(result.reload).toMatchObject({ ok: true });
+    expect(reloads).toEqual(["roleplay"]);
+    expect(process.env.JEV_API_KEY).toBe("old-key");
+    const yaml = await readFile(configPath, "utf8");
+    expect(yaml).toContain("jev_base_url: https://jev.example/v1");
+    expect(yaml).toContain("jev_endpoint: decisions");
+    expect(yaml).toContain("jev_model: jev-1.14");
+    expect(
+      audits.find((entry) => entry.action === "admin.connection.jev.updated")?.detail,
+    ).toMatchObject({ apiKeyEnv: "JEV_API_KEY" });
+  });
+
+  it("rejects an invalid Jev base URL and an empty update", async () => {
+    process.env.JEV_API_KEY = "old-key";
+    const { service } = await makeService();
+
+    await expect(service.saveJev({ baseUrl: "ftp://jev.example/v1" })).rejects.toMatchObject({
+      code: "invalid_jev_base_url",
+    });
+    await expect(service.saveJev({})).rejects.toMatchObject({ code: "nothing_to_update" });
+  });
+
+  it("writes a plugin-referenced secret and reloads that plugin", async () => {
+    process.env.JEV_API_KEY = "old-key";
+    const { service, configPath, reloads, audits } = await makeService();
+
+    const result = await service.savePluginSecret("roleplay", {
+      key: "JEV_API_KEY",
+      value: "new-plugin-secret",
+    });
+    expect(result).toMatchObject({
+      key: "JEV_API_KEY",
+      configured: true,
+      reload: { ok: true },
+    });
+    expect(process.env.JEV_API_KEY).toBe("new-plugin-secret");
+    expect(reloads).toEqual(["roleplay"]);
+    expect(await readFile(join(configPath, "..", ".env"), "utf8")).toContain(
+      "JEV_API_KEY=new-plugin-secret",
+    );
+    expect(JSON.stringify(result)).not.toContain("new-plugin-secret");
+    expect(audits.find((entry) => entry.action === "admin.plugin.secret.updated")?.detail).toEqual({
+      pluginId: "roleplay",
+      key: "JEV_API_KEY",
+    });
+  });
+
+  it("rejects a secret key that is not referenced by the plugin options", async () => {
+    const { service } = await makeService();
+    await expect(
+      service.savePluginSecret("roleplay", { key: "UNRELATED_KEY", value: "secret" }),
+    ).rejects.toMatchObject({ code: "plugin_secret_not_referenced" });
   });
 });

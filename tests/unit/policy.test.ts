@@ -5,25 +5,18 @@ import type { IncomingMessage } from "../../src/domain/message.js";
 import { PolicyEngine } from "../../src/policy/engine.js";
 
 const config = configSchema.parse({
-  version: 1,
+  version: 2,
   onebot: { url: "ws://127.0.0.1:3001", access_token: "token" },
   default_project: "blog",
   users: {
-    "10001": { role: "owner", projects: ["*"] },
-    "10002": { role: "member", projects: ["blog"] },
-    "10003": { role: "member", projects: ["infra"] },
-  },
-  groups: {
-    "20001": {
-      enabled: true,
-      mode: "per_user",
-      allowed_users: ["10002"],
-      projects: ["blog"],
-    },
+    "10001": { role: "owner", projects: ["*"], write_projects: ["*"] },
+    "10002": { role: "member", projects: ["blog", "infra"], write_projects: ["blog"] },
+    "10003": { role: "member", projects: ["blog"], write_projects: [] },
   },
   projects: {
-    blog: { path: "/tmp/blog", allowed_users: ["10001", "10002"] },
-    infra: { path: "/tmp/infra", allowed_users: ["10001", "10003"] },
+    blog: { path: "/tmp/blog" },
+    infra: { path: "/tmp/infra" },
+    roleplay: { path: "/tmp/roleplay", workspace: "none", hidden: true, managed_by: "roleplay" },
   },
 });
 
@@ -59,78 +52,63 @@ describe("policy engine", () => {
     });
   });
 
-  it("lets owners use all projects", () => {
-    const actor = actorFor(10001);
-    expect(policy.availableProjects(actor, 10001).map((entry) => entry.id)).toEqual([
-      "blog",
-      "infra",
-    ]);
+  it("allows configured users in private chats and in any group without group config", () => {
+    expect(policy.authorize(message(10002)).allowed).toBe(true);
+    expect(policy.authorize(message(10002, 77777)).allowed).toBe(true);
   });
 
-  it("restricts members to their assigned projects", () => {
+  it("restricts users to their accessible projects and hides internal projects", () => {
     const actor = actorFor(10002);
-    expect(policy.availableProjects(actor, 10002).map((entry) => entry.id)).toEqual(["blog"]);
-    expect(policy.canUseProject(actor, 10002, "infra").allowed).toBe(false);
+    expect(policy.availableProjects(actor).map((entry) => entry.id)).toEqual(["blog", "infra"]);
+    expect(policy.canUseProject(actor, "roleplay").allowed).toBe(false);
+    expect(policy.canUseProject(actor, "roleplay").reason).toBe("hidden_project");
+    expect(policy.canUseProject(actor, "roleplay", { includeHidden: true }).allowed).toBe(true);
   });
 
-  it("requires the user and project to be allowed in a group", () => {
-    const denied = policy.authorize(message(10003, 20001));
-    expect(denied).toMatchObject({ allowed: false, reason: "group_user_not_allowed" });
-    const allowed = policy.authorize(message(10002, 20001));
-    expect(allowed.allowed).toBe(true);
-    const actor = actorFor(10002);
-    expect(policy.canUseProject(actor, 10002, "blog", 20001).allowed).toBe(true);
-    expect(policy.canUseProject(actor, 10002, "infra", 20001).allowed).toBe(false);
+  it("uses write_projects as the writable allowlist", () => {
+    const writer = actorFor(10002);
+    const reader = actorFor(10003);
+    expect(policy.canWriteProject(writer, "blog")).toBe(true);
+    expect(policy.canWriteProject(writer, "infra")).toBe(false);
+    expect(policy.canWriteProject(reader, "blog")).toBe(false);
+    expect(policy.canWriteProject(actorFor(10001), "roleplay")).toBe(false);
   });
 
-  it("resolves the configured default project", () => {
-    const actor = actorFor(10002);
-    expect(policy.defaultProject(actor, 10002)?.id).toBe("blog");
-    const infraActor = actorFor(10003);
-    expect(policy.defaultProject(infraActor, 10003)?.id).toBe("infra");
-  });
+  it("resolves the configured default project only when it is visible", () => {
+    expect(policy.defaultProject(actorFor(10002))?.id).toBe("blog");
+    expect(policy.defaultProject(actorFor(10003))?.id).toBe("blog");
 
-  it("compiles project, user and group policies into a permission ruleset", () => {
-    const restrictive = configSchema.parse({
+    const hiddenDefault = configSchema.parse({
       ...config,
-      policies: {
-        standard: {
-          read: "allow",
-          edit: "ask",
-          shell: "ask",
-          shell_rules: [{ pattern: "git status *", effect: "allow" }],
-        },
-        readonly: { edit: "deny", shell: "deny" },
-        trusted: { edit: "allow", shell: "allow" },
-      },
-      users: {
-        "10002": { role: "member", projects: ["blog"], policy: "trusted" },
-      },
-      projects: {
-        ...config.projects,
-        blog: { ...config.projects.blog, policy: "standard" },
-      },
-      groups: {
-        "20001": {
-          ...config.groups["20001"],
-          mode: "readonly",
-          policy: "standard",
-        },
-      },
+      default_project: "roleplay",
     });
-    const engine = new PolicyEngine(restrictive);
+    expect(new PolicyEngine(hiddenDefault).defaultProject(actorFor(10002))).toBeNull();
+  });
 
-    const privateDecision = engine.permissionsFor(message(10002), "blog");
-    expect(privateDecision?.effects.edit).toBe("ask");
-    expect(privateDecision?.policyNames).toEqual(["standard", "trusted"]);
+  it("requires a mention in groups according to the global switch", () => {
+    expect(policy.isGroupMentionRequired()).toBe(config.security.require_mention_in_group);
+  });
 
-    const groupDecision = engine.permissionsFor(message(10002, 20001), "blog");
-    expect(groupDecision?.effects.edit).toBe("deny");
-    expect(groupDecision?.effects.shell).toBe("deny");
-    expect(groupDecision?.ruleset.at(-1)).toMatchObject({
-      action: "external_directory",
-      resource: "*",
-      effect: "deny",
-    });
+  it("compiles a writable project to edit allow and shell ask", () => {
+    const decision = policy.permissionsFor(message(10002), "blog");
+    expect(decision).not.toBeNull();
+    expect(decision?.writable).toBe(true);
+    expect(decision?.effects.read).toBe("allow");
+    expect(decision?.effects.edit).toBe("allow");
+    expect(decision?.effects.shell).toBe("ask");
+    expect(decision?.effects.external_directory).toBe("deny");
+  });
+
+  it("compiles a non-writable project to write denial without an approval prompt", () => {
+    const decision = policy.permissionsFor(message(10002), "infra");
+    expect(decision).not.toBeNull();
+    expect(decision?.writable).toBe(false);
+    expect(decision?.effects.edit).toBe("deny");
+    expect(decision?.effects.shell).toBe("deny");
+    expect(decision?.effects.read).toBe("allow");
+  });
+
+  it("returns null for projects the user cannot access", () => {
+    expect(policy.permissionsFor(message(10003), "infra")).toBeNull();
   });
 });

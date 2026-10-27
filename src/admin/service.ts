@@ -1,12 +1,6 @@
 import type { Logger } from "pino";
 import type { ConfigReloadResult } from "../config/reload.js";
-import type {
-  AppConfig,
-  GroupConfig,
-  PolicyConfig,
-  ProjectConfig,
-  UserConfig,
-} from "../config/schema.js";
+import type { AppConfig, ProjectConfig, UserConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
 import type { AuditEntry } from "../domain/audit.js";
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
@@ -32,6 +26,7 @@ import {
   AdminConnectionService,
   type ConnectionSaveResult,
   type ConnectionsSnapshot,
+  type JevConnectionInput,
 } from "./connections.js";
 import { AdminError } from "./errors.js";
 import {
@@ -77,9 +72,7 @@ export interface AdminServiceOptions {
 
 export interface AccessSnapshot {
   users: Array<{ qq: string } & UserConfig>;
-  groups: Array<{ id: string } & GroupConfig>;
   projects: Array<{ id: string } & ProjectConfig>;
-  policies: Array<{ name: string } & PolicyConfig>;
   configHash: string | null;
   configPath: string | null;
   warnings: string[];
@@ -216,9 +209,9 @@ export class AdminService {
       config: {
         path: this.#configPath,
         users: Object.keys(this.#config.users).length,
-        groups: Object.keys(this.#config.groups).length,
         projects: Object.keys(this.#config.projects).length,
-        policies: Object.keys(this.#config.policies).length,
+        hiddenProjects: Object.values(this.#config.projects).filter((project) => project.hidden)
+          .length,
         features: this.#config.features,
       },
       counts: {
@@ -249,12 +242,7 @@ export class AdminService {
     }
     return {
       users: Object.entries(this.#config.users).map(([qq, user]) => ({ qq, ...user })),
-      groups: Object.entries(this.#config.groups).map(([id, group]) => ({ id, ...group })),
       projects: Object.entries(this.#config.projects).map(([id, project]) => ({ id, ...project })),
-      policies: Object.entries(this.#config.policies).map(([name, policy]) => ({
-        name,
-        ...policy,
-      })),
       configHash: hash,
       configPath: this.#configPath,
       warnings,
@@ -280,29 +268,6 @@ export class AdminService {
     return result;
   }
 
-  async upsertGroup(
-    id: string,
-    group: GroupConfig,
-    expectedHash?: string,
-  ): Promise<ConfigSaveResult> {
-    const result = await this.configEditor.mutate((document) => {
-      document.setIn(["groups", id], compactObject(group));
-    }, expectedHash);
-    this.record({
-      action: "admin.config.group.upserted",
-      detail: { id, mode: group.mode, enabled: group.enabled },
-    });
-    return result;
-  }
-
-  async deleteGroup(id: string, expectedHash?: string): Promise<ConfigSaveResult> {
-    const result = await this.configEditor.mutate((document) => {
-      document.deleteIn(["groups", id]);
-    }, expectedHash);
-    this.record({ action: "admin.config.group.deleted", detail: { id } });
-    return result;
-  }
-
   async upsertProject(
     id: string,
     project: ProjectConfig,
@@ -323,26 +288,6 @@ export class AdminService {
       document.deleteIn(["projects", id]);
     }, expectedHash);
     this.record({ action: "admin.config.project.deleted", detail: { id } });
-    return result;
-  }
-
-  async upsertPolicy(
-    name: string,
-    policy: PolicyConfig,
-    expectedHash?: string,
-  ): Promise<ConfigSaveResult> {
-    const result = await this.configEditor.mutate((document) => {
-      document.setIn(["policies", name], compactObject(policy));
-    }, expectedHash);
-    this.record({ action: "admin.config.policy.upserted", detail: { name } });
-    return result;
-  }
-
-  async deletePolicy(name: string, expectedHash?: string): Promise<ConfigSaveResult> {
-    const result = await this.configEditor.mutate((document) => {
-      document.deleteIn(["policies", name]);
-    }, expectedHash);
-    this.record({ action: "admin.config.policy.deleted", detail: { name } });
     return result;
   }
 
@@ -396,20 +341,20 @@ export class AdminService {
     return this.connectionService.saveNapcat(input);
   }
 
-  saveJevConnection(
-    apiKey: string,
-    expectedEnvHash?: string | null,
-  ): Promise<ConnectionSaveResult> {
-    return this.connectionService.saveJev(apiKey, expectedEnvHash);
+  saveJevConnection(input: JevConnectionInput): Promise<ConnectionSaveResult> {
+    return this.connectionService.saveJev(input);
   }
 
   async conversations(): Promise<ConversationOverview[]> {
-    return this.#store.conversations.list().map((conversation) => ({
-      ...conversation,
-      activeRun: this.#store.runs.activeForChat(conversation.chatKey),
-      pendingApprovals: this.#store.approvals.findPendingByChat(conversation.chatKey).length,
-      recentRuns: this.#store.runs.listRecent(conversation.chatKey, 5),
-    }));
+    return this.#store.conversations
+      .list()
+      .filter((conversation) => this.#config.projects[conversation.projectId]?.hidden !== true)
+      .map((conversation) => ({
+        ...conversation,
+        activeRun: this.#store.runs.activeForChat(conversation.chatKey),
+        pendingApprovals: this.#store.approvals.findPendingByChat(conversation.chatKey).length,
+        recentRuns: this.#store.runs.listRecent(conversation.chatKey, 5),
+      }));
   }
 
   async projectSessions(projectId: string): Promise<AgentSession[]> {
@@ -436,6 +381,18 @@ export class AdminService {
         "opencode_unavailable",
         `无法读取 OpenCode 模型：${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  async reloadOpenCode(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.#agent.reloadConfig();
+      this.record({ action: "admin.opencode.reloaded", detail: {} });
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.record({ action: "admin.opencode.reload_failed", detail: { error: message } });
+      return { ok: false, error: message };
     }
   }
 
@@ -558,6 +515,30 @@ export class AdminService {
       detail: { name, override: options.override === true },
     });
     return file;
+  }
+
+  async setPromptModel(
+    name: string,
+    model: string | null,
+    options: { override?: boolean } = {},
+  ): Promise<{
+    prompt: PromptFile;
+    reload: { ok: boolean; warnings: string[]; error?: string };
+  }> {
+    const prompt = await this.prompts.setModel(name, model, options);
+    let reload: { ok: boolean; warnings: string[]; error?: string };
+    try {
+      await this.#agent.reloadConfig();
+      reload = { ok: true, warnings: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reload = { ok: false, warnings: [message], error: message };
+    }
+    this.record({
+      action: "admin.prompt.model",
+      detail: { name, model, reloaded: reload.ok },
+    });
+    return { prompt, reload };
   }
 
   async promptBackups(

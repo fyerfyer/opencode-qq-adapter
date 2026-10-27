@@ -123,15 +123,31 @@ export async function runCli(argv: string[]): Promise<void> {
       }
       let stopping = false;
       const shutdown = async (signal: string) => {
-        if (stopping) return;
+        if (stopping) {
+          logger.warn({ signal }, "Shutdown already in progress; forcing exit");
+          process.exit(1);
+        }
         stopping = true;
         logger.info({ signal }, "Shutting down");
-        await app.stop();
-        process.exitCode = 0;
+        const force = setTimeout(() => {
+          logger.warn({ signal }, "Shutdown timed out; forcing exit");
+          process.exit(1);
+        }, 15_000);
+        try {
+          await app.stop();
+          clearTimeout(force);
+          logger.flush?.();
+          process.exit(0);
+        } catch (error) {
+          clearTimeout(force);
+          logger.error({ err: error, signal }, "Shutdown failed");
+          process.exit(1);
+        }
       };
-      process.once("SIGINT", () => void shutdown("SIGINT"));
-      process.once("SIGTERM", () => void shutdown("SIGTERM"));
+      process.on("SIGINT", () => void shutdown("SIGINT"));
+      process.on("SIGTERM", () => void shutdown("SIGTERM"));
       process.on("SIGHUP", () => {
+        if (stopping) return;
         void app.reloadConfig().then((result) => {
           if (!result.ok) logger.error({ error: result.error }, "SIGHUP config reload failed");
         });
@@ -142,6 +158,7 @@ export async function runCli(argv: string[]): Promise<void> {
         logger.fatal({ err: error }, "Bridge failed to start");
         process.exitCode = 1;
         await app.stop();
+        process.exit(1);
       }
     });
 
@@ -359,7 +376,7 @@ async function doctor(configPath: string): Promise<void> {
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
-    report(true, `project ${id}`, project.path);
+    report(true, `project ${id}`, `${project.path}${project.hidden ? " (internal)" : ""}`);
   }
 
   if (config.plugins.roleplay !== undefined) {
@@ -372,12 +389,7 @@ async function doctor(configPath: string): Promise<void> {
     report(project !== undefined, "roleplay project", projectId);
     if (project !== undefined) {
       report(project.workspace === "none", "roleplay workspace", project.workspace);
-      const policy = config.policies[project.policy];
-      report(
-        policy !== undefined && policy.edit !== "allow" && policy.shell !== "allow",
-        "roleplay policy",
-        project.policy,
-      );
+      report(project.hidden, "roleplay project hidden", String(project.hidden));
       const personasDir =
         typeof options.personas_dir === "string" && options.personas_dir.length > 0
           ? resolve(options.personas_dir)

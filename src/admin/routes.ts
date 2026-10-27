@@ -6,7 +6,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Logger } from "pino";
 import { ZodError, z } from "zod";
 import type { AppConfig } from "../config/schema.js";
-import { groupSchema, policySchema, projectSchema, userSchema } from "../config/schema.js";
+import { projectSchema, userSchema } from "../config/schema.js";
 import type { AdminSessionRecord } from "../domain/admin.js";
 import { AdminConfigError } from "./config-editor.js";
 import { PromptError } from "./prompts.js";
@@ -169,15 +169,21 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     const body = await readJson(
       context,
       z.object({
-        apiKey: z.string().min(1).max(4096),
+        apiKey: z.string().max(4096).optional(),
+        baseUrl: z.string().max(2000).optional(),
+        endpoint: z.string().max(200).optional(),
+        model: z.string().max(200).optional(),
         expectedEnvHash: z.string().nullable().optional(),
       }),
     );
     return context.json(
-      await service.saveJevConnection(
-        body.apiKey,
-        body.expectedEnvHash !== undefined ? body.expectedEnvHash : undefined,
-      ),
+      await service.saveJevConnection({
+        ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
+        ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+        ...(body.endpoint !== undefined ? { endpoint: body.endpoint } : {}),
+        ...(body.model !== undefined ? { model: body.model } : {}),
+        ...(body.expectedEnvHash !== undefined ? { expectedEnvHash: body.expectedEnvHash } : {}),
+      }),
     );
   });
 
@@ -192,18 +198,6 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   api.delete("/users/:qq", async (context) => {
     const qq = validateQq(context.req.param("qq"));
     const result = await service.deleteUser(qq, configHash(context));
-    return context.json(result);
-  });
-
-  api.put("/groups/:id", async (context) => {
-    const id = validateNumericId(context.req.param("id"), "group");
-    const group = await readJson(context, groupSchema);
-    const result = await service.upsertGroup(id, group, configHash(context));
-    return context.json(result);
-  });
-  api.delete("/groups/:id", async (context) => {
-    const id = validateNumericId(context.req.param("id"), "group");
-    const result = await service.deleteGroup(id, configHash(context));
     return context.json(result);
   });
 
@@ -229,18 +223,6 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     return context.json({ ok: true });
   });
 
-  api.put("/policies/:name", async (context) => {
-    const name = validateId(context.req.param("name"), "policy");
-    const policy = await readJson(context, policySchema);
-    const result = await service.upsertPolicy(name, policy, configHash(context));
-    return context.json(result);
-  });
-  api.delete("/policies/:name", async (context) => {
-    const name = validateId(context.req.param("name"), "policy");
-    const result = await service.deletePolicy(name, configHash(context));
-    return context.json(result);
-  });
-
   api.put("/settings/default-project", async (context) => {
     const body = await readJson(context, z.object({ projectId: z.string().min(1).nullable() }));
     const result = await service.setDefaultProject(body.projectId, configHash(context));
@@ -251,6 +233,8 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     const projectId = context.req.query("projectId");
     return context.json({ models: await service.conversationModels(projectId) });
   });
+
+  api.post("/opencode/reload", async (context) => context.json(await service.reloadOpenCode()));
 
   api.get("/agents", async (context) => {
     const projectId = context.req.query("projectId");
@@ -331,6 +315,20 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   api.get("/prompts/:name/backups", async (context) =>
     context.json({ backups: await service.promptBackups(context.req.param("name")) }),
   );
+  api.put("/prompts/:name/model", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        model: z.string().min(1).max(200).regex(/^\S+$/, "模型不能包含空白字符").nullable(),
+        override: z.boolean().optional(),
+      }),
+    );
+    return context.json(
+      await service.setPromptModel(context.req.param("name"), body.model, {
+        ...(body.override !== undefined ? { override: body.override } : {}),
+      }),
+    );
+  });
   api.get("/prompts/:name/backups/:backup", async (context) =>
     context.json({
       content: await service.readPromptBackup(
@@ -400,6 +398,25 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     );
     return context.json(
       await service.setPluginEnabled(id, body.enabled, body.expectedHash ?? configHash(context)),
+    );
+  });
+
+  api.put("/plugins/:id/secrets", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    const body = await readJson(
+      context,
+      z.object({
+        key: z.string().min(1).max(200),
+        value: z.string().min(1).max(4096),
+        expectedEnvHash: z.string().nullable().optional(),
+      }),
+    );
+    return context.json(
+      await service.connectionService.savePluginSecret(id, {
+        key: body.key,
+        value: body.value,
+        ...(body.expectedEnvHash !== undefined ? { expectedEnvHash: body.expectedEnvHash } : {}),
+      }),
     );
   });
 
@@ -675,13 +692,6 @@ function configHash(context: AdminContext): string | undefined {
 function validateQq(value: string): string {
   if (!/^\d{5,12}$/.test(value)) {
     throw new AdminError(400, "invalid_qq", "QQ 号必须是 5–12 位数字。");
-  }
-  return value;
-}
-
-function validateNumericId(value: string, label: string): string {
-  if (!/^\d+$/.test(value)) {
-    throw new AdminError(400, "invalid_id", `${label} ID 必须是数字。`);
   }
   return value;
 }

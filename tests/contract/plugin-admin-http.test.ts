@@ -37,7 +37,7 @@ async function startApp(): Promise<Harness> {
   await writeFile(
     configPath,
     stringify({
-      version: 1,
+      version: 2,
       server: { port: 0 },
       onebot: { url: "ws://127.0.0.1:3001", access_token: "test" },
       opencode: { service: { mode: "off", base_url: "http://127.0.0.1:1" } },
@@ -48,15 +48,14 @@ async function startApp(): Promise<Harness> {
       },
       workspaces: { root: join(root, "workspaces") },
       default_project: "demo",
-      users: { "20000": { role: "owner", projects: ["*"] } },
+      users: {
+        "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
+      },
       projects: {
         demo: {
           path: projectPath,
-          policy: "standard",
-          allowed_users: ["20000"],
         },
       },
-      policies: { standard: { read: "allow", edit: "ask", shell: "ask" } },
       plugins: {
         "admin-fixture": {
           path: fixture("admin"),

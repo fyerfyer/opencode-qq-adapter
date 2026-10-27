@@ -1,7 +1,9 @@
 import {
   Bot,
   CheckCircle2,
+  KeyRound,
   LoaderCircle,
+  Play,
   Save,
   ShieldCheck,
   Terminal,
@@ -11,7 +13,12 @@ import { useEffect, useState } from "react";
 import { CoreLink } from "@rp/components/core-link";
 import { toast } from "@rp/toast";
 import { api, errorMessage } from "@rp/api/client";
-import type { PluginOptionsSaveResult, PluginOptionsSnapshot, RoleplaySummary } from "@/api/types";
+import type {
+  PluginOptionsSaveResult,
+  PluginOptionsSnapshot,
+  PluginSecretResult,
+  RoleplaySummary,
+} from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -87,6 +94,9 @@ export function SettingsTab() {
   const [hash, setHash] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<PluginOptionsSaveResult | null>(null);
+  const [jevApiKey, setJevApiKey] = useState("");
+  const [jevTesting, setJevTesting] = useState(false);
+  const [jevTest, setJevTest] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (snapshot.data !== null) {
@@ -107,16 +117,59 @@ export function SettingsTab() {
         options,
         expectedHash: hash.length > 0 ? hash : undefined,
       });
+      const apiKey = jevApiKey.trim();
+      let secret: PluginSecretResult | null = null;
+      if (apiKey.length > 0) {
+        secret = await api.put<PluginSecretResult>("/plugins/roleplay/secrets", {
+          key: String(options.jev_api_key_env ?? "TYPESAFE_API_KEY"),
+          value: apiKey,
+        });
+        setJevApiKey("");
+      }
       setOptions({ ...ROLEPLAY_DEFAULTS, ...saved.options });
       setHash(saved.configHash ?? "");
       setResult(saved);
-      toast.success("Roleplay 配置已保存并热加载");
+      toast.success(
+        secret === null
+          ? "Roleplay 配置已保存并热加载"
+          : "Roleplay 配置与 Jev 密钥已保存并热加载",
+      );
+      if (secret?.reload?.ok === false) {
+        toast.warning(`Jev 密钥已保存，但 Roleplay 重载失败：${secret.reload.error ?? "未知错误"}`);
+      }
       await snapshot.refresh(true);
       await summary.refresh(true);
     } catch (caught) {
       toast.error(errorMessage(caught));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const testJev = async () => {
+    setJevTesting(true);
+    setJevTest(null);
+    try {
+      const decision = await api.post<{
+        emotion: string | null;
+        confidence: number;
+        stickerOk: number;
+        latencyMs: number;
+        apiKeyEnv: string;
+      }>("/plugins/roleplay/test/jev", {
+        userText: "你好呀，今天过得怎么样？",
+        replyText: "还不错，刚刚忙完一点事情。",
+        emotions: ["happy", "shy", "sad", "angry", "surprised", "sleepy", "smug", "thinking"],
+      });
+      const message = `连接正常 · ${decision.latencyMs}ms · ${decision.emotion ?? "none"} ${decision.confidence.toFixed(2)} · ${decision.apiKeyEnv}`;
+      setJevTest({ ok: true, message });
+      toast.success("Jev 连接正常");
+    } catch (caught) {
+      const message = errorMessage(caught);
+      setJevTest({ ok: false, message });
+      toast.error(`Jev 检测失败：${message}`);
+    } finally {
+      setJevTesting(false);
     }
   };
 
@@ -133,6 +186,9 @@ export function SettingsTab() {
       />
     );
   }
+
+  const jevState = summary.data?.jev;
+  const jevNeedsKey = jevState?.judge === "jev" || jevState?.judge === "hybrid";
 
   return (
     <div className="space-y-4">
@@ -170,9 +226,15 @@ export function SettingsTab() {
           detail={summary.data?.paths.agents ?? "加载中…"}
         />
         <HealthCard
-          label="Jev 密钥"
-          ok={summary.data?.jev.configured ?? false}
-          detail={`${summary.data?.jev.judge ?? "-"} · ${String(options.jev_api_key_env ?? "")}`}
+          label="Jev"
+          ok={jevState === undefined ? false : jevNeedsKey ? jevState.apiKeyConfigured : true}
+          detail={`${jevState?.judge ?? "-"} · ${jevState?.apiKeyEnv ?? "-"} · ${
+            jevNeedsKey
+              ? jevState?.apiKeyConfigured
+                ? "密钥已配置"
+                : "密钥未配置"
+              : "当前模式不需要密钥"
+          }`}
         />
         <HealthCard
           label="记忆目录"
@@ -327,9 +389,22 @@ export function SettingsTab() {
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle>Jev 端点</CardTitle>
-              <CardDescription>密钥只从环境变量读取，不会写入 YAML。</CardDescription>
+            <CardHeader className="flex flex-row items-start justify-between gap-3">
+              <div>
+                <CardTitle>Jev 端点</CardTitle>
+                <CardDescription>
+                  Base URL、Endpoint 和模型写入 YAML；API Key 写入 .env。保存后自动重载
+                  Roleplay；测试连接使用已保存的端点与密钥。
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={jevTesting || saving}
+                onClick={() => void testJev()}
+              >
+                {jevTesting ? <LoaderCircle className="animate-spin" /> : <Play />} 测试连接
+              </Button>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <TextField
@@ -351,6 +426,14 @@ export function SettingsTab() {
                 label="密钥环境变量名"
                 value={options.jev_api_key_env}
                 onChange={(value) => set("jev_api_key_env", value)}
+              />
+              <TextField
+                label="API Key"
+                value={jevApiKey}
+                onChange={setJevApiKey}
+                placeholder="留空保持现有值"
+                type="password"
+                hint="只写入 .env；页面不会回显已保存的密钥。填写后点击顶部「保存配置」。"
               />
               <NumberField
                 label="最低 confidence"
@@ -375,6 +458,16 @@ export function SettingsTab() {
                 min={300}
                 max={4000}
               />
+              {jevTest !== null && (
+                <p
+                  className={`md:col-span-2 xl:col-span-3 ${
+                    jevTest.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"
+                  } text-xs`}
+                >
+                  {jevTest.ok ? "✓ " : "✗ "}
+                  {jevTest.message}
+                </p>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -603,15 +696,20 @@ function TextField({
   value,
   onChange,
   placeholder,
+  type = "text",
+  hint,
 }: {
   label: string;
   value: unknown;
   onChange: (value: string) => void;
   placeholder?: string;
+  type?: "text" | "password";
+  hint?: string;
 }) {
   return (
-    <Field label={label}>
+    <Field label={label} hint={hint}>
       <Input
+        type={type}
         value={value === null || value === undefined ? "" : String(value)}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

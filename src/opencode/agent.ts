@@ -218,6 +218,12 @@ export class OpenCodeAgent implements AgentPort {
     }));
   }
 
+  async reloadConfig(): Promise<void> {
+    const client = await this.#getHealthyClient();
+    await client.location.reload();
+    this.#logger.info("OpenCode configuration and agents reloaded");
+  }
+
   async listSessions(directory: string, limit = 20): Promise<AgentSession[]> {
     const client = await this.#service.getClient();
     const response = await client.session.list({ directory, limit });

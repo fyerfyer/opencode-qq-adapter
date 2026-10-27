@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { App } from "../../src/app.js";
@@ -23,6 +23,7 @@ interface AdminHarness {
   configPath: string;
   projectPath: string;
   promptRoot: string;
+  agent: FakeAgent;
   cookie: string;
   csrf: string;
 }
@@ -36,7 +37,7 @@ async function startAdminApp(): Promise<AdminHarness> {
   await writeFile(
     configPath,
     stringify({
-      version: 1,
+      version: 2,
       server: { port: 0 },
       onebot: { url: "ws://127.0.0.1:3001", access_token: "test" },
       opencode: { service: { mode: "off", base_url: "http://127.0.0.1:1" } },
@@ -46,15 +47,20 @@ async function startAdminApp(): Promise<AdminHarness> {
       },
       workspaces: { root: join(root, "workspaces") },
       default_project: "demo",
-      users: { "20000": { role: "owner", projects: ["*"] } },
+      users: {
+        "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
+      },
       projects: {
         demo: {
           path: projectPath,
-          policy: "standard",
-          allowed_users: ["20000"],
         },
       },
-      policies: { standard: { read: "allow", edit: "ask", shell: "ask" } },
+      plugins: {
+        "hello-fixture": {
+          path: join(process.cwd(), "tests/fixtures/plugins/hello"),
+          options: { secretKey: "TEST_PLUGIN_KEY" },
+        },
+      },
       admin: { enabled: true },
     }),
     "utf8",
@@ -65,11 +71,12 @@ async function startAdminApp(): Promise<AdminHarness> {
   config.server.port = 0;
   const store = new SqliteStore(":memory:");
   const onebot = new FakeOneBot();
+  const agent = new FakeAgent();
   const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
   const app = new App(config, {
     logger,
     store,
-    agent: new FakeAgent(),
+    agent,
     onebot,
     configPath,
     adminPassword: ADMIN_PASSWORD,
@@ -99,6 +106,7 @@ async function startAdminApp(): Promise<AdminHarness> {
     configPath,
     projectPath,
     promptRoot,
+    agent,
     cookie,
     csrf: body.csrfToken,
   };
@@ -133,10 +141,8 @@ async function request(
 
 async function access(harness: AdminHarness): Promise<{
   configHash: string;
-  users: Array<{ qq: string; note?: string }>;
-  groups: Array<{ id: string }>;
-  projects: Array<{ id: string }>;
-  policies: Array<{ name: string }>;
+  users: Array<{ qq: string; note?: string; write_projects: string[] }>;
+  projects: Array<{ id: string; hidden: boolean }>;
 }> {
   const response = await request(harness, "/admin/api/access");
   expect(response.status).toBe(200);
@@ -257,7 +263,7 @@ describe("Admin HTTP API", () => {
     const invalid = await request(harness, "/admin/api/config", {
       method: "PUT",
       body: {
-        content: "version: 1\nusers:\n  not-a-qq:\n    role: owner\n",
+        content: "version: 2\nusers:\n  not-a-qq:\n    role: owner\n",
         expectedHash: updateBody.hash,
       },
     });
@@ -275,46 +281,37 @@ describe("Admin HTTP API", () => {
     expect(await readFile(harness.configPath, "utf8")).toContain("edited from admin API");
   });
 
-  it("edits groups, projects and policies without sending path keys in the body", async () => {
+  it("edits users and internal projects without sending path keys in the body", async () => {
     const harness = await startAdminApp();
     let snapshot = await access(harness);
 
-    const group = await request(harness, "/admin/api/groups/30001", {
+    const user = await request(harness, "/admin/api/users/20001", {
       method: "PUT",
       configHash: snapshot.configHash,
       body: {
-        enabled: true,
-        mode: "shared",
-        allowed_users: ["20000"],
+        role: "member",
         projects: ["demo"],
+        write_projects: [],
       },
     });
-    expect(group.status).toBe(200);
-    let hash = ((await group.json()) as { hash: string }).hash;
+    expect(user.status).toBe(200);
+    const hash = ((await user.json()) as { hash: string }).hash;
     snapshot = await access(harness);
-    expect(snapshot.groups.some((item) => item.id === "30001")).toBe(true);
+    expect(snapshot.users.some((item) => item.qq === "20001")).toBe(true);
+    expect(snapshot.users.find((item) => item.qq === "20001")?.write_projects).toEqual([]);
 
     const project = await request(harness, "/admin/api/projects/other", {
       method: "PUT",
       configHash: hash,
       body: {
         path: harness.projectPath,
-        policy: "standard",
+        hidden: true,
       },
     });
     expect(project.status).toBe(200);
-    hash = ((await project.json()) as { hash: string }).hash;
     snapshot = await access(harness);
+    expect(snapshot.projects.find((item) => item.id === "other")?.hidden).toBe(true);
     expect(snapshot.projects.some((item) => item.id === "other")).toBe(true);
-
-    const policy = await request(harness, "/admin/api/policies/trusted", {
-      method: "PUT",
-      configHash: hash,
-      body: { read: "allow", shell: "ask" },
-    });
-    expect(policy.status).toBe(200);
-    snapshot = await access(harness);
-    expect(snapshot.policies.some((item) => item.name === "trusted")).toBe(true);
   });
 
   it("manages prompt files and backups without path traversal", async () => {
@@ -356,6 +353,69 @@ describe("Admin HTTP API", () => {
       body: { content: "nope" },
     });
     expect(invalid.status).toBe(400);
+  });
+
+  it("writes a plugin-referenced secret and reloads that plugin", async () => {
+    const harness = await startAdminApp();
+    const response = await request(harness, "/admin/api/plugins/hello-fixture/secrets", {
+      method: "PUT",
+      body: { key: "TEST_PLUGIN_KEY", value: "plugin-secret-value" },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      key: string;
+      configured: boolean;
+      reload: { ok: boolean } | null;
+    };
+    expect(body).toMatchObject({
+      key: "TEST_PLUGIN_KEY",
+      configured: true,
+      reload: { ok: true },
+    });
+    expect(await readFile(join(dirname(harness.configPath), ".env"), "utf8")).toContain(
+      "TEST_PLUGIN_KEY=plugin-secret-value",
+    );
+    expect(JSON.stringify(body)).not.toContain("plugin-secret-value");
+
+    const rejected = await request(harness, "/admin/api/plugins/hello-fixture/secrets", {
+      method: "PUT",
+      body: { key: "UNRELATED_KEY", value: "nope" },
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  it("reloads OpenCode configuration from the admin API", async () => {
+    const harness = await startAdminApp();
+    const response = await request(harness, "/admin/api/opencode/reload", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(harness.agent.reloads).toBe(1);
+  });
+
+  it("updates an agent model and hot-reloads OpenCode", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(
+      join(harness.promptRoot, "my-agent.md"),
+      "---\ndescription: Mine\n---\n\nBody\n",
+      "utf8",
+    );
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md/model", {
+      method: "PUT",
+      body: { model: "fake/model-b" },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      prompt: { model: string | null; content: string };
+      reload: { ok: boolean };
+    };
+    expect(body.prompt.model).toBe("fake/model-b");
+    expect(body.reload.ok).toBe(true);
+    expect(harness.agent.reloads).toBe(1);
+    expect(await readFile(join(harness.promptRoot, "my-agent.md"), "utf8")).toContain(
+      "model: fake/model-b",
+    );
   });
 
   it("marks plugin-managed agents read-only until advanced override", async () => {

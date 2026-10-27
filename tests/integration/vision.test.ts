@@ -21,7 +21,7 @@ describe.skipIf(!enabled)("OpenCode vision integration", () => {
     const imagePath = join(directory, "red.png");
     await writeFile(imagePath, RED_PNG);
     const config = configSchema.parse({
-      version: 1,
+      version: 2,
       onebot: { url: "ws://127.0.0.1:3001", access_token: "unused" },
       opencode: {
         service: { mode: "external", version: ">=2.0.0 <3.0.0" },

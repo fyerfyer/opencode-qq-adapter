@@ -105,7 +105,9 @@ describe("setup wizard", () => {
       checkPaths: true,
       env: { ...process.env, ...env },
     });
+    expect(loaded.config.version).toBe(2);
     expect(loaded.config.users["12345678"]?.role).toBe("owner");
+    expect(loaded.config.users["12345678"]?.write_projects).toEqual(["*"]);
     expect(loaded.config.projects.demo?.path).toBe(result.projects[0]?.path);
     expect(loaded.config.default_project).toBe("demo");
     expect(loaded.config.storage.database_path.startsWith(result.dataDir)).toBe(true);
@@ -365,7 +367,7 @@ describe("setup wizard", () => {
   it("refuses to overwrite an existing config without --force", async () => {
     const dir = await tempDir();
     const configPath = join(dir, "config.yaml");
-    await writeFile(configPath, "version: 1\n");
+    await writeFile(configPath, "version: 2\n");
     await expect(
       runSetup({
         configPath,
@@ -383,7 +385,7 @@ describe("setup wizard", () => {
 
   it("backs up an existing config when --force is used", async () => {
     const { dir, configPath } = await runTempSetup();
-    await writeFile(configPath, "version: 1\n# old\n");
+    await writeFile(configPath, "version: 2\n# old\n");
     const result = await runSetup({
       configPath,
       dataDir: join(dir, "data"),
@@ -455,14 +457,9 @@ describe("setup wizard", () => {
     expect(loaded.config.projects.roleplay).toMatchObject({
       path: personasDir,
       workspace: "none",
-      policy: "roleplay",
+      hidden: true,
+      managed_by: "roleplay",
       agent: "qq-rp",
-    });
-    expect(loaded.config.policies.roleplay).toMatchObject({
-      read: "allow",
-      edit: "deny",
-      shell: "deny",
-      external_directory: "deny",
     });
     expect(loaded.config.plugins.roleplay?.path).toContain("packages/roleplay");
     expect(loaded.config.plugins.roleplay?.options).toMatchObject({
@@ -513,6 +510,63 @@ describe("setup wizard", () => {
     expect(merged).toContain("roleplay:");
     const files = await readdir(dir);
     expect(files.some((file) => file.startsWith("config.yaml.bak."))).toBe(true);
+  });
+
+  it("upgrades a v1 config on --reconfigure without leaving group/policy keys", async () => {
+    const dir = await tempDir();
+    const configPath = join(dir, "config.yaml");
+    const dataDir = join(dir, "data");
+    await writeFile(
+      configPath,
+      `version: 1
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: test-token
+users:
+  "12345678":
+    role: owner
+    projects: ["*"]
+    policy: standard
+projects:
+  demo:
+    path: ${dir}
+    policy: standard
+    allowed_users: ["12345678"]
+groups:
+  "20001":
+    enabled: true
+    allowed_users: ["12345678"]
+policies:
+  standard:
+    read: allow
+`,
+      "utf8",
+    );
+    const result = await runSetup({
+      configPath,
+      dataDir,
+      ownerQq: "12345678",
+      projects: [{ id: "demo", path: dir }],
+      napcat: "skip",
+      agent: "default",
+      yes: true,
+      reconfigure: true,
+      skipPlugin: true,
+      skipDoctor: true,
+      output: () => undefined,
+    });
+    const source = await readFile(configPath, "utf8");
+    expect(source).not.toMatch(/^groups:/m);
+    expect(source).not.toMatch(/^policies:/m);
+    expect(source).not.toContain("policy:");
+    expect(source).not.toContain("allowed_users:");
+    const env = parseEnvFile(await readFile(result.envPath, "utf8"));
+    const loaded = await loadConfig(configPath, {
+      checkPaths: true,
+      env: { ...process.env, ...env },
+    });
+    expect(loaded.config.version).toBe(2);
+    expect(loaded.config.users["12345678"]?.write_projects).toEqual(["*"]);
   });
 
   it("uses a newly entered NapCat token when reconfiguring an existing env", async () => {

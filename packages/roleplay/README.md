@@ -13,7 +13,7 @@ Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Worldbook select
 - Uses Jev (System One decision model) to choose an emotion from the visible reply, with confidence/sticker-ok thresholds.
 - Consolidates memory in the background through a hidden, tool-free `qq-rp-utility` agent using section-level JSON operations.
 - Splits replies into 1-4 QQ bubbles with typing delays.
-- Supports private chats, group `per_user`, group `shared`, and group `readonly`.
+- Supports private chats and zero-config group chats (one independent conversation per member).
 - Ships an iframe admin WebUI (`/admin/plugins/roleplay`) for cards, worldbook editing, stickers, Markdown memory, bindings and plugin options.
 
 ## Worldbook lite+
@@ -77,7 +77,7 @@ jev_timeout_ms: 2500
 - `sticker_cooldown_ms` limits automatic stickers to at most one per window; `0` disables the cooldown. `!sticker test` bypasses it.
 - `hybrid` tries a valid tag first, then Jev.
 - `tag` keeps the original tag-only behavior; `off` disables stickers but still strips tags.
-- The key is read from the environment variable named by `jev_api_key_env`; never put it in YAML.
+- The key is read from the environment variable named by `jev_api_key_env`; never put it in YAML. The Roleplay WebUI settings tab can write this `.env` key (write-only field) and has a **Test connection** button that performs one real Jev request and reports latency/confidence.
 - Only the current user message and visible assistant reply are sent (no system prompt, memory, or worldbook). `jev_timeout_ms` is kept under the core 4s reply-hook budget; failures degrade to text.
 - Jev input is roughly 600-700 tokens per turn for this prompt; output tokens are free on Jev. Check your provider's current pricing and data policy.
 - For OpenRouter/compatible relays, use e.g. `jev_base_url: https://openrouter.ai/api`, `jev_endpoint: alpha/decisions`, `jev_model: typesafe/jev-1.14`, and an `OPENROUTER_API_KEY` env var.
@@ -86,8 +86,8 @@ jev_timeout_ms: 2500
 
 ```text
 memory.md                 stable memory for one persona + chat scope + user
-scene.md                  shared group scene (shared/readonly groups)
-users/<qq>.md             per-member memory inside a shared group
+scene.md                  legacy shared-group scene (not used by the current core)
+users/<qq>.md             legacy per-member memory inside a shared group
 history/*.md              previous document versions
 memory_events (SQLite)    audit: consolidate / manual_add / manual_delete
 messages (SQLite)         raw transcript + FTS5 trigram retrieval
@@ -177,22 +177,11 @@ projects:
   roleplay:
     path: ~/.local/share/opencode-qq/plugins/roleplay/personas
     description: Roleplay personas
-    policy: roleplay
     workspace: none
     agent: qq-rp
     model: null
-    allowed_users: ["10001"]
-
-policies:
-  roleplay:
-    read: allow
-    glob: deny
-    grep: deny
-    edit: deny
-    shell: deny
-    webfetch: deny
-    websearch: deny
-    external_directory: deny
+    hidden: true
+    managed_by: roleplay
 
 plugins:
   roleplay:
@@ -248,8 +237,8 @@ plugins:
 
 `install_agent: true` writes two managed agents to `~/.config/opencode/agents/`:
 
-- `qq-rp.md`: the tool-free roleplay engine.
-- `qq-rp-utility.md`: the hidden, JSON-only memory consolidator (`hidden: true`, `steps: 1`, all tools denied).
+- `qq-rp.md`: the tool-free roleplay engine. It deliberately has no `steps: 1`; OpenCode's final-step max-steps notice would otherwise leak into roleplay replies.
+- `qq-rp-utility.md`: the hidden, JSON-only memory consolidator (`hidden: true`, all tools denied).
 
 Existing user-owned files are never overwritten. After the first install, reload or restart OpenCode so the agents are visible.
 
@@ -297,35 +286,27 @@ The installed engine files (`qq-rp.md`, `qq-rp-utility.md`) appear under **Agent
 
 ## Group chats
 
-The plugin follows the core group mode:
+## Groups
 
-| Mode | Memory layout | Who can manage |
+The core bridge no longer has group configuration. Every authorized QQ gets an independent conversation in private chats and in any group, so roleplay memory is isolated per member:
+
+| Context | Memory layout | Who can manage |
 | --- | --- | --- |
-| `per_user` | `group_<gid>_<uid>/memory.md` per member | the member |
-| `shared` | `group_<gid>/scene.md` + `group_<gid>/users/<uid>.md` | owner/admin |
-| `readonly` | Same as shared | owner/admin |
+| private | `private_<qq>/memory.md` | the user |
+| group | `group_<gid>_<uid>/memory.md` per member | the member |
 
-- In `shared`/`readonly` groups, `!persona use`, `!rp on/off`, `!forget confirm`, and `!memory` are owner/admin only.
-- `!remember` is allowed for every member; it writes to that member's `users/<uid>.md`.
+- `!persona use`, `!rp on/off`, `!forget confirm`, and `!memory` are available to the member in their own conversation.
 - `!memory` / `!memory search` / `!memory history` / `!memory diff` in a group send details to the member's private chat; the group only gets a short acknowledgement.
-- Shared scene memory is shared; per-user documents stay per-user. Owner/admin can view all user documents for moderation.
-- `!forget confirm` as owner/admin removes the whole group memory directory and its `memory_events`.
+- Legacy `shared` / `readonly` branches remain in the plugin code for tests and future use, but the current bridge never selects them.
 
-Example group config:
+Example: no group config is needed. Ensure the QQ is in `config.yaml` under `users` and has access to at least one visible project.
 
 ```yaml
-groups:
-  "30001":
-    enabled: true
-    mode: per_user # or shared / readonly
-    require_mention: true
-    allowed_users: ["10001", "10002"]
-    projects: ["roleplay"]
-
-projects:
-  roleplay:
-    # ...
-    allowed_groups: ["30001"]
+users:
+  "10001":
+    role: owner
+    projects: ["*"]
+    write_projects: ["*"]
 ```
 
 ## How it works
@@ -361,7 +342,7 @@ The generic SQLite/Markdown/retrieval primitives are in `@opencode-qq/memory`. T
 - LLM consolidation sends the current document plus recent conversation text to `memory_utility_model` (or the OpenCode default). Set `memory_enabled: false` to keep memory local and use only `!remember` + raw FTS.
 - `memory_events` records action, summary, changed sections, source message id, and timestamps; document versions are kept under `history/`.
 - `!forget confirm` deletes the document directory, history, raw messages, and memory events for the scope in one operation.
-- Group memory is isolated by ChatKey. `per_user` members never share a scope; `shared` groups share `scene.md` but keep `users/<qq>.md` separate.
+- Group memory is isolated by ChatKey. Every member has an independent `group_<gid>_<uid>/memory.md`; the core bridge does not expose shared group memory.
 
 ## Development
 

@@ -64,7 +64,7 @@ describe("plugin installer integration", () => {
     await writeFile(
       configPath,
       stringify({
-        version: 1,
+        version: 2,
         server: { host: "127.0.0.1", port: 0 },
         onebot: { url: "ws://127.0.0.1:1", access_token: "integration" },
         opencode: { service: { mode: "off", base_url: "http://127.0.0.1:1" } },
@@ -75,15 +75,13 @@ describe("plugin installer integration", () => {
         },
         workspaces: { root: join(root, "workspaces") },
         default_project: "demo",
-        users: { "20000": { role: "owner", projects: ["*"] } },
+        users: {
+          "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
+        },
         projects: {
           demo: {
             path: projectPath,
-            allowed_users: ["20000"],
           },
-        },
-        policies: {
-          standard: { read: "allow" },
         },
         plugins: {},
         admin: { enabled: true },

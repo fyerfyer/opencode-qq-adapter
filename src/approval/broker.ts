@@ -578,23 +578,11 @@ export class ApprovalBroker {
   #canApprove(approval: ApprovalRecord, message: IncomingMessage): boolean {
     const actor = this.#policy.actor(message.userId);
     if (actor === null) return false;
-    const groupId = message.chat.groupId;
-    if (groupId !== undefined) {
-      const group = this.#policy.group(groupId);
-      if (group === null || !group.enabled) return false;
-      if (!group.allowed_users.includes(String(message.userId))) return false;
-      if (!this.#policy.canUseProject(actor, message.userId, approval.projectId, groupId).allowed) {
-        return false;
-      }
-      if (group.mode === "shared") return actor.role === "owner" || actor.role === "admin";
-      if (actor.role === "owner" || actor.role === "admin") return true;
-      return approval.actorQq === message.userId;
-    }
-
-    if (actor.role === "owner") return true;
-    if (actor.role === "admin") {
-      return this.#policy.canUseProject(actor, message.userId, approval.projectId).allowed;
-    }
+    const allowed = this.#policy.canUseProject(actor, approval.projectId, {
+      includeHidden: true,
+    });
+    if (!allowed.allowed) return false;
+    if (actor.role === "owner" || actor.role === "admin") return true;
     return approval.actorQq === message.userId;
   }
 

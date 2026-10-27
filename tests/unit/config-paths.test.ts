@@ -31,7 +31,7 @@ describe("config paths", () => {
     const dir = await tempDir();
     await mkdir(join(dir, "config"));
     const path = join(dir, "config", "config.yaml");
-    await writeFile(path, "version: 1\n");
+    await writeFile(path, "version: 2\n");
     expect(resolveConfigPath(undefined, { XDG_CONFIG_HOME: join(dir, "xdg") }, dir)).toBe(path);
   });
 

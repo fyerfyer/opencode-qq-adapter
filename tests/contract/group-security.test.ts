@@ -41,15 +41,15 @@ function groupEvent(options: {
   };
 }
 
-async function startApp(mutate: (config: ReturnType<typeof makeTestConfig>) => void) {
+async function startApp(mutate: (config: ReturnType<typeof makeTestConfig>) => void = () => {}) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-group-"));
   const config = makeTestConfig({ projectPath });
   config.server.port = 0;
-  config.users["20001"] = { role: "member", projects: ["demo"] };
-  config.users["20002"] = { role: "member", projects: ["demo"] };
-  config.projects.demo = {
-    ...config.projects.demo,
-    allowed_users: ["20000", "20001", "20002"],
+  config.users["20001"] = {
+    role: "member",
+    projects: ["demo"],
+    write_projects: [],
+    limits: {},
   };
   mutate(config);
   const store = new SqliteStore(":memory:");
@@ -65,18 +65,9 @@ async function startApp(mutate: (config: ReturnType<typeof makeTestConfig>) => v
   return { app, config, store, agent, onebot, projectPath };
 }
 
-describe("Group isolation and security", () => {
-  it("isolates per_user group conversations while sharing the workspace", async () => {
-    const { config, store, agent, onebot } = await startApp((config) => {
-      config.groups["30001"] = {
-        enabled: true,
-        mode: "per_user",
-        require_mention: true,
-        allowed_users: ["20000", "20001"],
-        projects: ["demo"],
-      };
-    });
-    void config;
+describe("Zero-config group chats", () => {
+  it("keeps independent conversations for each member without group configuration", async () => {
+    const { store, agent, onebot } = await startApp();
     onebot.emit(groupEvent({ id: 1, groupId: 30001, userId: 20000, text: "hello from owner" }));
     await waitFor(() => agent.prompts.length === 1, 3000, "first group prompt");
     onebot.emit(groupEvent({ id: 2, groupId: 30001, userId: 20001, text: "hello from member" }));
@@ -91,77 +82,39 @@ describe("Group isolation and security", () => {
     expect(store.workspaces.get("shared:demo")?.status).toBe("idle");
   });
 
-  it("shares one conversation in shared group mode", async () => {
-    const { store, agent, onebot } = await startApp((config) => {
-      config.groups["30003"] = {
-        enabled: true,
-        mode: "shared",
-        require_mention: true,
-        allowed_users: ["20000", "20001"],
-        projects: ["demo"],
-      };
-    });
-    onebot.emit(groupEvent({ id: 3, groupId: 30003, userId: 20000, text: "hello" }));
-    await waitFor(() => agent.prompts.length === 1, 3000, "shared prompt");
-    onebot.emit(groupEvent({ id: 4, groupId: 30003, userId: 20001, text: "again" }));
-    await waitFor(() => agent.prompts.length === 2, 3000, "shared prompt 2");
+  it("uses write_projects rather than group mode for write permissions", async () => {
+    const { agent, onebot } = await startApp();
+    onebot.emit(groupEvent({ id: 3, groupId: 30002, userId: 20000, text: "owner" }));
+    await waitFor(() => agent.prompts.length === 1, 3000, "owner prompt");
+    onebot.emit(groupEvent({ id: 4, groupId: 30002, userId: 20001, text: "member" }));
+    await waitFor(() => agent.prompts.length === 2, 3000, "member prompt");
 
-    expect(store.conversations.get("group:30003")).not.toBeNull();
-    expect(store.conversations.get("group:30003:20000")).toBeNull();
-    expect(agent.sessionInputs).toHaveLength(1);
+    const ownerRules = agent.sessionInputs[0]?.permissions ?? [];
+    const memberRules = agent.sessionInputs[1]?.permissions ?? [];
+    const last = (rules: typeof ownerRules, action: string) =>
+      rules.filter((rule) => rule.action === action).at(-1)?.effect;
+    expect(last(ownerRules, "edit")).toBe("allow");
+    expect(last(ownerRules, "shell")).toBe("ask");
+    expect(last(memberRules, "edit")).toBe("deny");
+    expect(last(memberRules, "shell")).toBe("deny");
   });
 
-  it("forces write tools to deny in readonly groups", async () => {
-    const { agent, onebot } = await startApp((config) => {
-      config.groups["30002"] = {
-        enabled: true,
-        mode: "readonly",
-        require_mention: true,
-        allowed_users: ["20000"],
-        projects: ["demo"],
-      };
-    });
-    onebot.emit(groupEvent({ id: 5, groupId: 30002, userId: 20000, text: "hello" }));
-    await waitFor(() => agent.prompts.length === 1, 3000, "readonly prompt");
-    const rules = agent.sessionInputs[0]?.permissions ?? [];
-    for (const action of ["edit", "write", "shell", "external_directory"]) {
-      const matching = rules.filter((rule) => rule.action === action);
-      expect(matching.at(-1)?.effect).toBe("deny");
-    }
-  });
-
-  it("silently ignores non-allowlisted users and groups", async () => {
-    const { app, onebot } = await startApp((config) => {
-      config.groups["30001"] = {
-        enabled: true,
-        mode: "per_user",
-        require_mention: true,
-        allowed_users: ["20000"],
-        projects: ["demo"],
-      };
-    });
-    onebot.emit(groupEvent({ id: 6, groupId: 30001, userId: 20002, text: "hello" }));
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    onebot.emit(groupEvent({ id: 7, groupId: 39999, userId: 20000, text: "hello" }));
+  it("allows an authorized user in any group and ignores unknown users", async () => {
+    const { app, agent, onebot } = await startApp();
+    onebot.emit(groupEvent({ id: 5, groupId: 39999, userId: 20000, text: "new group" }));
+    await waitFor(() => agent.prompts.length === 1, 3000, "authorized group prompt");
+    onebot.emit(groupEvent({ id: 6, groupId: 30001, userId: 29999, text: "stranger" }));
     await new Promise((resolve) => setTimeout(resolve, 150));
 
-    expect(onebot.sent).toHaveLength(0);
+    expect(agent.prompts).toHaveLength(1);
     const actions = app.audit.listRecent(10).map((entry) => entry.action);
-    expect(actions.filter((action) => action === "access.denied").length).toBeGreaterThanOrEqual(2);
+    expect(actions).toContain("access.denied");
   });
 
   it("ignores unmentioned group chatter when require_mention is on", async () => {
-    const { agent, onebot } = await startApp((config) => {
-      config.groups["30001"] = {
-        enabled: true,
-        mode: "per_user",
-        require_mention: true,
-        allowed_users: ["20000"],
-        projects: ["demo"],
-      };
-    });
+    const { agent, onebot } = await startApp();
     onebot.emit(
-      groupEvent({ id: 8, groupId: 30001, userId: 20000, text: "not for the bot", mention: false }),
+      groupEvent({ id: 7, groupId: 30001, userId: 20000, text: "not for the bot", mention: false }),
     );
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(agent.prompts).toHaveLength(0);

@@ -140,13 +140,19 @@ describe("Application + OneBot port contract", () => {
     const { app, onebot } = await startApp(agent, (config) => {
       config.projects.other = {
         path: otherPath,
-        policy: "standard",
         workspace: "shared",
         agent: null,
         model: null,
         setup: [],
+        base_branch: null,
+        hidden: false,
       };
-      config.users["20000"] = { role: "owner", projects: ["*"] };
+      config.users["20000"] = {
+        role: "owner",
+        projects: ["*"],
+        write_projects: ["*"],
+        limits: {},
+      };
     });
 
     onebot.emit(messageEvent(20, "!use other"));

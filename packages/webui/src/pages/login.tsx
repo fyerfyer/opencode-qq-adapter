@@ -24,8 +24,8 @@ const features = [
   },
   {
     icon: ShieldCheck,
-    title: "访问与策略",
-    description: "编辑用户、群、项目和权限规则，变更先校验再热加载。",
+    title: "成员与权限",
+    description: "按 QQ 配置可访问/可修改项目，以及 Bot 管理权限；变更先校验再热加载。",
   },
   { icon: Database, title: "审计与用量", description: "追踪登录、审批、拒绝和每日 token / cost。" },
 ];

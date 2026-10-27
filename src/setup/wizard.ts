@@ -159,57 +159,13 @@ export function generateConfigObject(options: {
       {
         path: resolve(project.path),
         description: project.id,
-        policy: "standard",
         workspace: "shared",
         agent: null,
         model: null,
-        allowed_users: [options.ownerQq],
         setup: [],
       },
     ]),
   );
-  const policies: Record<string, unknown> = {
-    readonly: {
-      read: "allow",
-      glob: "allow",
-      grep: "allow",
-      edit: "deny",
-      shell: "deny",
-      webfetch: "ask",
-      websearch: "ask",
-      external_directory: "deny",
-    },
-    standard: {
-      read: "allow",
-      glob: "allow",
-      grep: "allow",
-      edit: "ask",
-      shell: "ask",
-      webfetch: "ask",
-      websearch: "ask",
-      external_directory: "deny",
-      shell_rules: [
-        { pattern: "git status *", effect: "allow" },
-        { pattern: "git diff *", effect: "allow" },
-        { pattern: "git push *", effect: "deny" },
-        { pattern: "rm -rf *", effect: "deny" },
-      ],
-    },
-    trusted: {
-      read: "allow",
-      glob: "allow",
-      grep: "allow",
-      edit: "allow",
-      shell: "allow",
-      webfetch: "allow",
-      websearch: "allow",
-      external_directory: "deny",
-      shell_rules: [
-        { pattern: "sudo *", effect: "deny" },
-        { pattern: "git push *", effect: "ask" },
-      ],
-    },
-  };
   const plugins: Record<string, unknown> = {};
   if (options.roleplay !== undefined && options.roleplay !== null) {
     const roleplay = options.roleplay;
@@ -221,23 +177,13 @@ export function generateConfigObject(options: {
     }
     projects[roleplay.projectId] = {
       path: roleplay.personasDir,
-      description: "Roleplay personas (read-only)",
-      policy: "roleplay",
+      description: "Roleplay personas (internal)",
       workspace: "none",
       agent: "qq-rp",
       model: null,
-      allowed_users: [options.ownerQq],
+      hidden: true,
+      managed_by: "roleplay",
       setup: [],
-    };
-    policies.roleplay = {
-      read: "allow",
-      glob: "deny",
-      grep: "deny",
-      edit: "deny",
-      shell: "deny",
-      webfetch: "deny",
-      websearch: "deny",
-      external_directory: "deny",
     };
     plugins.roleplay = {
       enabled: true,
@@ -256,7 +202,7 @@ export function generateConfigObject(options: {
     };
   }
   return {
-    version: 1,
+    version: 2,
     server: {
       host: "127.0.0.1",
       port: DEFAULT_SERVER_PORT,
@@ -289,9 +235,15 @@ export function generateConfigObject(options: {
       health_cache_ms: 5000,
     },
     security: {
-      default_effect: "deny",
       allowed_roots: allowedRoots,
       require_mention_in_group: true,
+      shell_rules: [
+        { pattern: "git status *", effect: "allow" },
+        { pattern: "git diff *", effect: "allow" },
+        { pattern: "git log *", effect: "allow" },
+        { pattern: "sudo *", effect: "deny" },
+        { pattern: "rm -rf *", effect: "deny" },
+      ],
       max_prompt_chars: 8000,
       max_images_per_message: 4,
       max_image_bytes: 10485760,
@@ -308,11 +260,13 @@ export function generateConfigObject(options: {
     },
     default_project: options.projects[0]?.id ?? null,
     users: {
-      [options.ownerQq]: { role: "owner", projects: ["*"] },
+      [options.ownerQq]: {
+        role: "owner",
+        projects: ["*"],
+        write_projects: ["*"],
+      },
     },
-    groups: {},
     projects,
-    policies,
     plugins,
     workspaces: {
       default_mode: "shared",
@@ -961,8 +915,36 @@ function mergeConfigSource(existing: string, generated: Record<string, unknown>)
       `Existing configuration is not valid YAML: ${document.errors.map((error) => error.message).join("; ")}`,
     );
   }
-  mergeConfigValue(document, document.toJS() as Record<string, unknown>, generated, []);
+  const current = document.toJS() as Record<string, unknown>;
+  stripRemovedV1Keys(document, current);
+  mergeConfigValue(document, current, generated, []);
   return document.toString();
+}
+
+/** Remove fields that v2 replaced so `--reconfigure` can upgrade an old file. */
+function stripRemovedV1Keys(
+  document: ReturnType<typeof parseDocument>,
+  config: Record<string, unknown>,
+): void {
+  deleteIfPresent(document, ["groups"]);
+  deleteIfPresent(document, ["policies"]);
+  deleteIfPresent(document, ["security", "default_effect"]);
+  if (isRecord(config.users)) {
+    for (const qq of Object.keys(config.users)) {
+      deleteIfPresent(document, ["users", qq, "policy"]);
+    }
+  }
+  if (isRecord(config.projects)) {
+    for (const id of Object.keys(config.projects)) {
+      deleteIfPresent(document, ["projects", id, "policy"]);
+      deleteIfPresent(document, ["projects", id, "allowed_users"]);
+      deleteIfPresent(document, ["projects", id, "allowed_groups"]);
+    }
+  }
+}
+
+function deleteIfPresent(document: ReturnType<typeof parseDocument>, path: string[]): void {
+  if (document.hasIn(path)) document.deleteIn(path);
 }
 
 function mergeConfigValue(

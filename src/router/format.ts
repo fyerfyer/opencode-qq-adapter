@@ -124,17 +124,18 @@ export function formatProjects(
 ): string {
   const actor = deps.policy.actor(message.userId);
   if (actor === null) return "未授权。";
-  const entries = deps.policy.projectEntries(actor, message.userId, message.chat.groupId);
+  const entries = deps.policy.projectEntries(actor);
   if (entries.length === 0) {
-    return "没有可用项目。请联系管理员在 config.yaml 中配置 projects 与 users。";
+    return "没有可用项目。请联系管理员在 config.yaml 的 users 中配置 projects。";
   }
   const conversation = deps.conversations.getConversation(message.chat.chatKey);
   const current = conversation?.projectId ?? null;
-  const lines = [`角色：${role}`, "可用项目："];
+  const lines = [`角色：${role}`, "可用项目（可修改 / 只读问答）："];
   for (const entry of entries) {
     const marker = entry.id === current ? "*" : "-";
+    const writable = deps.policy.canWriteProject(actor, entry.id);
     const description = entry.project.description ? ` — ${entry.project.description}` : "";
-    lines.push(`${marker} ${entry.id}${description}`);
+    lines.push(`${marker} ${entry.id}${description}（${writable ? "可修改" : "只读问答"}）`);
     lines.push(`  ${entry.project.path}`);
   }
   return lines.join("\n");

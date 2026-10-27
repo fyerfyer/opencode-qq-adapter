@@ -395,8 +395,13 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
     return { messageId: result.messageId, path };
   });
   route("POST", "/test/jev", async (context) => {
-    if (deps.jev === null) {
-      throw new AdminHttpError(503, "jev_disabled", "Jev 未配置，或 sticker_judge 未启用。");
+    const apiKey = process.env[deps.options.jevApiKeyEnv]?.trim() ?? "";
+    if (apiKey.length === 0) {
+      throw new AdminHttpError(
+        503,
+        "jev_not_configured",
+        `Jev 未配置：环境变量 ${deps.options.jevApiKeyEnv} 为空。`,
+      );
     }
     const body = await readJson(context.request);
     const userText = typeof body.userText === "string" ? body.userText : "";
@@ -404,8 +409,18 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
     const emotions = Array.isArray(body.emotions)
       ? body.emotions.filter((item): item is string => typeof item === "string")
       : [];
-    const decision = await deps.jev.judge({ userText, replyText, emotions });
-    return decision;
+    const judge =
+      deps.jev ??
+      new JevEmotionJudge({
+        baseUrl: deps.options.jevBaseUrl,
+        endpoint: deps.options.jevEndpoint,
+        apiKey,
+        model: deps.options.jevModel,
+        timeoutMs: deps.options.jevTimeoutMs,
+      });
+    const started = Date.now();
+    const decision = await judge.judge({ userText, replyText, emotions });
+    return { ...decision, latencyMs: Date.now() - started, apiKeyEnv: deps.options.jevApiKeyEnv };
   });
 
   route("GET", "/memory/scopes", async (context) => {
@@ -604,9 +619,14 @@ async function summarize(deps: RoleplayAdminDeps): Promise<Record<string, unknow
     },
     jev: {
       judge: deps.options.stickerJudge,
+      apiKeyEnv: deps.options.jevApiKeyEnv,
+      apiKeyConfigured: (process.env[deps.options.jevApiKeyEnv]?.trim().length ?? 0) > 0,
       configured:
         deps.options.stickerJudge === "off" ||
         deps.options.stickerJudge === "tag" ||
+        (process.env[deps.options.jevApiKeyEnv]?.trim().length ?? 0) > 0,
+      ready:
+        (deps.options.stickerJudge === "jev" || deps.options.stickerJudge === "hybrid") &&
         (process.env[deps.options.jevApiKeyEnv]?.trim().length ?? 0) > 0,
     },
     checks: await diagnostics(deps),

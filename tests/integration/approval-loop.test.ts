@@ -36,7 +36,7 @@ describe.skipIf(!enabled)("Approval loop with real OpenCode", () => {
   it("turns a real permission.asked into a QQ approval and completes the run", async () => {
     const projectPath = await mkdtemp(join(tmpdir(), "qq-approval-loop-"));
     const config = configSchema.parse({
-      version: 1,
+      version: 2,
       server: { port: 0 },
       onebot: { url: "ws://127.0.0.1:3001", access_token: "unused", self_id: 10000 },
       opencode: {
@@ -45,20 +45,10 @@ describe.skipIf(!enabled)("Approval loop with real OpenCode", () => {
       },
       storage: { database_path: ":memory:" },
       default_project: "demo",
-      users: { "20000": { role: "owner", projects: ["*"] } },
-      projects: { demo: { path: projectPath, policy: "standard" } },
-      policies: {
-        standard: {
-          read: "allow",
-          glob: "allow",
-          grep: "allow",
-          edit: "ask",
-          shell: "ask",
-          webfetch: "ask",
-          websearch: "ask",
-          external_directory: "deny",
-        },
+      users: {
+        "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
       },
+      projects: { demo: { path: projectPath } },
     });
     const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
     const store = new SqliteStore(":memory:");

@@ -131,7 +131,8 @@ export function SessionsPage() {
         <CardHeader>
           <CardTitle>会话绑定</CardTitle>
           <CardDescription>
-            解绑后下一条 QQ 消息会创建新 session，旧 session 不会被删除。
+            每行右侧的「模型」按钮可切换该 QQ 会话的 OpenCode Agent / 模型。解绑后下一条 QQ
+            消息会创建新 session，旧 session 不会被删除。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -239,12 +240,14 @@ export function SessionsPage() {
                           }
                         />
                         <Button
-                          variant="ghost"
-                          size="icon-sm"
+                          variant="outline"
+                          size="sm"
                           title="切换 Agent / 模型"
+                          aria-label="切换 Agent / 模型"
+                          className="whitespace-nowrap"
                           onClick={() => setPreferences(conversation)}
                         >
-                          <Settings2 />
+                          <Settings2 /> 模型
                         </Button>
                         <Button
                           variant="ghost"

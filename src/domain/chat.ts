@@ -1,5 +1,4 @@
 export type ChatType = "private" | "group";
-export type GroupMode = "per_user" | "shared" | "readonly";
 
 export interface ChatRef {
   type: ChatType;
@@ -14,9 +13,12 @@ export function privateChat(userId: number): ChatRef {
   return { type: "private", userId, chatKey: `private:${userId}` };
 }
 
-export function groupChat(groupId: number, userId: number, mode: GroupMode): ChatRef {
-  const chatKey = mode === "shared" ? `group:${groupId}` : `group:${groupId}:${userId}`;
-  return { type: "group", userId, groupId, chatKey };
+/**
+ * Group chats are always per-user. The bot no longer supports shared group
+ * conversations; each member gets an independent conversation key.
+ */
+export function groupChat(groupId: number, userId: number): ChatRef {
+  return { type: "group", userId, groupId, chatKey: `group:${groupId}:${userId}` };
 }
 
 /**

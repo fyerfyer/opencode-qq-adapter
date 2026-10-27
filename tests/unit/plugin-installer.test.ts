@@ -41,7 +41,7 @@ function silentLogger() {
 }
 
 function configSource(pluginsBlock = "plugins: {}"): string {
-  return `version: 1
+  return `version: 2
 onebot:
   url: "ws://127.0.0.1:3001"
   access_token: "test"

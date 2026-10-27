@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 import type { AppConfig, PluginConfig } from "../../config/schema.js";
-import type { GroupMode } from "../../domain/chat.js";
 import type { ConversationRecord } from "../../domain/conversation.js";
 import type { IncomingMessage } from "../../domain/message.js";
 import type { AuditTrail } from "../../observability/audit.js";
@@ -16,6 +15,7 @@ import type {
   PluginDefinition,
   PluginDisposer,
   PluginEventMap,
+  PluginGroupMode,
   PluginHooksDefinition,
   PluginManifest,
   PluginRole,
@@ -156,7 +156,7 @@ export interface PluginCommandInput {
   args: string[];
   rawArgs: string;
   actor: PluginRole;
-  groupMode: GroupMode | null;
+  groupMode: PluginGroupMode | null;
 }
 
 export interface PluginPromptResult {

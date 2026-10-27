@@ -194,7 +194,17 @@ export class InternalHttpServer {
           resolve(instance);
         },
       );
-      instance.once("error", reject);
+      instance.once("error", (error) => {
+        if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+          reject(
+            new Error(
+              `HTTP port ${this.#config.server.port} is already in use. Another bridge may still be shutting down; check with: ss -ltnp | grep ${this.#config.server.port}`,
+            ),
+          );
+          return;
+        }
+        reject(error);
+      });
     });
     this.#server = server;
     const address = server.address() as AddressInfo | null;

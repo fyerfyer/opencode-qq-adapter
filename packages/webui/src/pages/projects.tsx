@@ -27,6 +27,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -37,11 +38,11 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiQuery } from "@/hooks/use-api-query";
-import { parseList } from "@/lib/utils";
 
 export function ProjectsPage() {
   const { data, error, loading, refresh } = useApiQuery<AccessSnapshot>("/access");
   const [dialog, setDialog] = useState<ProjectRecord | "new" | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
 
   const save = async (path: string, body: unknown) => {
     try {
@@ -80,11 +81,18 @@ export function ProjectsPage() {
   }
   if (data === null) return null;
 
+  const visible = data.projects.filter((project) => !project.hidden);
+  const internal = data.projects.filter((project) => project.hidden);
+  const projects = showHidden ? data.projects : visible;
+  const authorizedUsers = data.users.filter(
+    (user) => user.projects.includes("*") || user.projects.some((id) => !isHidden(id, data)),
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="项目"
-        description="项目路径、默认策略、工作区模式和默认 agent/model。"
+        description="注册可供 QQ 成员使用的项目目录。成员能访问哪些项目、能修改哪些项目在「成员」页配置。"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => void refresh()}>
@@ -98,17 +106,29 @@ export function ProjectsPage() {
       />
 
       <Card>
-        <CardHeader>
-          <CardTitle>已注册项目</CardTitle>
-          <CardDescription>
-            路径必须在 security.allowed_roots 内，且启动时目录必须存在。
-          </CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle>已注册项目</CardTitle>
+            <CardDescription>
+              路径必须在 security.allowed_roots 内，且启动时目录必须存在。
+            </CardDescription>
+          </div>
+          {internal.length > 0 && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch
+                checked={showHidden}
+                onCheckedChange={setShowHidden}
+                aria-label="显示内部项目"
+              />
+              显示内部项目（{internal.length}）
+            </div>
+          )}
         </CardHeader>
         <CardContent>
-          {data.projects.length === 0 ? (
+          {projects.length === 0 ? (
             <EmptyState
               title="还没有项目"
-              description="至少注册一个项目后，QQ 用户才能通过 !use <project> 开始工作。"
+              description="至少注册一个项目后，QQ 成员才能开始工作。"
               icon={<FolderGit2 />}
               action={
                 <Button size="sm" onClick={() => setDialog("new")}>
@@ -123,17 +143,24 @@ export function ProjectsPage() {
                 <TableRow>
                   <TableHead>ID</TableHead>
                   <TableHead>路径</TableHead>
-                  <TableHead>策略</TableHead>
                   <TableHead>工作区</TableHead>
                   <TableHead>Agent / Model</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.projects.map((project) => (
+                {projects.map((project) => (
                   <TableRow key={project.id}>
                     <TableCell>
-                      <div className="font-medium">{project.id}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{project.id}</span>
+                        {project.hidden && <Badge variant="outline">内部</Badge>}
+                        {project.managed_by !== undefined && (
+                          <Badge variant="secondary" className="font-mono text-[10px]">
+                            {project.managed_by}
+                          </Badge>
+                        )}
+                      </div>
                       {project.description !== undefined && (
                         <div className="max-w-48 truncate text-xs text-muted-foreground">
                           {project.description}
@@ -149,13 +176,10 @@ export function ProjectsPage() {
                       </code>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{project.policy}</Badge>
-                    </TableCell>
-                    <TableCell>
                       <Badge variant={project.workspace === "shared" ? "secondary" : "outline"}>
                         {project.workspace}
                       </Badge>
-                      {project.workspace !== "shared" && (
+                      {project.workspace !== "shared" && project.workspace !== "none" && (
                         <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
                           当前实现会回退到 shared
                         </p>
@@ -167,17 +191,19 @@ export function ProjectsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button asChild variant="ghost" size="icon-sm" title="查看会话">
-                          <Link to={`/sessions?project=${encodeURIComponent(project.id)}`}>
-                            <MessagesSquare />
-                          </Link>
-                        </Button>
+                        {!project.hidden && (
+                          <Button asChild variant="ghost" size="icon-sm" title="查看会话">
+                            <Link to={`/sessions?project=${encodeURIComponent(project.id)}`}>
+                              <MessagesSquare />
+                            </Link>
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon-sm" onClick={() => setDialog(project)}>
                           <Settings2 />
                         </Button>
                         <ConfirmDelete
                           title={`删除项目 ${project.id}？`}
-                          description="用户/群配置中对它的引用会阻止保存并返回校验错误。"
+                          description="成员配置中对它的引用会阻止保存并返回校验错误。"
                           onConfirm={() => remove(project.id)}
                           trigger={
                             <Button
@@ -200,22 +226,15 @@ export function ProjectsPage() {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Metric label="项目数" value={data.projects.length} />
-        <Metric
-          label="引用策略"
-          value={new Set(data.projects.map((project) => project.policy)).size}
-        />
-        <Metric
-          label="非 shared 模式"
-          value={data.projects.filter((project) => project.workspace !== "shared").length}
-        />
+        <Metric label="可见项目" value={visible.length} />
+        <Metric label="内部项目" value={internal.length} />
+        <Metric label="被授权成员" value={authorizedUsers.length} />
       </div>
 
       {dialog !== null && (
         <ProjectDialog
           key={dialog === "new" ? "new" : dialog.id}
           project={dialog === "new" ? undefined : dialog}
-          policyOptions={data.policies.map((policy) => policy.name)}
           onClose={() => setDialog(null)}
           onSave={(projectId, body) =>
             save(`/projects/${dialog === "new" ? projectId : dialog.id}`, body)
@@ -226,37 +245,39 @@ export function ProjectsPage() {
   );
 }
 
+function isHidden(id: string, data: AccessSnapshot): boolean {
+  return data.projects.find((project) => project.id === id)?.hidden === true;
+}
+
 function ProjectDialog({
   project,
-  policyOptions,
   onClose,
   onSave,
 }: {
   project?: ProjectRecord;
-  policyOptions: string[];
   onClose: () => void;
   onSave: (id: string, body: Record<string, unknown>) => void;
 }) {
   const [id, setId] = useState(project?.id ?? "");
   const [path, setPath] = useState(project?.path ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
-  const [policy, setPolicy] = useState(project?.policy ?? policyOptions[0] ?? "standard");
   const [workspace, setWorkspace] = useState<ProjectRecord["workspace"]>(
     project?.workspace ?? "shared",
   );
   const [agent, setAgent] = useState(project?.agent ?? "");
   const [model, setModel] = useState(project?.model ?? "");
-  const [allowedUsers, setAllowedUsers] = useState((project?.allowed_users ?? []).join(", "));
-  const [allowedGroups, setAllowedGroups] = useState((project?.allowed_groups ?? []).join(", "));
   const [baseBranch, setBaseBranch] = useState(project?.base_branch ?? "");
   const [setup, setSetup] = useState((project?.setup ?? []).join("\n"));
+  const [hidden, setHidden] = useState(project?.hidden ?? false);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{project === undefined ? "添加项目" : `编辑项目 ${project.id}`}</DialogTitle>
-          <DialogDescription>相对路径会相对配置文件所在目录解析。</DialogDescription>
+          <DialogDescription>
+            相对路径会相对配置文件所在目录解析。内部项目不会出现在成员的项目选择中。
+          </DialogDescription>
         </DialogHeader>
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto py-2 sm:grid-cols-2">
           <Field label="项目 ID">
@@ -267,17 +288,19 @@ function ProjectDialog({
               onChange={(event) => setId(event.target.value)}
             />
           </Field>
-          <Field label="策略">
-            <Select value={policy} onValueChange={setPolicy}>
+          <Field label="工作区模式">
+            <Select
+              value={workspace}
+              onValueChange={(value) => setWorkspace(value as ProjectRecord["workspace"])}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {policyOptions.map((name) => (
-                  <SelectItem key={name} value={name}>
-                    {name}
-                  </SelectItem>
-                ))}
+                <SelectItem value="shared">shared</SelectItem>
+                <SelectItem value="per_user">per_user（暂未实现）</SelectItem>
+                <SelectItem value="worktree">worktree（暂未实现）</SelectItem>
+                <SelectItem value="none">none（插件内部）</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -294,21 +317,6 @@ function ProjectDialog({
               onChange={(event) => setDescription(event.target.value)}
               placeholder="可选"
             />
-          </Field>
-          <Field label="工作区模式">
-            <Select
-              value={workspace}
-              onValueChange={(value) => setWorkspace(value as ProjectRecord["workspace"])}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="shared">shared</SelectItem>
-                <SelectItem value="per_user">per_user（暂未实现）</SelectItem>
-                <SelectItem value="worktree">worktree（暂未实现）</SelectItem>
-              </SelectContent>
-            </Select>
           </Field>
           <Field label="Base branch">
             <Input
@@ -331,20 +339,15 @@ function ProjectDialog({
               placeholder="provider/model"
             />
           </Field>
-          <Field label="允许用户（QQ，逗号分隔）">
-            <Input
-              value={allowedUsers}
-              onChange={(event) => setAllowedUsers(event.target.value)}
-              placeholder="10001"
-            />
-          </Field>
-          <Field label="允许群（群号，逗号分隔）">
-            <Input
-              value={allowedGroups}
-              onChange={(event) => setAllowedGroups(event.target.value)}
-              placeholder="20001"
-            />
-          </Field>
+          <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+            <div>
+              <p className="text-sm font-medium">内部项目</p>
+              <p className="text-xs text-muted-foreground">
+                不显示在成员可选项目中，只允许插件内部切换
+              </p>
+            </div>
+            <Switch checked={hidden} onCheckedChange={setHidden} />
+          </div>
           <Field label="Setup hooks（每行一条）" className="sm:col-span-2">
             <Textarea
               rows={3}
@@ -364,16 +367,12 @@ function ProjectDialog({
             onClick={() =>
               onSave(id.trim(), {
                 path: path.trim(),
-                policy,
                 workspace,
                 agent: agent.trim() === "" ? null : agent.trim(),
                 model: model.trim() === "" ? null : model.trim(),
                 ...(description.trim() !== "" ? { description: description.trim() } : {}),
-                ...(allowedUsers.trim() !== "" ? { allowed_users: parseList(allowedUsers) } : {}),
-                ...(allowedGroups.trim() !== ""
-                  ? { allowed_groups: parseList(allowedGroups) }
-                  : {}),
                 ...(baseBranch.trim() !== "" ? { base_branch: baseBranch.trim() } : {}),
+                hidden,
                 setup: setup
                   .split("\n")
                   .map((line) => line.trim())

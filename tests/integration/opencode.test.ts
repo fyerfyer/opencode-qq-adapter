@@ -13,7 +13,7 @@ const model = process.env.OPENCODE_TEST_MODEL ?? "opencode-go/deepseek-v4.1-flas
 describe.skipIf(!enabled)("OpenCode integration", () => {
   it("creates a session, runs a prompt and collects the assistant text", async () => {
     const config = configSchema.parse({
-      version: 1,
+      version: 2,
       onebot: { url: "ws://127.0.0.1:3001", access_token: "unused" },
       opencode: {
         service: { mode: "external", version: ">=2.0.0 <3.0.0" },

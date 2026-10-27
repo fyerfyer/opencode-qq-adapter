@@ -103,9 +103,8 @@ export interface Overview {
   config: {
     path: string | null;
     users: number;
-    groups: number;
     projects: number;
-    policies: number;
+    hiddenProjects: number;
     features: Record<string, boolean>;
   };
   counts: {
@@ -125,7 +124,7 @@ export interface UserRecord {
   qq: string;
   role: "owner" | "admin" | "member";
   projects: string[];
-  policy?: string;
+  write_projects: string[];
   note?: string;
   limits?: {
     prompts_per_minute?: number;
@@ -135,57 +134,22 @@ export interface UserRecord {
   };
 }
 
-export interface GroupRecord {
-  id: string;
-  enabled: boolean;
-  mode: "per_user" | "shared" | "readonly";
-  require_mention?: boolean;
-  allowed_users: string[];
-  projects: string[];
-  default_project?: string;
-  policy?: string;
-}
-
-export type PermissionEffect = "allow" | "ask" | "deny";
-
-export interface ShellRule {
-  pattern: string;
-  effect: PermissionEffect;
-}
-
-export interface PolicyRecord {
-  name: string;
-  read?: PermissionEffect;
-  glob?: PermissionEffect;
-  grep?: PermissionEffect;
-  edit?: PermissionEffect;
-  write?: PermissionEffect;
-  shell?: PermissionEffect;
-  webfetch?: PermissionEffect;
-  websearch?: PermissionEffect;
-  external_directory?: PermissionEffect;
-  shell_rules: ShellRule[];
-}
-
 export interface ProjectRecord {
   id: string;
   path: string;
   description?: string;
-  policy: string;
-  workspace: "shared" | "per_user" | "worktree";
+  workspace: "shared" | "per_user" | "worktree" | "none";
   agent: string | null;
   model: string | null;
-  allowed_users?: string[];
-  allowed_groups?: string[];
   setup: string[];
   base_branch: string | null;
+  hidden: boolean;
+  managed_by?: string;
 }
 
 export interface AccessSnapshot {
   users: UserRecord[];
-  groups: GroupRecord[];
   projects: ProjectRecord[];
-  policies: PolicyRecord[];
   configHash: string | null;
   configPath: string | null;
   warnings: string[];
@@ -270,6 +234,7 @@ export interface PromptSummary {
   name: string;
   title: string | null;
   description: string | null;
+  model: string | null;
   size: number;
   updatedAt: number;
   backups: number;
@@ -341,6 +306,17 @@ export interface ConnectionSaveResult extends ConnectionsSnapshot {
   backup: string | null;
   restartRequired: string[];
   warnings: string[];
+  reload: {
+    ok: boolean;
+    warnings: string[];
+    error?: string;
+  } | null;
+}
+
+export interface PluginSecretResult {
+  key: string;
+  configured: boolean;
+  backup: string | null;
   reload: {
     ok: boolean;
     warnings: string[];
@@ -481,7 +457,13 @@ export interface RoleplaySummary {
     agents: string;
   };
   agents: { persona: boolean; utility: boolean };
-  jev: { judge: string; configured: boolean };
+  jev: {
+    judge: string;
+    apiKeyEnv: string;
+    apiKeyConfigured: boolean;
+    configured: boolean;
+    ready: boolean;
+  };
   checks: RoleplayDiagnostic[];
 }
 

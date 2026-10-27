@@ -22,29 +22,20 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function setup(
-  options: { timeoutMs?: number; groupShared?: boolean; startBroker?: boolean } = {},
-) {
+async function setup(options: { timeoutMs?: number; startBroker?: boolean } = {}) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-approval-"));
   const config = makeTestConfig({ projectPath });
   config.opencode.permission_timeout_ms = options.timeoutMs ?? 5000;
   const baseUser = config.users["20000"];
   if (baseUser === undefined) throw new Error("test config is missing user 20000");
-  config.users["10001"] = { ...baseUser, role: "owner", projects: ["*"] };
-  config.users["20000"] = { ...baseUser, role: "admin", projects: ["*"] };
-  config.users["20001"] = { role: "member", projects: ["demo"] };
-  if (options.groupShared) {
-    config.groups["30001"] = {
-      enabled: true,
-      mode: "shared",
-      allowed_users: ["10001", "20000", "20001"],
-      projects: ["demo"],
-    };
-    config.projects.demo = {
-      ...config.projects.demo,
-      allowed_groups: ["30001"],
-    };
-  }
+  config.users["10001"] = { ...baseUser, role: "owner", projects: ["*"], write_projects: ["*"] };
+  config.users["20000"] = { ...baseUser, role: "admin", projects: ["*"], write_projects: ["*"] };
+  config.users["20001"] = {
+    role: "member",
+    projects: ["demo"],
+    write_projects: [],
+    limits: {},
+  };
 
   const store = new SqliteStore(":memory:");
   const agent = new FakeAgent();
@@ -389,9 +380,9 @@ describe("ApprovalBroker", () => {
     expect(broker.pending("private:20000")).toHaveLength(0);
   });
 
-  it("only lets owner/admin approve shared-group runs", async () => {
-    const { store, agent, broker } = await setup({ groupShared: true });
-    await seedSession(store, { chatKey: "group:30001", actorQq: 20000 });
+  it("lets the run owner and admins approve a group run", async () => {
+    const { store, agent, broker } = await setup();
+    await seedSession(store, { chatKey: "group:30001:20000", actorQq: 20000 });
     agent.askPermission({
       id: "per_1",
       sessionId: "ses_1",
@@ -401,13 +392,13 @@ describe("ApprovalBroker", () => {
       message: null,
       metadata: null,
     });
-    await waitFor(() => broker.pending("group:30001").length === 1, 2000, "pending");
-    const approval = firstPending(broker, "group:30001");
+    await waitFor(() => broker.pending("group:30001:20000").length === 1, 2000, "pending");
+    const approval = firstPending(broker, "group:30001:20000");
 
     const member = await broker.resolve(
       makeIncomingMessage({
         userId: 20001,
-        chat: { type: "group", userId: 20001, groupId: 30001, chatKey: "group:30001" },
+        chat: { type: "group", userId: 20001, groupId: 30001, chatKey: "group:30001:20000" },
       }),
       approval.shortId,
       "once",
@@ -417,7 +408,7 @@ describe("ApprovalBroker", () => {
     const owner = await broker.resolve(
       makeIncomingMessage({
         userId: 10001,
-        chat: { type: "group", userId: 10001, groupId: 30001, chatKey: "group:30001" },
+        chat: { type: "group", userId: 10001, groupId: 30001, chatKey: "group:30001:20000" },
       }),
       approval.shortId,
       "once",
@@ -426,10 +417,15 @@ describe("ApprovalBroker", () => {
     expect(agent.permissionReplies).toHaveLength(1);
   });
 
-  it("does not let an admin outside the group allowlist approve", async () => {
-    const { config, store, agent, broker } = await setup({ groupShared: true });
-    config.users["20002"] = { role: "admin", projects: ["*"] };
-    await seedSession(store, { chatKey: "group:30001", actorQq: 20000 });
+  it("lets an admin approve even when they did not start the run", async () => {
+    const { config, store, agent, broker } = await setup();
+    config.users["20002"] = {
+      role: "admin",
+      projects: ["*"],
+      write_projects: ["*"],
+      limits: {},
+    };
+    await seedSession(store, { chatKey: "group:30001:20000", actorQq: 20000 });
     agent.askPermission({
       id: "per_1",
       sessionId: "ses_1",
@@ -439,18 +435,18 @@ describe("ApprovalBroker", () => {
       message: null,
       metadata: null,
     });
-    await waitFor(() => broker.pending("group:30001").length === 1, 2000, "pending");
-    const approval = firstPending(broker, "group:30001");
+    await waitFor(() => broker.pending("group:30001:20000").length === 1, 2000, "pending");
+    const approval = firstPending(broker, "group:30001:20000");
 
-    const outsider = await broker.resolve(
+    const admin = await broker.resolve(
       makeIncomingMessage({
         userId: 20002,
-        chat: { type: "group", userId: 20002, groupId: 30001, chatKey: "group:30001" },
+        chat: { type: "group", userId: 20002, groupId: 30001, chatKey: "group:30001:20000" },
       }),
       approval.shortId,
       "once",
     );
-    expect(outsider).toMatchObject({ ok: false, reason: "forbidden" });
-    expect(agent.permissionReplies).toHaveLength(0);
+    expect(admin.ok).toBe(true);
+    expect(agent.permissionReplies).toHaveLength(1);
   });
 });

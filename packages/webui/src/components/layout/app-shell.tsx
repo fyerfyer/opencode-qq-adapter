@@ -12,7 +12,6 @@ import {
   Puzzle,
   ScrollText,
   Settings,
-  ShieldCheck,
   Sun,
   UsersRound,
 } from "lucide-react";
@@ -61,11 +60,8 @@ const navigation = [
     ],
   },
   {
-    label: "访问与策略",
-    items: [
-      { to: "/access", label: "用户与群", icon: UsersRound },
-      { to: "/policies", label: "策略", icon: ShieldCheck },
-    ],
+    label: "访问",
+    items: [{ to: "/access", label: "成员", icon: UsersRound }],
   },
   {
     label: "运维",
@@ -83,8 +79,7 @@ const titles: Record<string, string> = {
   "/": "概览",
   "/sessions": "会话",
   "/projects": "项目",
-  "/access": "用户与群",
-  "/policies": "策略",
+  "/access": "成员",
   "/agents": "Agents",
   "/audit": "审计",
   "/usage": "用量",

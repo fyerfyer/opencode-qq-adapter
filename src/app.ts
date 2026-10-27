@@ -54,13 +54,6 @@ export interface AppDependencies {
   promptRoot?: string;
 }
 
-function groupIdFromChatKey(chatKey: string): number | undefined {
-  const match = /^group:(\d+)/.exec(chatKey);
-  if (match?.[1] === undefined) return undefined;
-  const value = Number(match[1]);
-  return Number.isSafeInteger(value) ? value : undefined;
-}
-
 export class App {
   readonly config: AppConfig;
   readonly logger: Logger;
@@ -119,10 +112,10 @@ export class App {
         },
         agent: this.agent,
         sessionActions: {
-          setProject: ({ chatKey, projectId, actorQq, groupId }) => {
+          setProject: ({ chatKey, projectId, actorQq }) => {
             const actor = this.policy.actor(actorQq);
             if (actor === null) return { ok: false, reason: "未授权用户。" };
-            const allowed = this.policy.canUseProject(actor, actorQq, projectId, groupId);
+            const allowed = this.policy.canUseProject(actor, projectId, { includeHidden: true });
             if (!allowed.allowed) return { ok: false, reason: "没有该项目的访问权限。" };
             return (
               conversationsRef?.setProject(chatKey, projectId, actorQq) ?? {
@@ -138,13 +131,9 @@ export class App {
             if (conversation === null || conversation === undefined) {
               return { ok: false, reason: "还没有会话。" };
             }
-            const groupId = groupIdFromChatKey(chatKey);
-            const allowed = this.policy.canUseProject(
-              actor,
-              actorQq,
-              conversation.projectId,
-              groupId,
-            );
+            const allowed = this.policy.canUseProject(actor, conversation.projectId, {
+              includeHidden: true,
+            });
             if (!allowed.allowed) return { ok: false, reason: "没有该项目的访问权限。" };
             return (
               conversationsRef?.resetSession(chatKey) ?? {
@@ -404,6 +393,11 @@ export class App {
     this.#unsubscribeOneBot?.();
     this.#unsubscribeOneBot = null;
     this.ownership.stop();
+    // Close the listener first: a slow OneBot/plugin/agent cleanup must never
+    // keep the admin/health port occupied while the process is shutting down.
+    await this.http.stop().catch((error) => {
+      this.logger.warn({ err: error }, "HTTP shutdown failed");
+    });
     await this.approvals.stop().catch((error) => {
       this.logger.warn({ err: error }, "Approval broker shutdown failed");
     });
@@ -415,9 +409,6 @@ export class App {
     });
     await this.onebot.stop().catch((error) => {
       this.logger.warn({ err: error }, "OneBot shutdown failed");
-    });
-    await this.http.stop().catch((error) => {
-      this.logger.warn({ err: error }, "HTTP shutdown failed");
     });
     await this.agent.stop().catch((error) => {
       this.logger.warn({ err: error }, "OpenCode shutdown failed");
@@ -493,7 +484,7 @@ export class App {
 
     let message: IncomingMessage;
     try {
-      message = toIncomingMessage(event, selfId, (groupId) => this.policy.groupMode(groupId));
+      message = toIncomingMessage(event, selfId);
     } catch (error) {
       this.logger.warn({ err: error, messageId }, "Failed to parse OneBot message event");
       return;

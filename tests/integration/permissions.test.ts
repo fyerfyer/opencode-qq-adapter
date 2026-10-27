@@ -33,7 +33,7 @@ function waitForEvent(
 describe.skipIf(!enabled)("OpenCode permissions integration", () => {
   it("applies a session ruleset and surfaces permission.asked for QQ approval", async () => {
     const config = configSchema.parse({
-      version: 1,
+      version: 2,
       onebot: { url: "ws://127.0.0.1:3001", access_token: "unused" },
       opencode: {
         service: { mode: "external", version: ">=2.0.0 <3.0.0" },

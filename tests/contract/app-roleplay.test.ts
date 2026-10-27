@@ -49,13 +49,13 @@ describe("Application + roleplay plugin", () => {
     config.projects.roleplay = {
       path: personas,
       description: "Roleplay personas",
-      policy: "readonly",
       workspace: "none",
       agent: "qq-rp",
       model: null,
-      allowed_users: ["20000"],
       setup: [],
       base_branch: null,
+      hidden: true,
+      managed_by: "roleplay",
     };
     config.plugins = {
       roleplay: {
@@ -81,14 +81,29 @@ describe("Application + roleplay plugin", () => {
       logger.flush?.();
     });
 
-    onebot.emit(messageEvent(1, "!use demo"));
+    onebot.emit(messageEvent(1, "!projects"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("demo")),
+      10_000,
+      "project list",
+    );
+    expect(onebot.texts().some((text) => text.includes("roleplay"))).toBe(false);
+
+    onebot.emit(messageEvent(2, "!use roleplay"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("插件内部项目")),
+      10_000,
+      "hidden project rejection",
+    );
+
+    onebot.emit(messageEvent(3, "!use demo"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("已切换到项目")),
       10_000,
       "demo project",
     );
 
-    onebot.emit(messageEvent(2, "!persona use blue-fat-fish"));
+    onebot.emit(messageEvent(4, "!persona use blue-fat-fish"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("今天只吃一碗白饭")),
       10_000,
@@ -96,7 +111,7 @@ describe("Application + roleplay plugin", () => {
     );
     expect(app.conversations.getConversation("private:20000")?.projectId).toBe("roleplay");
 
-    onebot.emit(messageEvent(3, "我想吃白饭"));
+    onebot.emit(messageEvent(5, "我想吃白饭"));
     await waitFor(() => agent.prompts.length === 1, 10_000, "roleplay prompt");
     expect(agent.sessionInputs[0]).toMatchObject({
       directory: personaDir,
@@ -110,14 +125,14 @@ describe("Application + roleplay plugin", () => {
       "roleplay answer",
     );
 
-    onebot.emit(messageEvent(4, "!memory search 白饭"));
+    onebot.emit(messageEvent(6, "!memory search 白饭"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("我想吃白饭")),
       10_000,
       "memory",
     );
 
-    onebot.emit(messageEvent(5, "!rp off"));
+    onebot.emit(messageEvent(7, "!rp off"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("角色扮演已关闭")),
       10_000,

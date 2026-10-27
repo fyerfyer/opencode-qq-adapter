@@ -32,6 +32,7 @@ import {
   type StickerCatalog,
 } from "./stickers.js";
 import { buildContextBlock } from "./prompt.js";
+import { guardRoleplayReply } from "./guard.js";
 import { formatTimestamp } from "./time.js";
 import { BindingStore } from "./bindings.js";
 import { type MemoryEvent, TranscriptStore } from "./transcript.js";
@@ -43,7 +44,7 @@ import {
   type WorldbookEntry,
 } from "./worldbook.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const MAX_REMEMBER_CHARS = 200;
 const MEMORY_OUTPUT_CHARS = 1800;
 
@@ -375,7 +376,7 @@ export default definePlugin<RoleplayOptions>({
         description: "导入 Character Card V2/V3",
         usage: "card import 文件路径 [id]",
         chats: ["private"],
-        roles: ["owner"],
+        roles: ["owner", "admin"],
         async handler(command) {
           const sub = command.args[0]?.toLowerCase();
           const source = command.args[1];
@@ -474,7 +475,7 @@ export default definePlugin<RoleplayOptions>({
         description: "查看或测试当前角色的表情素材",
         usage: "sticker [list|reload] | sticker test 情绪",
         chats: ["private"],
-        roles: ["owner"],
+        roles: ["owner", "admin"],
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "list";
           const chatKey = command.message.chat.chatKey;
@@ -880,7 +881,19 @@ export default definePlugin<RoleplayOptions>({
         if (reply.projectId !== options.projectId) return undefined;
         const active = await activePersona(reply.message.chat.chatKey);
         if (active === null) return undefined;
-        const tag = extractEmotionTag(reply.text);
+        const guarded = guardRoleplayReply(reply.text);
+        if (guarded.removed) {
+          context.logger.warn(
+            {
+              personaId: active.persona.id,
+              chatKey: reply.message.chat.chatKey,
+              metaOnly: guarded.metaOnly,
+              originalChars: reply.text.length,
+            },
+            "Removed model meta-commentary from a roleplay reply",
+          );
+        }
+        const tag = extractEmotionTag(guarded.text);
         let sticker: { path: string; delayMs: number } | null = null;
         const stickerKey = `${reply.message.chat.chatKey}:${active.persona.id}`;
         const now = Date.now();

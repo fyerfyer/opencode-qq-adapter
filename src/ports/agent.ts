@@ -126,6 +126,8 @@ export interface AgentPort {
   listMessages(sessionId: string, limit?: number): Promise<AgentMessage[]>;
   listModels(directory?: string): Promise<AgentModel[]>;
   listAgents(directory?: string): Promise<AgentSummary[]>;
+  /** Reload OpenCode configuration and agent files for the active location. */
+  reloadConfig(): Promise<void>;
   listSessions(directory: string, limit?: number): Promise<AgentSession[]>;
   switchModel(sessionId: string, model: string): Promise<void>;
   switchAgent(sessionId: string, agent: string): Promise<void>;

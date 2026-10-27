@@ -76,6 +76,7 @@ export class FakeAgent implements AgentPort {
   ];
   readonly switchedModels: Array<{ sessionId: string; model: string }> = [];
   readonly switchedAgents: Array<{ sessionId: string; agent: string }> = [];
+  reloads = 0;
 
   autoComplete = true;
   answer = "fake answer";
@@ -241,6 +242,10 @@ export class FakeAgent implements AgentPort {
     return [...this.agents];
   }
 
+  async reloadConfig(): Promise<void> {
+    this.reloads += 1;
+  }
+
   async listSessions(): Promise<AgentSession[]> {
     return [...this.sessions.values()].sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0));
   }
@@ -331,9 +336,13 @@ export class FakeOneBot implements OneBotPort {
   lastEventAt: number | null = Date.now();
   lastError: string | null = null;
   loginInfoError: string | null = null;
+  /** Set to block shutdown and verify cleanup ordering. */
+  stopGate: Promise<void> | null = null;
 
   async start(): Promise<void> {}
-  async stop(): Promise<void> {}
+  async stop(): Promise<void> {
+    if (this.stopGate !== null) await this.stopGate;
+  }
 
   async sendPrivate(userId: number, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
     this.sent.push({
@@ -437,7 +446,7 @@ export function makeTestConfig(options: {
   maxQueued?: number;
 }): AppConfig {
   return configSchema.parse({
-    version: 1,
+    version: 2,
     onebot: {
       url: "ws://127.0.0.1:3001",
       access_token: "test-token",
@@ -451,10 +460,14 @@ export function makeTestConfig(options: {
     workspaces: { root: `${options.projectPath}/.qq-workspaces` },
     default_project: "demo",
     users: {
-      [options.userQQ ?? "20000"]: { role: "owner", projects: ["*"] },
+      [options.userQQ ?? "20000"]: {
+        role: "owner",
+        projects: ["*"],
+        write_projects: ["*"],
+      },
     },
     projects: {
-      demo: { path: options.projectPath, allowed_users: [options.userQQ ?? "20000"] },
+      demo: { path: options.projectPath },
     },
     security: {
       max_queued_prompts: options.maxQueued ?? 3,

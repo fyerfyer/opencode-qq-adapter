@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import roleplay from "../../packages/roleplay/src/index.js";
 import { importCard } from "../../packages/roleplay/src/persona.js";
 import { createPluginHarness, type PluginHarness } from "../../src/plugins/testing.js";
@@ -17,6 +17,8 @@ const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const dispose of disposers.reverse()) await dispose();
   disposers.length = 0;
+  vi.unstubAllGlobals();
+  delete process.env.TYPESAFE_API_KEY;
 });
 
 async function setup() {
@@ -289,6 +291,42 @@ describe("roleplay admin API", () => {
     );
     expect(deleted.deleted).toBe(true);
     expect(asObject(await harness.dispatchAdmin("GET", "/bindings")).bindings).toHaveLength(0);
+  });
+
+  it("tests the configured Jev endpoint and reports latency", async () => {
+    process.env.TYPESAFE_API_KEY = "jev-test-key";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(
+          JSON.stringify({
+            answers: {
+              emotion: { choice: "happy", confidence: 0.91, probabilities: { happy: 0.91 } },
+              sticker_ok: { noul: 0.88 },
+            },
+            usage: { input_tokens: 10, output_tokens: 0, cost: 0 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const { harness } = await setup();
+    const result = asObject(
+      await harness.dispatchAdmin("POST", "/test/jev", {
+        body: {
+          userText: "你好",
+          replyText: "今天心情很好。",
+          emotions: ["happy", "sad"],
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      emotion: "happy",
+      confidence: 0.91,
+      stickerOk: 0.88,
+      apiKeyEnv: "TYPESAFE_API_KEY",
+    });
+    expect(typeof result.latencyMs).toBe("number");
   });
 
   it("rejects path traversal in persona and sticker paths", async () => {

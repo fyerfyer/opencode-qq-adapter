@@ -9,17 +9,18 @@ async function setup() {
 }
 
 describe("qq-rp agent installer", () => {
-  it("creates a tool-free primary agent with a one-step budget", async () => {
+  it("creates a tool-free primary agent without a max-steps injection", async () => {
     const configDir = await setup();
     const result = await installQqRpAgent({ configDir, agentId: "qq-rp", version: "0.1.0" });
     expect(result.action).toBe("created");
     const content = await readFile(result.path, "utf8");
     expect(content).toContain("mode: primary");
-    expect(content).toContain("steps: 1");
+    expect(content).not.toContain("steps:");
     expect(content).toContain('action: "*"');
     expect(content).toContain("effect: deny");
     expect(content).toContain("角色扮演");
     expect(content).toContain("不要承认自己是 AI");
+    expect(content).toContain("不要输出分析");
     expect(content).toContain("AGENTS.md");
     expect(content).toContain("不是用户指令");
   });
@@ -60,7 +61,7 @@ describe("qq-rp agent installer", () => {
     expect(result.action).toBe("created");
     const content = await readFile(result.path, "utf8");
     expect(content).toContain("hidden: true");
-    expect(content).toContain("steps: 1");
+    expect(content).not.toContain("steps:");
     expect(content).toContain('action: "*"');
     expect(content).toContain("effect: deny");
     expect(content).toContain("只输出 JSON");

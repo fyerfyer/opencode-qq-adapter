@@ -42,7 +42,7 @@ export class MessageRouter {
     if (message.chat.type === "group") {
       if (
         command === undefined &&
-        this.#deps.policy.isGroupMentionRequired(message.chat.groupId) &&
+        this.#deps.policy.isGroupMentionRequired() &&
         !message.mentionsBot
       ) {
         return;
@@ -78,7 +78,7 @@ export class MessageRouter {
           actor: actorRole,
           groupMode:
             context.message.chat.type === "group" && context.message.chat.groupId !== undefined
-              ? this.#deps.policy.groupMode(context.message.chat.groupId)
+              ? "per_user"
               : null,
         }));
       if (handledByPlugin) return;
@@ -146,18 +146,15 @@ export class MessageRouter {
     let projectId: string | null = null;
     const conversation = conversations.getConversation(message.chat.chatKey);
     if (conversation !== null) {
-      const allowed = policy.canUseProject(
-        actor,
-        message.userId,
-        conversation.projectId,
-        message.chat.groupId,
-      );
+      const allowed = policy.canUseProject(actor, conversation.projectId, {
+        includeHidden: true,
+      });
       if (allowed.allowed) projectId = conversation.projectId;
     }
 
     let autoSelected = false;
     if (projectId === null) {
-      const fallback = policy.defaultProject(actor, message.userId, message.chat.groupId);
+      const fallback = policy.defaultProject(actor);
       if (fallback === null) {
         await sender.reply(
           message.chat,
@@ -221,7 +218,7 @@ export class MessageRouter {
           queued: submitted.queued,
           textLength: text.length,
           images: images.length,
-          policyNames: permissions.policyNames,
+          writable: permissions.writable,
         },
       });
     }

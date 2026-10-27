@@ -9,21 +9,6 @@ const shellRuleSchema = z
   })
   .strict();
 
-export const policySchema = z
-  .object({
-    read: effectSchema.optional(),
-    glob: effectSchema.optional(),
-    grep: effectSchema.optional(),
-    edit: effectSchema.optional(),
-    write: effectSchema.optional(),
-    shell: effectSchema.optional(),
-    webfetch: effectSchema.optional(),
-    websearch: effectSchema.optional(),
-    external_directory: effectSchema.optional(),
-    shell_rules: z.array(shellRuleSchema).default([]),
-  })
-  .strict();
-
 export const limitsSchema = z
   .object({
     prompts_per_minute: z.number().int().positive().optional(),
@@ -37,22 +22,12 @@ export const limitsSchema = z
 export const userSchema = z
   .object({
     role: z.enum(["owner", "admin", "member"]).default("member"),
-    projects: z.array(z.string().min(1)).default(["*"]),
-    policy: z.string().min(1).optional(),
+    /** Projects this user may talk to. `*` grants every visible project. */
+    projects: z.array(z.string().min(1)).default([]),
+    /** Subset of `projects` this user may modify; unlisted projects stay read-only. */
+    write_projects: z.array(z.string().min(1)).default([]),
     limits: limitsSchema,
     note: z.string().optional(),
-  })
-  .strict();
-
-export const groupSchema = z
-  .object({
-    enabled: z.boolean().default(true),
-    mode: z.enum(["per_user", "shared", "readonly"]).default("per_user"),
-    require_mention: z.boolean().optional(),
-    allowed_users: z.array(z.string().min(1)).default([]),
-    projects: z.array(z.string().min(1)).default(["*"]),
-    default_project: z.string().min(1).optional(),
-    policy: z.string().min(1).optional(),
   })
   .strict();
 
@@ -60,14 +35,15 @@ export const projectSchema = z
   .object({
     path: z.string().min(1),
     description: z.string().optional(),
-    policy: z.string().min(1).default("standard"),
     workspace: z.enum(["shared", "per_user", "worktree", "none"]).default("shared"),
     agent: z.string().min(1).nullable().default(null),
     model: z.string().min(1).nullable().default(null),
-    allowed_users: z.array(z.string().min(1)).optional(),
-    allowed_groups: z.array(z.string().min(1)).optional(),
     setup: z.array(z.string().min(1)).default([]),
     base_branch: z.string().min(1).nullable().default(null),
+    /** Internal projects (for example a plugin workspace) stay out of user UI. */
+    hidden: z.boolean().default(false),
+    /** Audit/UI label for projects created by a plugin, e.g. `roleplay`. */
+    managed_by: z.string().min(1).optional(),
   })
   .strict();
 
@@ -101,9 +77,10 @@ const admin2faSchema = z
 
 const securitySchema = z
   .object({
-    default_effect: effectSchema.default("deny"),
     allowed_roots: z.array(z.string().min(1)).default([]),
     require_mention_in_group: z.boolean().default(true),
+    /** Extra allow/ask/deny rules for shell commands in writable projects. */
+    shell_rules: z.array(shellRuleSchema).default([]),
     max_prompt_chars: z.number().int().positive().default(8000),
     max_images_per_message: z.number().int().nonnegative().default(4),
     max_image_bytes: z
@@ -345,7 +322,7 @@ export const adminSchema = z
 
 export const configSchema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     server: z
       .object({
         host: z.string().default("127.0.0.1"),
@@ -362,9 +339,6 @@ export const configSchema = z
     users: z
       .record(z.string().regex(/^\d+$/, "user IDs must be numeric QQ numbers"), userSchema)
       .prefault({}),
-    groups: z
-      .record(z.string().regex(/^\d+$/, "group IDs must be numeric QQ numbers"), groupSchema)
-      .prefault({}),
     projects: z
       .record(
         z
@@ -377,7 +351,6 @@ export const configSchema = z
         projectSchema,
       )
       .prefault({}),
-    policies: z.record(z.string().min(1), policySchema).prefault({}),
     plugins: pluginsSchema,
     workspaces: workspacesSchema,
     notifications: notificationsSchema,
@@ -392,7 +365,6 @@ export const configSchema = z
 export type AppConfig = z.infer<typeof configSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;
 export type UserConfig = z.infer<typeof userSchema>;
-export type GroupConfig = z.infer<typeof groupSchema>;
-export type PolicyConfig = z.infer<typeof policySchema>;
 export type PluginConfig = z.infer<typeof pluginConfigSchema>;
 export type PermissionEffect = z.infer<typeof effectSchema>;
+export type ShellRuleConfig = z.infer<typeof shellRuleSchema>;

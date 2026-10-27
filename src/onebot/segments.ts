@@ -1,4 +1,4 @@
-import { type GroupMode, groupChat, privateChat } from "../domain/chat.js";
+import { groupChat, privateChat } from "../domain/chat.js";
 import type { IncomingImage, IncomingMessage } from "../domain/message.js";
 import type { OneBotMessageEvent, OneBotSegment } from "./protocol.js";
 
@@ -126,7 +126,6 @@ export function summarizeSegments(segments: OneBotSegment[]): SegmentSummary {
 export function toIncomingMessage(
   event: OneBotMessageEvent,
   selfId: number | null,
-  resolveGroupMode: (groupId: number) => GroupMode,
 ): IncomingMessage {
   const segments = normalizeSegments(event);
   const summary = summarizeSegments(segments);
@@ -137,7 +136,7 @@ export function toIncomingMessage(
   let chat: ReturnType<typeof privateChat>;
   if (event.message_type === "group") {
     const groupId = groupIdFromEvent(event);
-    chat = groupChat(groupId, userId, resolveGroupMode(groupId));
+    chat = groupChat(groupId, userId);
   } else {
     chat = privateChat(userId);
   }

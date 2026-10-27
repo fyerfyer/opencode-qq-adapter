@@ -11,7 +11,7 @@
 # WebUI: after the bridge starts, open /admin → Roleplay to import cards,
 # upload stickers, edit Markdown memory and change these options.
 
-version: 1
+version: 2
 
 # If your config sets security.allowed_roots, include the persona root's parent:
 security:
@@ -21,33 +21,15 @@ security:
 projects:
   roleplay:
     path: ~/.local/share/opencode-qq/plugins/roleplay/personas
-    description: Roleplay personas (read-only)
-    policy: roleplay
+    description: Roleplay personas (internal)
     workspace: none
     agent: qq-rp
     model: null
-    allowed_users: ["10001"]
-    # For group roleplay, add the group and include "roleplay" in its projects:
-    # allowed_groups: ["30001"]
+    hidden: true
+    managed_by: roleplay
 
-# groups:
-#   "30001":
-#     enabled: true
-#     mode: per_user # per_user | shared | readonly
-#     require_mention: true
-#     allowed_users: ["10001", "10002"]
-#     projects: ["roleplay"]
-
-policies:
-  roleplay:
-    read: allow
-    glob: deny
-    grep: deny
-    edit: deny
-    shell: deny
-    webfetch: deny
-    websearch: deny
-    external_directory: deny
+# Group chats need no configuration. Roleplay works per user in private chats
+# and in any group without a group-level allowlist.
 
 plugins:
   roleplay:

@@ -10,7 +10,7 @@ export interface ConfigReloadResult {
 
 type MutableRecord = Record<string, unknown>;
 
-const RECORD_SECTIONS = ["users", "groups", "projects", "policies", "plugins"] as const;
+const RECORD_SECTIONS = ["users", "projects", "plugins"] as const;
 const IN_PLACE_SECTIONS = [
   "security",
   "features",

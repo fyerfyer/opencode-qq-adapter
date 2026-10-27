@@ -72,9 +72,8 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
   commands.set("whoami", async ({ message }) => {
     const actor = deps.policy.actor(message.userId);
     if (actor === null) return;
-    const projects = deps.policy
-      .availableProjects(actor, message.userId, message.chat.groupId)
-      .map((entry) => entry.id);
+    const projects = deps.policy.availableProjects(actor).map((entry) => entry.id);
+    const writable = projects.filter((project) => deps.policy.canWriteProject(actor, project));
     const text = [
       `QQ：${message.userId}`,
       `昵称：${message.senderName}`,
@@ -82,6 +81,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       ...(message.chat.type === "group" ? [`群号：${message.chat.groupId ?? "-"}`] : []),
       `会话键：${message.chat.chatKey}`,
       `可用项目：${projects.length > 0 ? projects.join(", ") : "无"}`,
+      `可修改项目：${writable.length > 0 ? writable.join(", ") : "无（只能问答）"}`,
     ].join("\n");
     await deps.sender.reply(message.chat, message.id, text);
   });
@@ -100,19 +100,16 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       return;
     }
     const projectId = args[0] ?? "";
-    const allowed = deps.policy.canUseProject(
-      actor,
-      message.userId,
-      projectId,
-      message.chat.groupId,
-    );
+    const allowed = deps.policy.canUseProject(actor, projectId);
     if (!allowed.allowed || allowed.project === null) {
       await deps.sender.reply(
         message.chat,
         message.id,
         allowed.reason === "project_not_found"
           ? `项目 '${projectId}' 不存在。发送 !projects 查看可用项目。`
-          : `你没有权限使用项目 '${projectId}'。`,
+          : allowed.reason === "hidden_project"
+            ? `项目 '${projectId}' 是插件内部项目，不能手动选择。`
+            : `你没有权限使用项目 '${projectId}'。`,
       );
       return;
     }
@@ -215,7 +212,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     if (actor === null) return;
     const sub = (args[0] ?? "").toLowerCase();
     if (sub === "list") {
-      const entries = deps.policy.availableProjects(actor, message.userId, message.chat.groupId);
+      const entries = deps.policy.availableProjects(actor);
       if (entries.length === 0) {
         await deps.sender.reply(message.chat, message.id, "没有可用项目。");
         return;
@@ -357,8 +354,8 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
   commands.set("reload", async ({ message }) => {
     const actor = deps.policy.actor(message.userId);
     if (actor === null) return;
-    if (actor.role !== "owner") {
-      await deps.sender.reply(message.chat, message.id, "只有 owner 可以热加载配置。");
+    if (actor.role !== "owner" && actor.role !== "admin") {
+      await deps.sender.reply(message.chat, message.id, "只有 owner/admin 可以热加载配置。");
       return;
     }
     if (message.chat.type !== "private") {
@@ -450,14 +447,6 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     }
 
     if (args.length > 0) {
-      if (!canManageConversation(deps, message)) {
-        await deps.sender.reply(
-          message.chat,
-          message.id,
-          "shared 群只有 owner/admin 可以切换模型。",
-        );
-        return;
-      }
       const model = args[0] ?? "";
       if (!model.includes("/")) {
         await deps.sender.reply(message.chat, message.id, "用法：!model provider/model");
@@ -531,14 +520,6 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     }
 
     if (args.length > 0) {
-      if (!canManageConversation(deps, message)) {
-        await deps.sender.reply(
-          message.chat,
-          message.id,
-          "shared 群只有 owner/admin 可以切换 agent。",
-        );
-        return;
-      }
       const agent = args[0] ?? "";
       const result = await deps.conversations.setAgent(message.chat.chatKey, agent);
       if (!result.ok) {
@@ -611,10 +592,6 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       await deps.sender.reply(message.chat, message.id, "还没有选择项目。请先发送 !use <项目>。");
       return;
     }
-    if (!canManageConversation(deps, message)) {
-      await deps.sender.reply(message.chat, message.id, "shared 群只有 owner/admin 可以切换会话。");
-      return;
-    }
     const prefix = args[0] ?? "";
     if (prefix.length < 4) {
       await deps.sender.reply(message.chat, message.id, "用法：!switch <至少 4 位会话 ID 前缀>");
@@ -669,17 +646,6 @@ function workspaceDirectory(deps: RouterDeps, chatKey: string): string | null {
   } catch {
     return null;
   }
-}
-
-function canManageConversation(
-  deps: RouterDeps,
-  message: { chat: { type: string; groupId?: number }; userId: number },
-): boolean {
-  if (message.chat.type !== "group") return true;
-  const groupId = message.chat.groupId;
-  if (groupId === undefined || deps.policy.groupMode(groupId) !== "shared") return true;
-  const actor = deps.policy.actor(message.userId);
-  return actor?.role === "owner" || actor?.role === "admin";
 }
 
 function errorMessage(error: unknown): string {
