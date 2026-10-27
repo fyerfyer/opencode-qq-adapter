@@ -86,7 +86,29 @@ plugins:
       greeting: "你好"
 ```
 
-The config key must match `opencodeQq.id`. Only explicitly configured plugins are loaded; the WebUI and QQ messages cannot upload or load code.
+The config key must match `opencodeQq.id`. Only explicitly configured plugins are loaded. An authenticated local administrator can install a self-contained ZIP through the WebUI; QQ messages never load or install code, and the WebUI does not run `npm install` or build scripts.
+
+## Installing through the WebUI
+
+The WebUI supports two admin-only flows:
+
+- **Upload ZIP** for a built, self-contained plugin package.
+- **Register a local directory** for development. The code is not copied; edit it and use “重新加载代码” in the plugin card menu.
+
+Recommended upload package:
+
+```text
+my-plugin.zip
+├── package.json          # opencodeQq manifest + runtime entry
+├── dist/index.js         # built ESM JavaScript
+└── ui/index.html         # optional iframe admin page
+```
+
+The upload installer statically validates `package.json.opencodeQq`, the entry, and optional `ui` files. Uploaded entries must be `.js` / `.mjs` / `.cjs`; bundle runtime dependencies before packing. Local directories may use TypeScript and their own `node_modules`.
+
+Limits: 20 MiB ZIP, 64 MiB extracted, 2000 files (4000 archive entries). Path traversal, backslashes, absolute paths, duplicate paths, symlinks, and special files are rejected.
+
+Managed code lives under `<storage.plugins_dir>/.managed/<plugin-id>/`; plugin data remains `<storage.plugins_dir>/<plugin-id>/`. Updates keep up to three backups and can be rolled back from the WebUI; uninstalling managed code also removes its managed backups.
 
 ## Context capabilities
 
@@ -150,6 +172,8 @@ toasts, confirms and core navigation. For a complete example see
 [`examples/ui-plugin`](../../examples/ui-plugin).
 
 The core mounts the routes at `/admin/api/plugins/<plugin-id>/*`, blocks HTML responses, enforces CSRF on writes, audits mutations, and supports `Response` passthrough for images/files.
+
+Core lifecycle endpoints reserve `POST /reload`, `POST /rollback`, and `POST /uninstall` under the plugin prefix; plugin-owned admin routes should use different subpaths.
 
 ## Commands
 

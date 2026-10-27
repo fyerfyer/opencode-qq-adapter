@@ -253,7 +253,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
-- 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可启用/禁用插件、进入插件自己的管理页，插件代码仍只从 YAML 安装。
+- 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。
 - 第三方插件页面：插件自带 `ui/` 静态资源，由核心在 `sandbox` iframe 中挂载；页面通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 调用本插件 admin API，不接触管理员 cookie 和 CSRF。
 - Roleplay：角色卡导入、备注编辑、世界书条目新增/编辑/删除/启停与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。Roleplay 页面本身也已迁移到 iframe。
 - Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
@@ -341,7 +341,7 @@ pnpm start
 - **OpenCode 插件**（`plugin/`）：运行在 OpenCode 进程里，只负责 `qq_send_image` / `qq_send_file`。
 - **QQ 插件**（本文）：运行在 bridge 进程里，用来注册 QQ 命令、注入 prompt 上下文、监听 run 完成、发送媒体和保存插件数据。
 
-QQ 插件只从 YAML 显式加载，是可信代码，没有沙箱：
+QQ 插件由 YAML 的 `plugins` 段显式启用，YAML 仍是唯一配置源。插件是以 bridge 进程权限运行的可信代码，没有沙箱；QQ 消息永远不能安装或加载插件。管理员可以通过 WebUI 插件页上传 ZIP 或注册本地目录，WebUI 只负责校验、托管代码和写入 YAML。
 
 ```yaml
 plugins:
@@ -357,6 +357,34 @@ plugins:
 ```
 
 `path` 相对于配置文件解析；也可以用 `package: "@scope/plugin"` 从 npm 包加载。配置 key 必须与插件 manifest 的 `opencodeQq.id` 一致。插件数据默认位于 `storage.plugins_dir/<plugin-id>/`。
+
+### WebUI 安装插件
+
+打开 `/admin` →「插件」→「安装插件」，可以：
+
+- **上传 ZIP**：导入已构建、自包含的插件包。
+- **注册本地目录**：用于开发调试，只写 YAML，不复制代码；修改代码后在插件卡片菜单点「重新加载代码」。
+- **安装后启用**：预览时默认开启，也可以只安装、稍后手动启用。
+- **更新 / 回滚**：相同插件 ID 上传新版本会保留上一版本，最多保留 3 个备份。
+- **卸载**：删除 YAML 配置、WebUI 托管的代码和该插件的托管备份；插件数据默认保留，可勾选同时删除。
+
+上传 ZIP 的推荐结构：
+
+```text
+my-plugin.zip
+├── package.json          # 必须包含 opencodeQq manifest
+├── dist/index.js         # 已构建的 ESM 入口
+└── ui/index.html         # 可选，插件管理页
+```
+
+上传包要求：
+
+- `package.json.opencodeQq` 必须存在，并包含合法的 `id`、`version`、`apiVersion`、`entry`。
+- 入口必须是 `.js` / `.mjs` / `.cjs`；上传包应自行 bundle 运行时依赖，WebUI 不执行 `npm install`、构建或安装脚本。
+- 本地目录模式可以使用 TypeScript，依赖由本地 `node_modules` 提供。
+- ZIP 最大 20 MiB；解压后最大 64 MiB、2000 个文件（最多 4000 个归档条目）；拒绝路径穿越、反斜杠、绝对路径、符号链接和特殊文件。
+
+WebUI 托管的代码位于 `storage.plugins_dir/.managed/<plugin-id>/`，插件数据仍在 `storage.plugins_dir/<plugin-id>/`。安装、更新、回滚、卸载和重新加载都会写入审计日志。
 
 插件可以声明并使用这些能力：
 
@@ -434,7 +462,15 @@ pnpm typecheck:examples
 pnpm test
 ```
 
-插件加载失败只会标记该插件为 `failed`，不会影响核心和其它插件；发送 `!plugins` 或打开 `/admin` 的“插件”页可以查看错误。
+如果要通过 WebUI 分发插件，先构建并 bundle，再把 `package.json`、`dist/`、可选的 `ui/` 打进 ZIP。示例：
+
+```bash
+cd my-plugin
+pnpm build
+zip -r ../my-plugin-0.1.0.zip package.json dist ui
+```
+
+插件加载失败只会标记该插件为 `failed`，不会影响核心和其它插件；发送 `!plugins` 或打开 `/admin` 的「插件」页可以查看错误。
 
 ## Roleplay（实验）
 
@@ -967,7 +1003,7 @@ src/                    bridge 本体
   store/                SQLite
   observability/        日志、health、审计、owner 告警
   admin/                /admin API、鉴权、配置/Agents 编辑
-  plugins/              QQ 插件 SDK、manifest、宿主、媒体/存储 API
+  plugins/              QQ 插件 SDK、manifest、宿主、安装器、媒体/存储 API
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk
 packages/plugin-ui/     @opencode-qq/plugin-ui（iframe bridge 客户端）

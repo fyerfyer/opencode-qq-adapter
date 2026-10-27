@@ -306,6 +306,8 @@ export interface MetaInfo {
   };
 }
 
+export type PluginSourceKind = "path" | "package";
+
 export interface PluginInfo {
   id: string;
   name: string;
@@ -317,6 +319,8 @@ export interface PluginInfo {
   capabilities: string[];
   commands: string[];
   source: string;
+  sourceKind: PluginSourceKind;
+  managed: boolean;
   loadedAt: number | null;
   admin: {
     routes: number;
@@ -331,6 +335,60 @@ export interface PluginAdminPage {
   description?: string;
   kind?: "native" | "iframe";
   entry?: string;
+}
+
+export interface PluginPackagePreview {
+  uploadId: string | null;
+  archive: { name: string; bytes: number; sha256: string } | null;
+  manifest: {
+    id: string;
+    name: string;
+    version: string;
+    apiVersion: number;
+    description: string | null;
+    capabilities: string[];
+    engines: { opencodeQq: string | null };
+    ui: { root: string; entry: string | null } | null;
+  };
+  entry: string;
+  packageName: string | null;
+  files: number;
+  bytes: number;
+  warnings: string[];
+  existing: {
+    id: string;
+    version: string;
+    status: PluginInfo["status"];
+    managed: boolean;
+    sourceKind: PluginSourceKind;
+  } | null;
+  configHash: string | null;
+  configPath: string | null;
+}
+
+export interface PluginInstallInfo {
+  managed: boolean;
+  sourceKind: PluginSourceKind;
+  archiveName: string | null;
+  archiveSha256: string | null;
+  installedAt: number | null;
+  previousVersion: string | null;
+  backups: number;
+}
+
+export interface PluginActionResult {
+  plugin: PluginInfo;
+  install: PluginInstallInfo | null;
+  reload: ConfigSaveResult["reload"];
+  warnings: string[];
+}
+
+export interface PluginUninstallResult {
+  configRemoved: boolean;
+  codeRemoved: boolean;
+  dataDeleted: boolean;
+  reload: ConfigSaveResult["reload"];
+  warnings: string[];
 }
 
 export interface PluginUiPageDescriptor {

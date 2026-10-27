@@ -9,6 +9,7 @@ import { loadConfig } from "../../src/config/loader.js";
 import { buildLogger } from "../../src/observability/logger.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
 import { FakeAgent, FakeOneBot } from "../helpers/fakes.js";
+import { makeZip } from "../helpers/zip.js";
 
 const ADMIN_PASSWORD = "test-admin-password";
 const disposers: Array<() => Promise<void>> = [];
@@ -124,6 +125,63 @@ async function request(
   });
 }
 
+async function adminRequest(
+  harness: Harness,
+  path: string,
+  options: {
+    method?: string;
+    body?: unknown;
+    csrf?: string | null;
+    cookie?: string | null;
+    form?: FormData;
+  } = {},
+): Promise<Response> {
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (options.cookie !== null) headers.cookie = options.cookie ?? harness.cookie;
+  if (options.body !== undefined) headers["content-type"] = "application/json";
+  const csrf = options.csrf === undefined ? harness.csrf : options.csrf;
+  if (csrf !== null && (options.method ?? "GET") !== "GET") {
+    headers["x-csrf-token"] = csrf;
+  }
+  return fetch(`${harness.baseUrl}/admin/api${path}`, {
+    method: options.method ?? "GET",
+    headers,
+    ...(options.form !== undefined
+      ? { body: options.form }
+      : options.body !== undefined
+        ? { body: JSON.stringify(options.body) }
+        : {}),
+  });
+}
+
+function pluginZipFile(id: string, version: string): Promise<File> {
+  return makeZip([
+    {
+      path: "package.json",
+      data: JSON.stringify({
+        name: id,
+        version,
+        type: "module",
+        opencodeQq: {
+          id,
+          name: "HTTP fixture",
+          version,
+          apiVersion: 1,
+          capabilities: ["commands"],
+          entry: "./index.js",
+        },
+      }),
+    },
+    { path: "index.js", data: "export default { setup() {} };" },
+  ]).then((buffer) => new File([buffer], `${id}-${version}.zip`, { type: "application/zip" }));
+}
+
+function previewForm(file: File): FormData {
+  const form = new FormData();
+  form.append("file", file);
+  return form;
+}
+
 describe("Plugin admin HTTP API", () => {
   it("requires a session and dispatches admin routes", async () => {
     const harness = await startApp();
@@ -227,5 +285,102 @@ describe("Plugin admin HTTP API", () => {
     });
     const status = (await listed.json()) as { plugins: Array<{ status: string }> };
     expect(status.plugins[0]?.status).toBe("disabled");
+  });
+
+  it("protects the install preview with session, CSRF and file validation", async () => {
+    const harness = await startApp();
+    const unauthenticated = await adminRequest(harness, "/plugins/install/preview", {
+      method: "POST",
+      cookie: null,
+      form: previewForm(await pluginZipFile("http-fixture", "0.1.0")),
+    });
+    expect(unauthenticated.status).toBe(401);
+
+    const noCsrf = await adminRequest(harness, "/plugins/install/preview", {
+      method: "POST",
+      csrf: null,
+      form: previewForm(await pluginZipFile("http-fixture", "0.1.0")),
+    });
+    expect(noCsrf.status).toBe(403);
+
+    const missingFile = await adminRequest(harness, "/plugins/install/preview", {
+      method: "POST",
+      form: new FormData(),
+    });
+    expect(missingFile.status).toBe(400);
+    expect(await missingFile.json()).toMatchObject({ error: "missing_file" });
+  });
+
+  it("installs, lists and uninstalls a managed ZIP through the HTTP API", async () => {
+    const harness = await startApp();
+    const id = `http-fixture-${Date.now().toString(36)}`;
+    const preview = await adminRequest(harness, "/plugins/install/preview", {
+      method: "POST",
+      form: previewForm(await pluginZipFile(id, "0.1.0")),
+    });
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      uploadId: string;
+      manifest: { id: string; version: string };
+      existing: unknown;
+    };
+    expect(previewBody).toMatchObject({
+      manifest: { id, version: "0.1.0" },
+      existing: null,
+    });
+
+    const installed = await adminRequest(harness, "/plugins/install", {
+      method: "POST",
+      body: { uploadId: previewBody.uploadId, enable: true },
+    });
+    expect(installed.status).toBe(200);
+    const installedBody = (await installed.json()) as {
+      plugin: { id: string; status: string; managed: boolean };
+      install: { managed: boolean; previousVersion: string | null };
+    };
+    expect(installedBody).toMatchObject({
+      plugin: { id, status: "loaded", managed: true },
+      install: { managed: true, previousVersion: null },
+    });
+
+    const listed = await adminRequest(harness, "/plugins");
+    const catalog = (await listed.json()) as {
+      plugins: Array<{ id: string; managed: boolean; sourceKind: string }>;
+    };
+    expect(catalog.plugins.find((plugin) => plugin.id === id)).toMatchObject({
+      managed: true,
+      sourceKind: "path",
+    });
+
+    const rollback = await adminRequest(harness, `/plugins/${id}/rollback`, {
+      method: "POST",
+    });
+    expect(rollback.status).toBe(409);
+    expect(await rollback.json()).toMatchObject({ error: "no_backup" });
+
+    const uninstalled = await adminRequest(harness, `/plugins/${id}/uninstall`, {
+      method: "POST",
+      body: { deleteData: false },
+    });
+    expect(uninstalled.status).toBe(200);
+    expect(await uninstalled.json()).toMatchObject({
+      configRemoved: true,
+      codeRemoved: true,
+      dataDeleted: false,
+    });
+    expect(await readFile(harness.configPath, "utf8")).not.toContain(id);
+  });
+
+  it("rejects a ZIP over the service size limit", async () => {
+    const harness = await startApp();
+    const oversized = new File([Buffer.alloc(21 * 1024 * 1024)], "oversized.zip", {
+      type: "application/zip",
+    });
+    const response = await adminRequest(harness, "/plugins/install/preview", {
+      method: "POST",
+      form: previewForm(oversized),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: "plugin_archive_too_large" });
   });
 });

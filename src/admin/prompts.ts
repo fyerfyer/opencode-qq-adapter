@@ -254,15 +254,6 @@ async function atomicWrite(path: string, content: string): Promise<void> {
   }
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function isMissing(error: unknown): boolean {
   return (
     typeof error === "object" &&

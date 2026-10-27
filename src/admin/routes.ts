@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { type Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Logger } from "pino";
 import { ZodError, z } from "zod";
@@ -374,6 +375,94 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   api.get("/plugins/:id/ui/:pageId", async (context) => {
     const id = validateId(context.req.param("id"), "plugin");
     return context.json(service.pluginUiPage(id, context.req.param("pageId")));
+  });
+
+  api.post(
+    "/plugins/install/preview",
+    bodyLimit({
+      maxSize: 24 * 1024 * 1024,
+      onError: () => {
+        throw new AdminError(413, "plugin_archive_too_large", "插件包不能超过 20 MiB。");
+      },
+    }),
+    async (context) => {
+      const body = await context.req.parseBody();
+      const file = body.file;
+      if (!(file instanceof File)) {
+        throw new AdminError(400, "missing_file", "请上传 ZIP 插件包。");
+      }
+      return context.json(await service.previewPluginUpload(file));
+    },
+  );
+
+  api.post("/plugins/install", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        uploadId: z.string().uuid(),
+        enable: z.boolean().default(true),
+        expectedHash: z.string().optional(),
+      }),
+    );
+    return context.json(
+      await service.installPluginUpload(
+        body.uploadId,
+        body.enable,
+        body.expectedHash ?? configHash(context),
+      ),
+    );
+  });
+
+  api.post("/plugins/local/preview", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        path: z.string().min(1).max(2000),
+      }),
+    );
+    return context.json(await service.previewLocalPlugin(body.path));
+  });
+
+  api.post("/plugins/local/install", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        path: z.string().min(1).max(2000),
+        enable: z.boolean().default(true),
+        expectedHash: z.string().optional(),
+      }),
+    );
+    return context.json(
+      await service.installLocalPlugin(
+        body.path,
+        body.enable,
+        body.expectedHash ?? configHash(context),
+      ),
+    );
+  });
+
+  api.post("/plugins/:id/reload", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    return context.json(await service.reloadPlugin(id));
+  });
+
+  api.post("/plugins/:id/rollback", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    return context.json(await service.rollbackPlugin(id));
+  });
+
+  api.post("/plugins/:id/uninstall", async (context) => {
+    const id = validateId(context.req.param("id"), "plugin");
+    const body = await readJson(
+      context,
+      z.object({
+        deleteData: z.boolean().default(false),
+        expectedHash: z.string().optional(),
+      }),
+    );
+    return context.json(
+      await service.uninstallPlugin(id, body.deleteData, body.expectedHash ?? configHash(context)),
+    );
   });
 
   api.all("/plugins/:id/*", async (context) => {

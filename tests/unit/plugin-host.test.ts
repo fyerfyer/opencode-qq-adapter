@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -318,5 +318,45 @@ describe("PluginHost", () => {
     const report = await host.reload();
     expect(report.loaded).toBe(1);
     expect(host.status().plugins[0]?.status).toBe("loaded");
+  });
+
+  it("force reloads a plugin from the same path after its code changes", async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), "qq-reload-plugin-"));
+    const source = (reply: string) => `export default {
+  manifest: {
+    id: "reload-plugin",
+    name: "Reload fixture",
+    version: "0.1.0",
+    apiVersion: 1,
+    capabilities: ["commands"],
+  },
+  setup(context) {
+    context.commands.register({
+      name: "reload-check",
+      handler() {
+        return ${JSON.stringify(reply)};
+      },
+    });
+  },
+};
+`;
+    await writeFile(
+      join(pluginDir, "package.json"),
+      JSON.stringify({ name: "@fixture/reload", version: "0.1.0", type: "module" }),
+    );
+    await writeFile(join(pluginDir, "index.js"), source("one"));
+
+    const { host, onebot } = await makeHost({ "reload-plugin": { path: pluginDir } });
+    expect(host.status().plugins[0]).toMatchObject({ id: "reload-plugin", status: "loaded" });
+
+    expect(await host.dispatchCommand(command("reload-check"))).toBe(true);
+    await waitFor(() => onebot.texts().includes("one"), 1000, "first reload-check reply");
+
+    await writeFile(join(pluginDir, "index.js"), source("two"));
+    expect(await host.reloadPlugin("reload-plugin")).toBe("loaded");
+
+    expect(await host.dispatchCommand(command("reload-check"))).toBe(true);
+    await waitFor(() => onebot.texts().includes("two"), 1000, "second reload-check reply");
+    expect(onebot.texts()).toEqual(["one", "two"]);
   });
 });

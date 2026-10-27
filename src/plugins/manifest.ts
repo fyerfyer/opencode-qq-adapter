@@ -101,13 +101,14 @@ export class PluginLoadError extends Error {
   }
 }
 
-interface PackageJson {
+export interface PackageJson {
   name?: string;
   version?: string;
   type?: string;
   main?: string;
   module?: string;
   exports?: unknown;
+  dependencies?: Record<string, string>;
   opencodeQq?: unknown;
 }
 
@@ -133,9 +134,9 @@ export async function loadPluginModule(
   const moduleManifest =
     exported.manifest === undefined
       ? null
-      : parseManifest(exported.manifest, `${target.entryPath}#manifest`);
+      : parsePackageManifest(exported.manifest, `${target.entryPath}#manifest`);
   const packageManifest = target.packageJson?.opencodeQq
-    ? parseManifest(target.packageJson.opencodeQq, target.packageJsonPath ?? "package.json")
+    ? parsePackageManifest(target.packageJson.opencodeQq, target.packageJsonPath ?? "package.json")
     : null;
 
   if (moduleManifest !== null && packageManifest !== null) {
@@ -167,7 +168,7 @@ export async function loadPluginModule(
     );
   }
 
-  assertCompatible(manifest, coreVersion);
+  assertManifestCompatible(manifest, coreVersion);
 
   const capabilities = new Set<PluginCapability>(manifest.capabilities ?? []);
   return {
@@ -178,7 +179,7 @@ export async function loadPluginModule(
   };
 }
 
-function parseManifest(value: unknown, source: string): PackageManifest {
+export function parsePackageManifest(value: unknown, source: string): PackageManifest {
   const parsed = manifestSchema.safeParse(value);
   if (!parsed.success) {
     const details = parsed.error.issues
@@ -190,7 +191,7 @@ function parseManifest(value: unknown, source: string): PackageManifest {
   return { ...parsed.data, ...(entry !== undefined ? { entry } : {}) };
 }
 
-function assertCompatible(manifest: PackageManifest, coreVersion: string): void {
+export function assertManifestCompatible(manifest: PackageManifest, coreVersion: string): void {
   const range = manifest.engines?.opencodeQq;
   if (range === undefined) return;
   if (semver.validRange(range) === null) {
@@ -230,7 +231,7 @@ async function resolveLocalTarget(path: string): Promise<ResolvedTarget> {
     return {
       entryPath: absolute,
       packageRoot,
-      packageJson: packageJsonPath === null ? null : await readPackageJson(packageJsonPath),
+      packageJson: packageJsonPath === null ? null : await readPackageJsonFile(packageJsonPath),
       packageJsonPath,
     };
   }
@@ -239,9 +240,9 @@ async function resolveLocalTarget(path: string): Promise<ResolvedTarget> {
   }
 
   const packageJsonPath = join(absolute, "package.json");
-  const packageJson = await readPackageJson(packageJsonPath);
+  const packageJson = await readPackageJsonFile(packageJsonPath);
   const manifest = packageJson?.opencodeQq
-    ? parseManifest(packageJson.opencodeQq, packageJsonPath)
+    ? parsePackageManifest(packageJson.opencodeQq, packageJsonPath)
     : null;
   const entry = await resolveEntry(absolute, packageJson, manifest?.entry);
   return {
@@ -274,12 +275,12 @@ async function resolvePackageTarget(specifier: string): Promise<ResolvedTarget> 
     );
   }
   const packageJsonPath = join(packageRoot, "package.json");
-  const packageJson = await readPackageJson(packageJsonPath);
+  const packageJson = await readPackageJsonFile(packageJsonPath);
   if (packageJson === null) {
     throw new PluginLoadError("package_json", `cannot read ${packageJsonPath}`);
   }
   const manifest = packageJson.opencodeQq
-    ? parseManifest(packageJson.opencodeQq, packageJsonPath)
+    ? parsePackageManifest(packageJson.opencodeQq, packageJsonPath)
     : null;
   const entry =
     manifest?.entry !== undefined
@@ -288,7 +289,7 @@ async function resolvePackageTarget(specifier: string): Promise<ResolvedTarget> 
   return { entryPath: entry, packageRoot, packageJson, packageJsonPath };
 }
 
-async function resolveEntry(
+export async function resolveEntry(
   root: string,
   packageJson: PackageJson | null,
   manifestEntry: string | undefined,
@@ -338,7 +339,7 @@ async function importModule(entryPath: string): Promise<Record<string, unknown>>
   }
 }
 
-async function readPackageJson(path: string): Promise<PackageJson | null> {
+export async function readPackageJsonFile(path: string): Promise<PackageJson | null> {
   try {
     const source = await readFile(path, "utf8");
     const parsed = JSON.parse(source) as unknown;

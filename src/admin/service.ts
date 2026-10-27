@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { Logger } from "pino";
 import type { ConfigReloadResult } from "../config/reload.js";
 import type {
@@ -14,9 +12,13 @@ import type { AuditEntry } from "../domain/audit.js";
 import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
-import type { PluginHost, PluginHostStatus } from "../plugins/host.js";
+import type { PluginHost } from "../plugins/host.js";
+import type {
+  PluginActionResult,
+  PluginPackagePreview,
+  PluginUninstallResult,
+} from "../plugins/install/types.js";
 import type { PluginAdminActor, PluginAdminResult } from "../plugins/sdk.js";
-import { PLUGIN_UI_PROTOCOL_VERSION } from "../plugins/ui-protocol.js";
 import type { AgentModel, AgentPort, AgentSession, AgentSummary } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import {
@@ -25,28 +27,26 @@ import {
   type AdminLoginResult,
   type AdminRequestMeta,
 } from "./auth.js";
+import { ConfigEditor, type ConfigSaveResult, type ConfigSnapshot } from "./config-editor.js";
+import { AdminError } from "./errors.js";
 import {
-  AdminConfigError,
-  ConfigEditor,
-  type ConfigSaveResult,
-  type ConfigSnapshot,
-} from "./config-editor.js";
-import { PluginUiTokenSigner } from "./plugin-ui-token.js";
+  type AdminPluginHostStatus,
+  AdminPluginService,
+  type AdminPluginStatus,
+  type PluginOptionsSnapshot,
+  type PluginUiAssetPayload,
+  type PluginUiPageDescriptor,
+} from "./plugin-service.js";
 import { type PromptFile, PromptStore, type PromptSummary } from "./prompts.js";
 
-export class AdminError extends Error {
-  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 500 | 503;
-  readonly code: string;
-  readonly details: string[];
-
-  constructor(status: AdminError["status"], code: string, message: string, details: string[] = []) {
-    super(message);
-    this.name = "AdminError";
-    this.status = status;
-    this.code = code;
-    this.details = details;
-  }
-}
+export { AdminError } from "./errors.js";
+export type {
+  AdminPluginHostStatus,
+  AdminPluginStatus,
+  PluginOptionsSnapshot,
+  PluginUiAssetPayload,
+  PluginUiPageDescriptor,
+} from "./plugin-service.js";
 
 export interface AdminServiceOptions {
   config: AppConfig;
@@ -66,22 +66,6 @@ export interface AdminServiceOptions {
   now?: () => number;
 }
 
-export interface PluginUiPageDescriptor {
-  pluginId: string;
-  pageId: string;
-  title: string;
-  description?: string;
-  entry: string;
-  protocol: typeof PLUGIN_UI_PROTOCOL_VERSION;
-  url: string;
-}
-
-export interface PluginUiAssetPayload {
-  body: Uint8Array;
-  contentType: string;
-  cacheControl: string;
-}
-
 export interface AccessSnapshot {
   users: Array<{ qq: string } & UserConfig>;
   groups: Array<{ id: string } & GroupConfig>;
@@ -98,18 +82,10 @@ export interface ConversationOverview extends ConversationRecord {
   recentRuns: RunRecord[];
 }
 
-export interface PluginOptionsSnapshot {
-  plugin: NonNullable<PluginHostStatus["plugins"][number]>;
-  options: Record<string, unknown>;
-  normalized: unknown;
-  error: string | null;
-  configHash: string | null;
-  configPath: string | null;
-}
-
 export class AdminService {
   readonly auth: AdminAuth;
   readonly configEditor: ConfigEditor;
+  readonly pluginService: AdminPluginService;
   readonly prompts: PromptStore;
   readonly #config: AppConfig;
   readonly #configPath: string | null;
@@ -119,10 +95,8 @@ export class AdminService {
   readonly #agent: AgentPort;
   readonly #conversations: ConversationManager;
   readonly #audit: AuditTrail;
-  readonly #plugins: PluginHost | undefined;
   readonly #logger: Logger;
   readonly #reloadConfig: () => Promise<ConfigReloadResult>;
-  readonly #pluginUiTokens: PluginUiTokenSigner;
 
   constructor(options: AdminServiceOptions) {
     this.#config = options.config;
@@ -133,12 +107,8 @@ export class AdminService {
     this.#agent = options.agent;
     this.#conversations = options.conversations;
     this.#audit = options.audit;
-    this.#plugins = options.plugins;
     this.#logger = options.logger;
     this.#reloadConfig = options.reloadConfig;
-    this.#pluginUiTokens = new PluginUiTokenSigner(randomBytes(32), {
-      ...(options.now !== undefined ? { now: options.now } : {}),
-    });
     this.auth = new AdminAuth({
       store: options.store,
       sessionHours: options.config.admin.session_hours,
@@ -149,6 +119,16 @@ export class AdminService {
       configPath: options.configPath,
       reload: options.reloadConfig,
       logger: options.logger,
+    });
+    this.pluginService = new AdminPluginService({
+      config: options.config,
+      configPath: options.configPath,
+      version: options.version,
+      configEditor: this.configEditor,
+      host: options.plugins,
+      audit: options.audit,
+      logger: options.logger,
+      ...(options.now !== undefined ? { now: options.now } : {}),
     });
     this.prompts = new PromptStore({ root: options.promptRoot });
   }
@@ -573,210 +553,89 @@ export class AdminService {
     return this.#store.usage.listDaily(day);
   }
 
-  plugins(): PluginHostStatus {
-    if (this.#plugins !== undefined) {
-      return this.#plugins.status();
-    }
-    return {
-      enabled: false,
-      total: 0,
-      loaded: 0,
-      failed: 0,
-      plugins: [],
-      message: "插件宿主未启用。",
-    };
+  plugins(): AdminPluginHostStatus {
+    return this.pluginService.catalog();
   }
 
-  async pluginOptions(pluginId: string): Promise<PluginOptionsSnapshot> {
-    const plugin = this.#requirePlugin(pluginId);
-    const raw = this.#config.plugins[pluginId]?.options ?? {};
-    let normalized: unknown = raw;
-    let error: string | null = null;
-    if (this.#plugins !== undefined) {
-      try {
-        normalized = this.#plugins.validateOptions(pluginId, raw);
-      } catch (caught) {
-        error = caught instanceof Error ? caught.message : String(caught);
-      }
-    }
-    let configHash: string | null = null;
-    if (this.configEditor.enabled) {
-      try {
-        configHash = (await this.configEditor.read()).hash;
-      } catch {
-        configHash = null;
-      }
-    }
-    return {
-      plugin,
-      options: raw,
-      normalized,
-      error,
-      configHash,
-      configPath: this.#configPath,
-    };
+  pluginOptions(pluginId: string): Promise<PluginOptionsSnapshot> {
+    return this.pluginService.options(pluginId);
   }
 
-  async setPluginEnabled(
+  setPluginEnabled(
     pluginId: string,
     enabled: boolean,
     expectedHash?: string,
-  ): Promise<ConfigSaveResult & { plugin: NonNullable<PluginHostStatus["plugins"][number]> }> {
-    this.#requirePlugin(pluginId);
-    const result = await this.configEditor.mutate((document) => {
-      document.setIn(["plugins", pluginId, "enabled"], enabled);
-    }, expectedHash);
-    this.record({
-      action: enabled ? "admin.plugin.enabled" : "admin.plugin.disabled",
-      detail: { pluginId },
-    });
-    return { ...result, plugin: this.#requirePlugin(pluginId) };
+  ): Promise<ConfigSaveResult & { plugin: AdminPluginStatus }> {
+    return this.pluginService.setEnabled(pluginId, enabled, expectedHash);
   }
 
-  async savePluginOptions(
+  savePluginOptions(
     pluginId: string,
     options: Record<string, unknown>,
     expectedHash?: string,
   ): Promise<PluginOptionsSnapshot & ConfigSaveResult> {
-    this.#requirePlugin(pluginId);
-    if (this.#plugins === undefined) {
-      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
-    }
-    let normalized: unknown;
-    try {
-      normalized = this.#plugins.validateOptions(pluginId, options);
-    } catch (error) {
-      throw new AdminError(
-        400,
-        "invalid_plugin_options",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    if (!isPlainRecord(normalized)) {
-      throw new AdminError(400, "invalid_plugin_options", "插件配置必须是 JSON 对象。");
-    }
-    const result = await this.configEditor.mutate((document) => {
-      document.setIn(["plugins", pluginId, "options"], normalized);
-    }, expectedHash);
-    this.record({
-      action: "admin.plugin.options.updated",
-      detail: { pluginId },
-    });
-    const refreshed = this.#requirePlugin(pluginId);
-    return {
-      ...result,
-      plugin: refreshed,
-      options: normalized,
-      normalized,
-      error: null,
-      configHash: result.hash,
-      configPath: result.path,
-    };
+    return this.pluginService.saveOptions(pluginId, options, expectedHash);
   }
 
   pluginUiPage(pluginId: string, pageId?: string): PluginUiPageDescriptor {
-    const plugin = this.#requirePlugin(pluginId);
-    if (plugin.status !== "loaded") {
-      throw new AdminError(409, "plugin_not_loaded", `插件未加载：${pluginId}`);
-    }
-    if (this.#plugins === undefined) {
-      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
-    }
-    const page = this.#plugins.adminUiPage(pluginId, pageId);
-    if (page === null) {
-      throw new AdminError(
-        404,
-        "plugin_ui_page_not_found",
-        `插件没有可用的 iframe 页面：${pluginId}`,
-      );
-    }
-    const token = this.#pluginUiTokens.sign(pluginId);
-    const entry = page.entry.split("/").map(encodeURIComponent).join("/");
-    return {
-      pluginId,
-      pageId: page.page.id,
-      title: page.page.title,
-      ...(page.page.description !== undefined ? { description: page.page.description } : {}),
-      entry: page.entry,
-      protocol: PLUGIN_UI_PROTOCOL_VERSION,
-      url: `/admin/plugin-assets/${encodeURIComponent(token)}/${encodeURIComponent(pluginId)}/${entry}`,
-    };
+    return this.pluginService.uiPage(pluginId, pageId);
   }
 
-  async readPluginUiAsset(
+  readPluginUiAsset(
     token: string,
     pluginId: string,
     relativePath: string,
   ): Promise<PluginUiAssetPayload> {
-    const verified = this.#pluginUiTokens.verify(token);
-    if (verified === null || verified.pluginId !== pluginId) {
-      throw new AdminError(403, "plugin_ui_token_invalid", "插件页面资源令牌无效或已过期。");
-    }
-    const plugin = this.#requirePlugin(pluginId);
-    if (plugin.status !== "loaded") {
-      throw new AdminError(404, "plugin_not_loaded", `插件未加载：${pluginId}`);
-    }
-    if (this.#plugins === undefined) {
-      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
-    }
-    const asset = await this.#plugins.resolveAdminUiAsset(pluginId, relativePath);
-    if (asset === null) {
-      throw new AdminError(404, "plugin_ui_asset_not_found", "插件页面资源不存在。");
-    }
-    const bytes = await readFile(asset.path).catch(() => null);
-    if (bytes === null) {
-      throw new AdminError(404, "plugin_ui_asset_not_found", "插件页面资源不存在。");
-    }
-    if (bytes.byteLength > 32 * 1024 * 1024) {
-      throw new AdminError(413, "plugin_ui_asset_too_large", "插件页面资源过大。");
-    }
-    return {
-      body: new Uint8Array(bytes),
-      contentType: asset.contentType,
-      cacheControl: asset.cacheControl,
-    };
+    return this.pluginService.readAsset(token, pluginId, relativePath);
   }
 
-  async dispatchPluginAdmin(
+  dispatchPluginAdmin(
     pluginId: string,
     request: Request,
     path: string,
     actor: PluginAdminActor,
   ): Promise<PluginAdminResult> {
-    this.#requirePlugin(pluginId);
-    if (this.#plugins === undefined) {
-      throw new AdminError(503, "plugins_disabled", "插件宿主未启用。");
-    }
-    let result: PluginAdminResult | null;
-    try {
-      result = await this.#plugins.dispatchAdmin(pluginId, request, path, actor);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new AdminError(
-        /unknown plugin|not loaded/.test(message) ? 404 : 500,
-        "plugin_admin_failed",
-        message,
-      );
-    }
-    if (result === null) {
-      throw new AdminError(404, "plugin_route_not_found", "插件没有这个管理接口。");
-    }
-    if (!(result instanceof Response) && request.method !== "GET") {
-      this.record({
-        action: "admin.plugin.route",
-        detail: { pluginId, method: request.method, path },
-      });
-    }
-    return result;
+    return this.pluginService.dispatch(pluginId, request, path, actor);
   }
 
-  #requirePlugin(pluginId: string): NonNullable<PluginHostStatus["plugins"][number]> {
-    const status = this.plugins();
-    const plugin = status.plugins.find((item) => item.id === pluginId);
-    if (plugin === undefined) {
-      throw new AdminError(404, "plugin_not_found", `插件不存在：${pluginId}`);
-    }
-    return plugin;
+  previewPluginUpload(file: File): Promise<PluginPackagePreview> {
+    return this.pluginService.previewUpload(file);
+  }
+
+  installPluginUpload(
+    uploadId: string,
+    enable: boolean,
+    expectedHash?: string,
+  ): Promise<PluginActionResult> {
+    return this.pluginService.installUpload(uploadId, enable, expectedHash);
+  }
+
+  previewLocalPlugin(path: string): Promise<PluginPackagePreview> {
+    return this.pluginService.previewLocal(path);
+  }
+
+  installLocalPlugin(
+    path: string,
+    enable: boolean,
+    expectedHash?: string,
+  ): Promise<PluginActionResult> {
+    return this.pluginService.installLocal(path, enable, expectedHash);
+  }
+
+  reloadPlugin(pluginId: string): Promise<PluginActionResult> {
+    return this.pluginService.reload(pluginId);
+  }
+
+  rollbackPlugin(pluginId: string): Promise<PluginActionResult> {
+    return this.pluginService.rollback(pluginId);
+  }
+
+  uninstallPlugin(
+    pluginId: string,
+    deleteData: boolean,
+    expectedHash?: string,
+  ): Promise<PluginUninstallResult> {
+    return this.pluginService.uninstall(pluginId, deleteData, expectedHash);
   }
 
   record(
@@ -799,10 +658,6 @@ function compactObject<T extends object>(value: T): Record<string, unknown> {
   ) as Record<string, unknown>;
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function dayKey(now = new Date()): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -810,4 +665,4 @@ function dayKey(now = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-export { AdminConfigError };
+export { AdminConfigError } from "./config-editor.js";
