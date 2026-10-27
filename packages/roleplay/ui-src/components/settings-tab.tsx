@@ -120,8 +120,11 @@ export function SettingsTab() {
       const apiKey = jevApiKey.trim();
       let secret: PluginSecretResult | null = null;
       if (apiKey.length > 0) {
+        const key =
+          String(saved.options.jev_api_key_env ?? options.jev_api_key_env ?? "").trim() ||
+          "TYPESAFE_API_KEY";
         secret = await api.put<PluginSecretResult>("/plugins/roleplay/secrets", {
-          key: String(options.jev_api_key_env ?? "TYPESAFE_API_KEY"),
+          key,
           value: apiKey,
         });
         setJevApiKey("");
@@ -156,14 +159,55 @@ export function SettingsTab() {
         stickerOk: number;
         latencyMs: number;
         apiKeyEnv: string;
+        apiKeySource?: "form" | "env";
       }>("/plugins/roleplay/test/jev", {
         userText: "你好呀，今天过得怎么样？",
         replyText: "还不错，刚刚忙完一点事情。",
-        emotions: ["happy", "shy", "sad", "angry", "surprised", "sleepy", "smug", "thinking"],
+        emotions: [
+          "happy",
+          "shy",
+          "sad",
+          "angry",
+          "surprised",
+          "sleepy",
+          "smug",
+          "thinking",
+          "hungry",
+          "slacking",
+          "tsundere",
+          "love",
+          "greeting",
+          "working",
+          "panic",
+          "excited",
+          "bored",
+          "tired",
+        ],
+        ...(jevApiKey.trim().length > 0 ? { apiKey: jevApiKey.trim() } : {}),
+        ...(String(options.jev_base_url ?? "").trim().length > 0
+          ? { baseUrl: String(options.jev_base_url).trim() }
+          : {}),
+        ...(String(options.jev_endpoint ?? "").trim().length > 0
+          ? { endpoint: String(options.jev_endpoint).trim() }
+          : {}),
+        ...(String(options.jev_model ?? "").trim().length > 0
+          ? { model: String(options.jev_model).trim() }
+          : {}),
+        ...(typeof options.jev_timeout_ms === "number"
+          ? { timeoutMs: options.jev_timeout_ms }
+          : {}),
       });
-      const message = `连接正常 · ${decision.latencyMs}ms · ${decision.emotion ?? "none"} ${decision.confidence.toFixed(2)} · ${decision.apiKeyEnv}`;
+      const keySource =
+        decision.apiKeySource === "form"
+          ? "当前表单密钥（尚未保存）"
+          : `已保存密钥 ${decision.apiKeyEnv}`;
+      const message = `连接正常 · ${decision.latencyMs}ms · ${decision.emotion ?? "none"} ${decision.confidence.toFixed(2)} · ${keySource}`;
       setJevTest({ ok: true, message });
-      toast.success("Jev 连接正常");
+      toast.success(
+        decision.apiKeySource === "form"
+          ? "Jev 连接正常；测试使用的是当前表单值，请记得保存配置"
+          : "Jev 连接正常",
+      );
     } catch (caught) {
       const message = errorMessage(caught);
       setJevTest({ ok: false, message });
@@ -394,7 +438,7 @@ export function SettingsTab() {
                 <CardTitle>Jev 端点</CardTitle>
                 <CardDescription>
                   Base URL、Endpoint 和模型写入 YAML；API Key 写入 .env。保存后自动重载
-                  Roleplay；测试连接使用已保存的端点与密钥。
+                  Roleplay；测试连接优先使用当前表单值，留空的字段使用已保存配置。
                 </CardDescription>
               </div>
               <Button
@@ -433,7 +477,7 @@ export function SettingsTab() {
                 onChange={setJevApiKey}
                 placeholder="留空保持现有值"
                 type="password"
-                hint="只写入 .env；页面不会回显已保存的密钥。填写后点击顶部「保存配置」。"
+                hint="只写入 .env；页面不会回显已保存的密钥。可直接用当前值测试；确认后点「保存配置」。"
               />
               <NumberField
                 label="最低 confidence"

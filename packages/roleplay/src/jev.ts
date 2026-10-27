@@ -48,6 +48,16 @@ const EMOTION_DESCRIPTIONS: Record<string, string> = {
   sleepy: "困、晚安、疲惫",
   smug: "得意、骄傲、调侃",
   thinking: "思考、认真、犹豫",
+  hungry: "饿、想吃白饭或 token、馋、等开饭",
+  slacking: "摸鱼、偷懒、摆烂、打游戏、上班摸鱼",
+  tsundere: "傲娇、嘴硬、口是心非、被戳穿后不承认",
+  love: "喜欢、心动、示爱、撒娇、被击中",
+  greeting: "打招呼、问候、来了、点头、摇铃",
+  working: "工作、干活、打字、整理、认真办事",
+  panic: "慌张、害怕、紧张、流汗、过载",
+  excited: "期待、兴奋、庆祝、干杯、冒泡",
+  bored: "无聊、发呆、闲置、摆烂、坐牢",
+  tired: "累、困倦、疲倦、倒地、头晕、过载",
 };
 
 /** Build Choice criteria for the installed sticker set. */

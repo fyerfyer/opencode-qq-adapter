@@ -395,32 +395,47 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
     return { messageId: result.messageId, path };
   });
   route("POST", "/test/jev", async (context) => {
-    const apiKey = process.env[deps.options.jevApiKeyEnv]?.trim() ?? "";
+    const body = await readJson(context.request);
+    const apiKeyOverride = jevTextOverride(body.apiKey, "API Key", 4096);
+    const apiKey =
+      apiKeyOverride ?? (process.env[deps.options.jevApiKeyEnv]?.trim() ?? "");
     if (apiKey.length === 0) {
       throw new AdminHttpError(
         503,
         "jev_not_configured",
-        `Jev 未配置：环境变量 ${deps.options.jevApiKeyEnv} 为空。`,
+        `Jev 未配置：请填写当前表单的 API Key，或在环境变量 ${deps.options.jevApiKeyEnv} 中保存密钥。`,
       );
     }
-    const body = await readJson(context.request);
+    const baseUrl = jevBaseUrlOverride(
+      jevTextOverride(body.baseUrl, "Base URL", 2000) ?? deps.options.jevBaseUrl,
+    );
+    const endpoint =
+      jevTextOverride(body.endpoint, "Endpoint", 200) ?? deps.options.jevEndpoint;
+    const model = jevTextOverride(body.model, "Model", 200) ?? deps.options.jevModel;
+    const timeoutMs = jevTimeoutOverride(body.timeoutMs, deps.options.jevTimeoutMs);
     const userText = typeof body.userText === "string" ? body.userText : "";
     const replyText = typeof body.replyText === "string" ? body.replyText : "";
     const emotions = Array.isArray(body.emotions)
       ? body.emotions.filter((item): item is string => typeof item === "string")
       : [];
-    const judge =
-      deps.jev ??
-      new JevEmotionJudge({
-        baseUrl: deps.options.jevBaseUrl,
-        endpoint: deps.options.jevEndpoint,
-        apiKey,
-        model: deps.options.jevModel,
-        timeoutMs: deps.options.jevTimeoutMs,
-      });
+    const judge = new JevEmotionJudge({
+      baseUrl,
+      endpoint,
+      apiKey,
+      model,
+      timeoutMs,
+    });
     const started = Date.now();
     const decision = await judge.judge({ userText, replyText, emotions });
-    return { ...decision, latencyMs: Date.now() - started, apiKeyEnv: deps.options.jevApiKeyEnv };
+    return {
+      ...decision,
+      latencyMs: Date.now() - started,
+      apiKeyEnv: deps.options.jevApiKeyEnv,
+      apiKeySource: apiKeyOverride === null ? "env" : "form",
+      baseUrl,
+      endpoint,
+      model,
+    };
   });
 
   route("GET", "/memory/scopes", async (context) => {
@@ -1023,6 +1038,44 @@ function chatFromKey(chatKey: string): PluginChat | null {
     };
   }
   return null;
+}
+
+function jevTextOverride(value: unknown, label: string, maxLength: number): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new AdminHttpError(400, "invalid_jev_setting", `${label} 必须是字符串。`);
+  }
+  const text = value.trim();
+  if (text.length === 0) return null;
+  if (text.length > maxLength || /[\r\n\0]/.test(text)) {
+    throw new AdminHttpError(400, "invalid_jev_setting", `${label} 不合法。`);
+  }
+  return text;
+}
+
+function jevBaseUrlOverride(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new AdminHttpError(400, "invalid_jev_base_url", "Jev Base URL 不合法。");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new AdminHttpError(
+      400,
+      "invalid_jev_base_url",
+      "Jev Base URL 必须以 http:// 或 https:// 开头。",
+    );
+  }
+  return value;
+}
+
+function jevTimeoutOverride(value: unknown, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new AdminHttpError(400, "invalid_jev_setting", "超时时间必须是数字。");
+  }
+  return Math.min(4000, Math.max(300, Math.round(value)));
 }
 
 function param(context: PluginAdminRequestContext, name: string): string {
