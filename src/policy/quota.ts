@@ -1,3 +1,4 @@
+import { isChatProjectId } from "../chat/project.js";
 import type { AppConfig } from "../config/schema.js";
 import type { DailyUsage } from "../domain/audit.js";
 import type { StorePort, UsageDelta } from "../ports/store.js";
@@ -103,7 +104,7 @@ export class QuotaService {
     }
 
     const projectCost = this.#config.security.budgets.daily_cost_usd_per_project;
-    if (projectCost !== undefined) {
+    if (projectCost !== undefined && !isChatProjectId(projectId)) {
       const projectUsage = this.#store.usage.getProjectDaily(day, projectId);
       if (projectUsage.costUsd >= projectCost) {
         return deny(

@@ -83,6 +83,18 @@ security:
     period_seconds: 30
     digits: 6
 
+# Project-less Q&A mode. The bridge injects a hidden @chat project and a
+# dedicated empty workspace. File writes, shell/execute and external directory
+# access are denied; users without any project permission can still chat.
+chat:
+  enabled: true
+  # Defaults to <storage.database_path directory>/chat.
+  # path: ~/.local/share/opencode-qq/chat
+  agent: null
+  model: null
+  # Allow webfetch/websearch in chat mode. File tools stay denied either way.
+  allow_web: true
+
 # The project selected when a user has several available projects.
 default_project: demo
 

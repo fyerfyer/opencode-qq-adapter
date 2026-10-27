@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import semver from "semver";
 import { parse as parseYaml } from "yaml";
 import type { ZodError } from "zod";
+import { isChatProjectId, materializeChatProject } from "../chat/project.js";
 import { type AppConfig, configSchema, type ProjectConfig } from "./schema.js";
 
 const ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
@@ -145,6 +146,7 @@ const NULLABLE_SECTIONS = new Set([
   "logging",
   "features",
   "qq",
+  "chat",
   "storage",
   "admin_2fa",
 ]);
@@ -186,6 +188,10 @@ async function resolveAndValidate(
   config.security.allowed_roots = config.security.allowed_roots.map((root) =>
     resolvePath(baseDir, root),
   );
+  if (config.chat.path !== null) {
+    config.chat.path = resolvePath(baseDir, config.chat.path);
+  }
+  materializeChatProject(config);
 
   for (const [id, plugin] of Object.entries(config.plugins)) {
     if (plugin.path === undefined) continue;
@@ -197,7 +203,8 @@ async function resolveAndValidate(
   }
 
   const projectIds = new Set(Object.keys(config.projects));
-  if (projectIds.size === 0) {
+  const configuredProjectCount = [...projectIds].filter((id) => !isChatProjectId(id)).length;
+  if (configuredProjectCount === 0 && !config.chat.enabled) {
     warnings.push(
       "No projects configured. Prompt handling will be unavailable until a project is added.",
     );
@@ -213,6 +220,7 @@ async function resolveAndValidate(
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
+    if (isChatProjectId(id)) continue;
     project.path = resolvePath(baseDir, project.path);
     if (!isAbsolute(project.path)) {
       errors.push(`projects.${id}.path must be absolute (resolved to '${project.path}')`);
@@ -244,6 +252,9 @@ async function resolveAndValidate(
     errors.push(
       "opencode.default_model must look like 'provider/model' or 'provider/model#variant'",
     );
+  }
+  if (config.chat.model !== null && !isModelRef(config.chat.model)) {
+    errors.push("chat.model must look like 'provider/model' or 'provider/model#variant'");
   }
   if (
     config.opencode.service.version !== null &&

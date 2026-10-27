@@ -15,6 +15,7 @@ const IN_PLACE_SECTIONS = [
   "security",
   "features",
   "qq",
+  "chat",
   "notifications",
   "workspaces",
   "admin",

@@ -1,3 +1,4 @@
+import { CHAT_PROJECT_ID, isChatProjectId } from "../chat/project.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
 import type { IncomingMessage } from "../domain/message.js";
@@ -68,6 +69,12 @@ export async function formatStatus(
   const conversation = status.conversation;
   const currentProjectId = conversation?.projectId ?? null;
   const project = currentProjectId ? deps.config.projects[currentProjectId] : null;
+  const projectLabel =
+    currentProjectId === null
+      ? "未选择"
+      : isChatProjectId(currentProjectId)
+        ? `${currentProjectId}（问答模式）`
+        : currentProjectId;
   const health = await deps.agent.health();
   const onebot = deps.onebot.status();
   const active = status.activeRun;
@@ -78,7 +85,7 @@ export async function formatStatus(
     "OpenCode QQ Adapter 状态",
     `OneBot：${onebot.connected ? "已连接" : "未连接"} (${onebot.mode})`,
     `OpenCode：${health.healthy ? "正常" : "不可用"}${health.version ? ` v${health.version}` : ""}`,
-    `项目：${currentProjectId ?? "未选择"}`,
+    `项目：${projectLabel}`,
     `工作区：${project?.path ?? "-"}`,
     `工作区锁：${formatLockState(workspace, Date.now())}`,
     `会话：${conversation?.sessionId ?? "未创建"}`,
@@ -125,8 +132,11 @@ export function formatProjects(
   const actor = deps.policy.actor(message.userId);
   if (actor === null) return "未授权。";
   const entries = deps.policy.projectEntries(actor);
+  const chat = deps.policy.chatEntry();
   if (entries.length === 0) {
-    return "没有可用项目。请联系管理员在 config.yaml 的 users 中配置 projects。";
+    return chat === null
+      ? "没有可用项目。请联系管理员在 config.yaml 的 users 中配置 projects。"
+      : `没有可用项目。可以直接发送消息进入问答模式（${CHAT_PROJECT_ID}），不会读写任何项目文件。`;
   }
   const conversation = deps.conversations.getConversation(message.chat.chatKey);
   const current = conversation?.projectId ?? null;
@@ -137,6 +147,10 @@ export function formatProjects(
     const description = entry.project.description ? ` — ${entry.project.description}` : "";
     lines.push(`${marker} ${entry.id}${description}（${writable ? "可修改" : "只读问答"}）`);
     lines.push(`  ${entry.project.path}`);
+  }
+  if (chat !== null) {
+    const marker = isChatProjectId(current ?? "") ? "*" : "-";
+    lines.push(`${marker} ${CHAT_PROJECT_ID}（问答模式：无项目、只读，不读写项目文件）`);
   }
   return lines.join("\n");
 }

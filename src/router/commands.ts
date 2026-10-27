@@ -1,4 +1,5 @@
 import { parseApprovalDecision } from "../approval/broker.js";
+import { isChatProjectId } from "../chat/project.js";
 import type { AuditRecord } from "../domain/audit.js";
 import { formatDiff, formatProjects, formatStatus, formatWorkspace, HELP_TEXT } from "./format.js";
 import type { CommandHandler, RouterDeps } from "./types.js";
@@ -74,6 +75,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     if (actor === null) return;
     const projects = deps.policy.availableProjects(actor).map((entry) => entry.id);
     const writable = projects.filter((project) => deps.policy.canWriteProject(actor, project));
+    const chat = deps.policy.chatEntry();
     const text = [
       `QQ：${message.userId}`,
       `昵称：${message.senderName}`,
@@ -82,6 +84,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       `会话键：${message.chat.chatKey}`,
       `可用项目：${projects.length > 0 ? projects.join(", ") : "无"}`,
       `可修改项目：${writable.length > 0 ? writable.join(", ") : "无（只能问答）"}`,
+      `问答模式：${chat === null ? "未启用" : "@chat 可用"}`,
     ].join("\n");
     await deps.sender.reply(message.chat, message.id, text);
   });
@@ -130,7 +133,9 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     await deps.sender.reply(
       message.chat,
       message.id,
-      `已切换到项目：${projectId}\n目录：${allowed.project.path}`,
+      isChatProjectId(projectId)
+        ? "已进入问答模式（@chat）：不会读写任何项目文件。"
+        : `已切换到项目：${projectId}\n目录：${allowed.project.path}`,
     );
   };
   commands.set("use", useProject);

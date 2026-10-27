@@ -13,6 +13,11 @@ export interface PermissionProfile {
   shellRules?: readonly ShellRuleConfig[];
 }
 
+export interface ChatPermissionProfile {
+  /** Allow read-only web search/fetch in project-less Q&A. */
+  allowWeb: boolean;
+}
+
 const DISCOVERY_ACTIONS = ["read", "glob", "grep"] as const;
 
 /**
@@ -101,6 +106,57 @@ export function compilePermissionRuleset(profile: PermissionProfile): Permission
   }
 
   return dedupeRules(rules);
+}
+
+/**
+ * Compile the ruleset for the built-in project-less Q&A mode.
+ *
+ * The session runs in a dedicated empty directory. Reads inside that directory
+ * are harmless and let the agent load its AGENTS.md, but every mutating action
+ * and every tool that could reach outside the workspace stays denied.
+ */
+export function compileChatPermissionRuleset(profile: ChatPermissionProfile): PermissionRuleset {
+  const rules: PermissionRule[] = [{ action: "*", resource: "*", effect: "deny" }];
+  for (const action of DISCOVERY_ACTIONS) {
+    rules.push({ action, resource: "*", effect: "allow" });
+  }
+  if (profile.allowWeb) {
+    for (const action of ["webfetch", "websearch"] as const) {
+      rules.push({ action, resource: "*", effect: "allow" });
+    }
+  }
+  rules.push(
+    { action: "edit", resource: "*", effect: "deny" },
+    { action: "shell", resource: "*", effect: "deny" },
+    { action: "execute", resource: "*", effect: "deny" },
+    { action: "read", resource: ".env", effect: "deny" },
+    { action: "read", resource: "*.env", effect: "deny" },
+    { action: "read", resource: "*.env.*", effect: "deny" },
+    { action: "read", resource: "*.env.example", effect: "allow" },
+    { action: "read", resource: ".env.example", effect: "allow" },
+    { action: "external_directory", resource: "*", effect: "deny" },
+    { action: "question", resource: "*", effect: "deny" },
+    { action: "subagent", resource: "*", effect: "deny" },
+  );
+  return rules;
+}
+
+export function chatPermissionEffects(
+  profile: ChatPermissionProfile,
+): Record<string, PermissionEffect> {
+  return {
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+    edit: "deny",
+    shell: "deny",
+    execute: "deny",
+    webfetch: profile.allowWeb ? "allow" : "deny",
+    websearch: profile.allowWeb ? "allow" : "deny",
+    question: "deny",
+    external_directory: "deny",
+    subagent: "deny",
+  };
 }
 
 function sortShellRules(rules: readonly ShellRuleConfig[]): ShellRuleConfig[] {

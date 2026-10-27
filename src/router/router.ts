@@ -1,3 +1,4 @@
+import { isChatProjectId } from "../chat/project.js";
 import type { IncomingMessage } from "../domain/message.js";
 import { parseCommand } from "../domain/message.js";
 import type { PluginRole } from "../plugins/sdk.js";
@@ -159,7 +160,9 @@ export class MessageRouter {
         await sender.reply(
           message.chat,
           message.id,
-          "还没有选择项目，或你有多个可用项目。请先发送 !projects 查看，再发送 !use <项目>。",
+          policy.chatEntry() === null
+            ? "还没有选择项目，或你有多个可用项目。请先发送 !projects 查看，再发送 !use <项目>。"
+            : "还没有选择项目，或你有多个可用项目。请先发送 !projects 查看，再发送 !use <项目>；也可以发送 !use @chat 进入问答模式。",
         );
         return;
       }
@@ -195,7 +198,13 @@ export class MessageRouter {
     }
 
     if (autoSelected) {
-      await sender.reply(message.chat, message.id, `已自动选择项目：${projectId}`);
+      await sender.reply(
+        message.chat,
+        message.id,
+        isChatProjectId(projectId)
+          ? "已自动进入问答模式（@chat），本次对话不会读写任何项目文件。"
+          : `已自动选择项目：${projectId}`,
+      );
     }
 
     const promptMessage: IncomingMessage = {

@@ -736,6 +736,7 @@ users:
 
 生成规则：
 
+- 没有任何可用项目时，bridge 会自动进入内置的 `@chat` 问答模式；也可以发送 `!use @chat` 手动进入。该模式使用独立的空目录，只允许 `read/glob/grep`（以及按配置允许的 `webfetch/websearch`），拒绝 `edit/shell/execute/external_directory/question/subagent`，不会读写任何项目文件。
 - 项目在 `projects` 中但不在 `write_projects`：`read/glob/grep/webfetch/websearch` 允许；`edit/shell/external_directory` 直接拒绝，不会发审批。
 - 项目在 `write_projects` 中：`edit` 允许；`shell` 默认需要 QQ 审批；项目外目录仍然拒绝。
 - `hidden: true` 的插件内部项目不会出现在 `!projects`、默认项目下拉和成员项目选择中，只能由插件内部切换。
@@ -831,12 +832,12 @@ bridge 还会定期调用 `get_login_info`（`onebot.login_probe_ms`）。如果
 - 未知字段会直接校验失败，避免拼写错误静默生效。
 - `security.allowed_roots` 非空时，项目路径必须位于其中。
 - 用户、群、项目都需要显式声明。
-- 一个用户只有一个可用项目时自动选择；多个项目使用 `default_project` 或 `!use`。
+- 一个用户只有一个可用项目时自动选择；多个项目使用 `default_project` 或 `!use`；没有任何项目权限时自动回退到 `@chat` 问答模式。
 
 热加载：
 
 - 私聊 owner 发送 `!reload`，或给进程发送 `SIGHUP`。
-- 立即生效：`users`、`projects`、`plugins`、`security`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
+- 立即生效：`users`、`projects`、`plugins`、`security`、`chat`、`admin`（除 `enabled`）、`features`、`qq`、`workspaces`、`opencode` 的模型/超时字段。
 - 需要重启：`onebot`、`server`、`storage`、`opencode.service`、`admin.enabled`、`logging.pretty`。
 - 校验失败时保留旧配置，不会中断正在运行的任务。
 

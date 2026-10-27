@@ -259,6 +259,13 @@ export function generateConfigObject(options: {
       admin_2fa: { enabled: false, totp_secret: "", window_seconds: 300 },
     },
     default_project: options.projects[0]?.id ?? null,
+    chat: {
+      enabled: true,
+      path: join(options.dataDir, "chat"),
+      agent: null,
+      model: null,
+      allow_web: true,
+    },
     users: {
       [options.ownerQq]: {
         role: "owner",

@@ -1,7 +1,13 @@
+import { CHAT_PROJECT_ID, isChatProjectId } from "../chat/project.js";
 import type { AppConfig, ProjectConfig, UserConfig } from "../config/schema.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { PermissionEffect, PermissionRuleset } from "../domain/permission.js";
-import { compilePermissionRuleset, permissionEffects } from "./ruleset.js";
+import {
+  chatPermissionEffects,
+  compileChatPermissionRuleset,
+  compilePermissionRuleset,
+  permissionEffects,
+} from "./ruleset.js";
 
 export type DenyReason =
   | "unknown_user"
@@ -71,11 +77,24 @@ export class PolicyEngine {
     return this.availableProjects(actor, options);
   }
 
+  /** The built-in project-less Q&A project, when enabled. */
+  chatEntry(): ProjectEntry | null {
+    if (!this.#config.chat.enabled) return null;
+    const project = this.#config.projects[CHAT_PROJECT_ID];
+    return project === undefined ? null : { id: CHAT_PROJECT_ID, project };
+  }
+
   canUseProject(
     actor: UserConfig,
     projectId: string,
     options: ProjectOptions = {},
   ): { allowed: boolean; project: ProjectConfig | null; reason: DenyReason | null } {
+    if (isChatProjectId(projectId)) {
+      const chat = this.chatEntry();
+      return chat === null
+        ? { allowed: false, project: null, reason: "project_not_found" }
+        : { allowed: true, project: chat.project, reason: null };
+    }
     const project = this.#config.projects[projectId];
     if (project === undefined) {
       return { allowed: false, project: null, reason: "project_not_found" };
@@ -93,6 +112,7 @@ export class PolicyEngine {
   }
 
   canWriteProject(actor: UserConfig, projectId: string): boolean {
+    if (isChatProjectId(projectId)) return false;
     const project = this.#config.projects[projectId];
     if (project === undefined || project.hidden) return false;
     if (!matchesAny(actor.projects, projectId)) return false;
@@ -101,7 +121,7 @@ export class PolicyEngine {
 
   defaultProject(actor: UserConfig): ProjectEntry | null {
     const entries = this.availableProjects(actor);
-    if (entries.length === 0) return null;
+    if (entries.length === 0) return this.chatEntry();
     const preferred = this.#config.default_project;
     if (preferred !== null && preferred !== undefined) {
       const found = entries.find((entry) => entry.id === preferred);
@@ -124,8 +144,20 @@ export class PolicyEngine {
    */
   permissionsFor(message: IncomingMessage, projectId: string): PermissionDecision | null {
     const actor = this.actor(message.userId);
+    if (actor === null) return null;
+    if (isChatProjectId(projectId)) {
+      const chat = this.chatEntry();
+      if (chat === null) return null;
+      const profile = { allowWeb: this.#config.chat.allow_web };
+      return {
+        ruleset: compileChatPermissionRuleset(profile),
+        effects: chatPermissionEffects(profile),
+        projectId,
+        writable: false,
+      };
+    }
     const project = this.#config.projects[projectId];
-    if (actor === null || project === undefined) return null;
+    if (project === undefined) return null;
     const access = this.canUseProject(actor, projectId, { includeHidden: true });
     if (!access.allowed) return null;
     const writable = this.canWriteProject(actor, projectId);

@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { isChatProjectId } from "../chat/project.js";
 import type { ConfigReloadResult } from "../config/reload.js";
 import type { AppConfig, ProjectConfig, UserConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
@@ -229,9 +230,10 @@ export class AdminService {
       config: {
         path: this.#configPath,
         users: Object.keys(this.#config.users).length,
-        projects: Object.keys(this.#config.projects).length,
-        hiddenProjects: Object.values(this.#config.projects).filter((project) => project.hidden)
-          .length,
+        projects: Object.keys(this.#config.projects).filter((id) => !isChatProjectId(id)).length,
+        hiddenProjects: Object.entries(this.#config.projects).filter(
+          ([id, project]) => project.hidden && !isChatProjectId(id),
+        ).length,
         features: this.#config.features,
       },
       counts: {
@@ -262,7 +264,9 @@ export class AdminService {
     }
     return {
       users: Object.entries(this.#config.users).map(([qq, user]) => ({ qq, ...user })),
-      projects: Object.entries(this.#config.projects).map(([id, project]) => ({ id, ...project })),
+      projects: Object.entries(this.#config.projects)
+        .filter(([id]) => !isChatProjectId(id))
+        .map(([id, project]) => ({ id, ...project })),
       configHash: hash,
       configPath: this.#configPath,
       warnings,
@@ -293,6 +297,9 @@ export class AdminService {
     project: ProjectConfig,
     expectedHash?: string,
   ): Promise<ConfigSaveResult> {
+    if (isChatProjectId(id)) {
+      throw new AdminError(400, "chat_project_reserved", "问答模式是内置项目，不能手动编辑。");
+    }
     const result = await this.configEditor.mutate((document) => {
       document.setIn(["projects", id], compactObject(project));
     }, expectedHash);
@@ -304,6 +311,9 @@ export class AdminService {
   }
 
   async deleteProject(id: string, expectedHash?: string): Promise<ConfigSaveResult> {
+    if (isChatProjectId(id)) {
+      throw new AdminError(400, "chat_project_reserved", "问答模式是内置项目，不能删除。");
+    }
     const result = await this.configEditor.mutate((document) => {
       document.deleteIn(["projects", id]);
     }, expectedHash);
@@ -315,6 +325,9 @@ export class AdminService {
     projectId: string | null,
     expectedHash?: string,
   ): Promise<ConfigSaveResult> {
+    if (projectId !== null && isChatProjectId(projectId)) {
+      throw new AdminError(400, "chat_project_reserved", "问答模式不能设为默认项目。");
+    }
     const result = await this.configEditor.mutate((document) => {
       document.setIn(["default_project"], projectId);
     }, expectedHash);
@@ -368,7 +381,11 @@ export class AdminService {
   async conversations(): Promise<ConversationOverview[]> {
     return this.#store.conversations
       .list()
-      .filter((conversation) => this.#config.projects[conversation.projectId]?.hidden !== true)
+      .filter(
+        (conversation) =>
+          isChatProjectId(conversation.projectId) ||
+          this.#config.projects[conversation.projectId]?.hidden !== true,
+      )
       .map((conversation) => ({
         ...conversation,
         activeRun: this.#store.runs.activeForChat(conversation.chatKey),

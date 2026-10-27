@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CHAT_PROJECT_ID } from "../../src/chat/project.js";
 import { ConfigError, loadConfig } from "../../src/config/loader.js";
 
 async function workspace(): Promise<string> {
@@ -121,7 +122,10 @@ features:
     );
     const loaded = await loadConfig(path, { env: {} });
     expect(loaded.config.users).toEqual({});
-    expect(loaded.config.projects).toEqual({});
+    expect(loaded.config.projects[CHAT_PROJECT_ID]).toMatchObject({
+      hidden: true,
+      workspace: "none",
+    });
   });
 
   it("rejects a default project that does not exist", async () => {

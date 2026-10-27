@@ -2,6 +2,8 @@ import type { Logger } from "pino";
 import type { AdminBootstrap } from "./admin/auth.js";
 import { AdminService } from "./admin/service.js";
 import { ApprovalBroker } from "./approval/broker.js";
+import { materializeChatProject } from "./chat/project.js";
+import { ensureChatWorkspace } from "./chat/workspace.js";
 import { loadConfig } from "./config/loader.js";
 import { envFilesForConfig, loadEnvFiles } from "./config/paths.js";
 import { applyHotConfig, type ConfigReloadResult } from "./config/reload.js";
@@ -86,6 +88,7 @@ export class App {
   #loginProbeTimer: NodeJS.Timeout | null = null;
 
   constructor(config: AppConfig, dependencies: AppDependencies = {}) {
+    materializeChatProject(config);
     this.config = config;
     this.#configPath = dependencies.configPath ?? null;
     this.logger = dependencies.logger ?? buildLogger(config);
@@ -263,6 +266,7 @@ export class App {
       });
     }
     this.audit.prune(this.config.logging.audit_retention_days);
+    ensureChatWorkspace(this.config.chat.enabled ? this.config.chat.path : null);
     const prunedImages = await this.media.cleanupInbox().catch(() => 0);
     if (prunedImages > 0) this.logger.info({ prunedImages }, "Pruned expired inbox images");
     this.#unsubscribeOneBot = this.onebot.onEvent((event) => this.#onOneBotEvent(event));
@@ -348,6 +352,7 @@ export class App {
     }
 
     const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
+    ensureChatWorkspace(this.config.chat.enabled ? this.config.chat.path : null);
     this.admin.updateSettings();
     this.logger.level = this.config.logging.level;
     const warnings = [...loaded.warnings];

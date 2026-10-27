@@ -454,6 +454,7 @@ export function makeTestConfig(options: {
   projectPath: string;
   userQQ?: string;
   maxQueued?: number;
+  chat?: boolean;
 }): AppConfig {
   return configSchema.parse({
     version: 2,
@@ -468,6 +469,10 @@ export function makeTestConfig(options: {
       inbox_dir: `${options.projectPath}/.qq-inbox`,
     },
     workspaces: { root: `${options.projectPath}/.qq-workspaces` },
+    chat: {
+      enabled: options.chat === true,
+      path: `${options.projectPath}/.qq-chat`,
+    },
     default_project: "demo",
     users: {
       [options.userQQ ?? "20000"]: {

@@ -240,6 +240,7 @@ describe("Admin HTTP API", () => {
     const snapshot = await access(harness);
     expect(snapshot.users.some((user) => user.qq === "20000")).toBe(true);
     expect(snapshot.projects.some((project) => project.id === "demo")).toBe(true);
+    expect(snapshot.projects.some((project) => project.id === "@chat")).toBe(false);
 
     const update = await request(harness, "/admin/api/users/20000", {
       method: "PUT",

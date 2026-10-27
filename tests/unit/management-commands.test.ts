@@ -14,9 +14,13 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function startApp() {
+async function startApp(options: { chat?: boolean; projects?: string[] } = {}) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-management-"));
-  const config = makeTestConfig({ projectPath });
+  const config = makeTestConfig({ projectPath, chat: options.chat });
+  if (options.projects !== undefined) {
+    config.users["20000"].projects = [...options.projects];
+    config.users["20000"].write_projects = [];
+  }
   config.server.port = 0;
   config.qq.progress_delay_ms = 60_000;
   const store = new SqliteStore(":memory:");
@@ -29,7 +33,7 @@ async function startApp() {
     await app.stop();
     logger.flush?.();
   });
-  return { app, agent, onebot };
+  return { app, agent, onebot, projectPath };
 }
 
 let nextId = 100;
@@ -132,6 +136,39 @@ describe("QQ management commands", () => {
       () => onebot.texts().some((text) => text.includes("fake answer")),
       3000,
       "final answer",
+    );
+  });
+
+  it("falls back to project-less chat for a user without projects", async () => {
+    const { app, agent, onebot, projectPath } = await startApp({
+      chat: true,
+      projects: [],
+    });
+
+    onebot.emit(messageEvent("hello"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("问答模式")),
+      3000,
+      "chat mode notice",
+    );
+    await waitFor(() => agent.prompts.length === 1, 3000, "chat prompt");
+
+    expect(app.conversations.getConversation("private:20000")?.projectId).toBe("@chat");
+    expect(agent.sessionInputs[0]?.directory).toBe(join(projectPath, ".qq-chat"));
+    expect(agent.prompts[0]?.text).toBe("hello");
+    expect(agent.sessionInputs[0]?.permissions).toEqual(
+      expect.arrayContaining([
+        { action: "edit", resource: "*", effect: "deny" },
+        { action: "shell", resource: "*", effect: "deny" },
+        { action: "question", resource: "*", effect: "deny" },
+      ]),
+    );
+
+    onebot.emit(messageEvent("!use @chat"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("已进入问答模式")),
+      3000,
+      "chat project announcement",
     );
   });
 

@@ -211,6 +211,20 @@ const featuresSchema = z
   .strict()
   .prefault({});
 
+const chatSchema = z
+  .object({
+    /** Enable the built-in project-less Q&A mode. */
+    enabled: z.boolean().default(true),
+    /** Dedicated empty workspace; defaults to <database dir>/chat. */
+    path: z.string().min(1).nullable().default(null),
+    agent: z.string().min(1).nullable().default(null),
+    model: z.string().min(1).nullable().default(null),
+    /** Allow web search/fetch in chat mode. File and shell tools stay denied. */
+    allow_web: z.boolean().default(true),
+  })
+  .strict()
+  .prefault({});
+
 const qqSchema = z
   .object({
     max_message_chars: z.number().int().min(200).max(5000).default(1800),
@@ -320,7 +334,7 @@ export const adminSchema = z
   .strict()
   .prefault({});
 
-export const configSchema = z
+const configObjectSchema = z
   .object({
     version: z.literal(2),
     server: z
@@ -335,6 +349,7 @@ export const configSchema = z
     onebot: onebotSchema,
     opencode: opencodeSchema,
     security: securitySchema,
+    chat: chatSchema,
     default_project: z.string().min(1).nullable().default(null),
     users: z
       .record(z.string().regex(/^\d+$/, "user IDs must be numeric QQ numbers"), userSchema)
@@ -361,6 +376,13 @@ export const configSchema = z
     storage: storageSchema,
   })
   .strict();
+
+/**
+ * Base V2 configuration. The built-in @chat project is materialized after
+ * storage paths are resolved; keeping it in the project map lets the existing
+ * session/workspace/audit/quota code paths work unchanged.
+ */
+export const configSchema = configObjectSchema;
 
 export type AppConfig = z.infer<typeof configSchema>;
 export type ProjectConfig = z.infer<typeof projectSchema>;
