@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { stringify as stringifyYaml } from "yaml";
 import {
@@ -175,6 +175,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+interface ContainerInspection {
+  configFiles: string | null;
+  webuiToken: string | null;
+}
+
+async function inspectContainer(runner: CommandRunner, name: string): Promise<ContainerInspection> {
+  try {
+    const result = await runner.run("docker", ["inspect", name, "--format", "{{json .Config}}"], {
+      timeoutMs: 15_000,
+    });
+    const config = JSON.parse(result.stdout) as {
+      Env?: unknown;
+      Labels?: unknown;
+    };
+    const env = Array.isArray(config.Env) ? config.Env : [];
+    const webui = env.find(
+      (entry): entry is string => typeof entry === "string" && entry.startsWith("WEBUI_TOKEN="),
+    );
+    const labels = isRecord(config.Labels) ? config.Labels : {};
+    const configFiles = labels["com.docker.compose.project.config_files"];
+    return {
+      configFiles: typeof configFiles === "string" ? configFiles : null,
+      webuiToken: webui === undefined ? null : webui.slice("WEBUI_TOKEN=".length),
+    };
+  } catch {
+    return { configFiles: null, webuiToken: null };
+  }
+}
+
 /** Pick `docker compose` when available, otherwise legacy `docker-compose`. */
 export async function detectComposeCommand(
   runner: CommandRunner = defaultRunner,
@@ -262,8 +291,20 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
     .map((line) => line.trim())
     .includes("opencode-qq-napcat");
 
+  let recreate = false;
   if (containerExists) {
-    progress("Reusing existing container: opencode-qq-napcat");
+    const existing = await inspectContainer(runner, "opencode-qq-napcat");
+    const sameCompose =
+      existing.configFiles !== null && resolve(existing.configFiles) === resolve(composePath);
+    const sameToken = existing.webuiToken === webuiToken;
+    if (sameCompose && sameToken) {
+      progress("Reusing existing container: opencode-qq-napcat");
+    } else {
+      progress(
+        "Existing NapCat container uses a different compose file or WebUI token; recreating it...",
+      );
+      recreate = true;
+    }
   } else {
     const checkPort = options.portAvailable ?? isPortAvailable;
     const wsFree = await checkPort(wsPort);
@@ -283,10 +324,14 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
   }
 
   progress("Starting NapCat container (this may download the image on first run)...");
-  await runner.run(composeCommand.command, [...composeArgs, "up", "-d", "napcat"], {
-    cwd: options.configDir,
-    timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
-  });
+  await runner.run(
+    composeCommand.command,
+    [...composeArgs, "up", "-d", ...(recreate ? ["--force-recreate"] : []), "napcat"],
+    {
+      cwd: options.configDir,
+      timeoutMs: options.timeoutMs ?? 10 * 60 * 1000,
+    },
+  );
 
   const initFile = join(configPath, "napcat.json");
   progress("Waiting for NapCat to initialize its config directory...");

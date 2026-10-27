@@ -17,6 +17,8 @@ function fakeRunner(options: {
   dataDir: string;
   onUp?: () => Promise<void>;
   failCompose?: boolean;
+  containerExists?: boolean;
+  inspect?: { configFiles?: string; webuiToken?: string };
 }): { runner: CommandRunner; calls: string[][] } {
   const calls: string[][] = [];
   const runner: CommandRunner = {
@@ -26,7 +28,27 @@ function fakeRunner(options: {
         if (options.failCompose) throw new Error("no compose");
         return { stdout: "Docker Compose version v2", stderr: "" };
       }
-      if (args.includes("ps")) return { stdout: "", stderr: "" };
+      if (command === "docker" && args[0] === "inspect") {
+        return {
+          stdout: JSON.stringify({
+            Env:
+              options.inspect?.webuiToken !== undefined
+                ? [`WEBUI_TOKEN=${options.inspect.webuiToken}`]
+                : [],
+            Labels:
+              options.inspect?.configFiles !== undefined
+                ? { "com.docker.compose.project.config_files": options.inspect.configFiles }
+                : {},
+          }),
+          stderr: "",
+        };
+      }
+      if (args.includes("ps")) {
+        return {
+          stdout: options.containerExists === true ? "opencode-qq-napcat\n" : "",
+          stderr: "",
+        };
+      }
       if (args.includes("up")) {
         await options.onUp?.();
         return { stdout: "", stderr: "" };
@@ -91,6 +113,70 @@ describe("NapCat Docker setup", () => {
     expect(onebot.network.websocketServers[0]?.token).toBe("onebot-token");
     expect(calls.some((call) => call.includes("restart"))).toBe(true);
     expect(calls.some((call) => call.includes("up"))).toBe(true);
+  });
+
+  it("recreates a container created from a different compose file", async () => {
+    const dir = await tempDir();
+    const dataDir = join(dir, "data");
+    const configDir = join(dir, "config");
+    await mkdir(join(dataDir, "napcat", "config"), { recursive: true });
+    const { runner, calls } = fakeRunner({
+      dataDir,
+      containerExists: true,
+      inspect: {
+        configFiles: "/tmp/old-setup/napcat-compose.yaml",
+        webuiToken: "old-webui-token",
+      },
+      onUp: async () => {
+        await writeFile(join(dataDir, "napcat", "config", "napcat.json"), "{}");
+        await writeFile(join(dataDir, "napcat", "config", "onebot11.json"), "{}\n");
+      },
+    });
+
+    await setupNapCatDocker({
+      configDir,
+      dataDir,
+      accessToken: "onebot-token",
+      webuiToken: "current-webui-token",
+      runner,
+      sleep: async () => undefined,
+    });
+
+    const up = calls.find((call) => call.includes("up"));
+    expect(up).toBeDefined();
+    expect(up).toContain("--force-recreate");
+  });
+
+  it("reuses a container that already matches the compose file", async () => {
+    const dir = await tempDir();
+    const dataDir = join(dir, "data");
+    const configDir = join(dir, "config");
+    await mkdir(join(dataDir, "napcat", "config"), { recursive: true });
+    const { runner, calls } = fakeRunner({
+      dataDir,
+      containerExists: true,
+      inspect: {
+        configFiles: join(configDir, "napcat-compose.yaml"),
+        webuiToken: "current-webui-token",
+      },
+      onUp: async () => {
+        await writeFile(join(dataDir, "napcat", "config", "napcat.json"), "{}");
+        await writeFile(join(dataDir, "napcat", "config", "onebot11.json"), "{}\n");
+      },
+    });
+
+    await setupNapCatDocker({
+      configDir,
+      dataDir,
+      accessToken: "onebot-token",
+      webuiToken: "current-webui-token",
+      runner,
+      sleep: async () => undefined,
+    });
+
+    const up = calls.find((call) => call.includes("up"));
+    expect(up).toBeDefined();
+    expect(up).not.toContain("--force-recreate");
   });
 
   it("updates every OneBot config token without dropping other settings", async () => {
