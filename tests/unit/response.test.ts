@@ -89,4 +89,51 @@ describe("final response extraction", () => {
     );
     expect(result.text).toBe("final answer");
   });
+
+  it("ignores an older interrupted step when the newest assistant message is clean", async () => {
+    const agent = new FakeAgent();
+    const session = await agent.createSession({ directory: "/tmp" });
+    agent.messages.set(session.id, [
+      message({ id: "latest", type: "assistant", text: "", created: 4 }),
+      message({
+        id: "old-error",
+        type: "assistant",
+        text: "",
+        error: "aborted: Step interrupted",
+        created: 3,
+      }),
+      message({ id: "prompt", type: "user", text: "hello", created: 1 }),
+    ]);
+
+    const result = await collectResponse(
+      agent,
+      session.id,
+      { messageId: "prompt", created: 1 },
+      activeRun(),
+    );
+    expect(result.error).toBeNull();
+  });
+
+  it("reports an error on the newest assistant message", async () => {
+    const agent = new FakeAgent();
+    const session = await agent.createSession({ directory: "/tmp" });
+    agent.messages.set(session.id, [
+      message({
+        id: "latest",
+        type: "assistant",
+        text: "",
+        error: "provider.transport: ECONNREFUSED",
+        created: 4,
+      }),
+      message({ id: "prompt", type: "user", text: "hello", created: 1 }),
+    ]);
+
+    const result = await collectResponse(
+      agent,
+      session.id,
+      { messageId: "prompt", created: 1 },
+      activeRun(),
+    );
+    expect(result.error).toBe("provider.transport: ECONNREFUSED");
+  });
 });

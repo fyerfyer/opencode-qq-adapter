@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
 import type {
   AgentModelRecord,
+  OpenCodeReloadResult,
   PromptBackup,
   PromptFile,
   PromptOwner,
@@ -170,15 +171,23 @@ export function AgentsPage() {
     if (selectedName === null || locked) return;
     setSaving(true);
     try {
-      const result = await api.put<PromptFile>(`/prompts/${encodeURIComponent(selectedName)}`, {
-        content: draft,
-        override: selected !== null && !selected.editable,
-      });
+      const result = await api.put<PromptFile & { reload: OpenCodeReloadResult }>(
+        `/prompts/${encodeURIComponent(selectedName)}`,
+        {
+          content: draft,
+          override: selected !== null && !selected.editable,
+        },
+      );
       setOriginal(result.content);
-      toast.success("Agent 已保存，旧版本已备份");
+      if (result.reload.deferred === true) {
+        toast.info("Agent 已保存；当前有任务运行中，OpenCode 重载已排队");
+      } else if (!result.reload.ok) {
+        toast.warning(`Agent 已保存，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
+      } else {
+        toast.success("Agent 已保存，旧版本已备份，OpenCode 已重载");
+      }
       await list.refresh(true);
       await prompt.refresh(true);
-      await reloadOpenCode();
     } catch (caught) {
       toast.error(errorMessage(caught));
     } finally {
@@ -192,14 +201,16 @@ export function AgentsPage() {
     try {
       const result = await api.put<{
         prompt: PromptFile;
-        reload: { ok: boolean; warnings: string[]; error?: string };
+        reload: OpenCodeReloadResult & { warnings: string[] };
       }>(`/prompts/${encodeURIComponent(selectedName)}/model`, {
         model: value === "__inherit" ? null : value,
         override: selected !== null && !selected.editable,
       });
       setDraft(result.prompt.content);
       setOriginal(result.prompt.content);
-      if (result.reload.ok) {
+      if (result.reload.deferred === true) {
+        toast.info("模型已保存；当前有任务运行中，OpenCode 将在任务结束后自动重载");
+      } else if (result.reload.ok) {
         toast.success("模型已保存，OpenCode 配置已热重载");
       } else {
         toast.warning(`模型已保存，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
@@ -213,21 +224,19 @@ export function AgentsPage() {
     }
   };
 
-  const reloadOpenCode = async () => {
-    try {
-      const result = await api.post<{ ok: boolean; error?: string }>("/opencode/reload");
-      if (!result.ok) {
-        toast.warning(`Agent 已保存，但 OpenCode 重载失败：${result.error ?? "未知错误"}`);
-      }
-    } catch (caught) {
-      toast.warning(`Agent 已保存，但 OpenCode 重载失败：${errorMessage(caught)}`);
-    }
-  };
-
   const create = async (name: string, content: string) => {
     try {
-      await api.put(`/prompts/${encodeURIComponent(name)}`, { content });
-      toast.success("Agent 已创建");
+      const result = await api.put<PromptFile & { reload: OpenCodeReloadResult }>(
+        `/prompts/${encodeURIComponent(name)}`,
+        { content },
+      );
+      if (result.reload.deferred === true) {
+        toast.info("Agent 已创建；OpenCode 重载已排队");
+      } else if (!result.reload.ok) {
+        toast.warning(`Agent 已创建，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
+      } else {
+        toast.success("Agent 已创建");
+      }
       setCreateOpen(false);
       selectPrompt(name);
       await list.refresh(true);
@@ -271,7 +280,8 @@ export function AgentsPage() {
             <div className="min-w-0">
               <p className="text-sm font-medium">默认模型</p>
               <p className="text-xs text-muted-foreground">
-                写入当前 Agent 的 frontmatter；选择后立即保存并热重载 OpenCode。
+                写入当前 Agent 的 frontmatter；选择后立即保存。任务运行中时保存会被拒绝， 以免
+                OpenCode 热重载中断正在执行的任务。
               </p>
             </div>
           </div>
@@ -689,8 +699,17 @@ function BackupSheet({
 
   const restore = async (backup: string) => {
     try {
-      await api.post(`/prompts/${encodeURIComponent(name)}/restore`, { backup, override });
-      toast.success("已恢复到该备份");
+      const result = await api.post<PromptFile & { reload?: OpenCodeReloadResult }>(
+        `/prompts/${encodeURIComponent(name)}/restore`,
+        { backup, override },
+      );
+      if (result.reload?.deferred === true) {
+        toast.info("已恢复到该备份；OpenCode 重载已排队");
+      } else if (result.reload !== undefined && !result.reload.ok) {
+        toast.warning(`已恢复备份，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
+      } else {
+        toast.success("已恢复到该备份");
+      }
       onRestored();
     } catch (caught) {
       toast.error(errorMessage(caught));

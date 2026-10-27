@@ -9,6 +9,14 @@ export function applyAgentEvent(active: ActiveRun, event: AgentEvent): void {
       active.agentError = formatEventError(data.error);
       break;
     }
+    case "session.execution.started":
+    case "session.execution.succeeded": {
+      // OpenCode can retry an interrupted step inside the same run. A later
+      // execution supersedes the previous failure; only a failure that is not
+      // followed by a new execution is fatal for this run.
+      active.agentError = null;
+      break;
+    }
     case "session.execution.interrupted":
       active.interrupted = true;
       break;

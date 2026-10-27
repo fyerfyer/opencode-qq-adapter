@@ -247,6 +247,15 @@ export interface PromptFile extends PromptSummary {
   content: string;
 }
 
+export interface OpenCodeReloadResult {
+  ok: boolean;
+  deferred?: boolean;
+  warnings?: string[];
+  error?: string;
+  activeRuns?: number;
+  queuedRuns?: number;
+}
+
 export interface PromptBackup {
   name: string;
   size: number;

@@ -25,6 +25,7 @@ import {
   parseModelRef,
 } from "./mappers.js";
 import { type Client, OpenCodeService } from "./service.js";
+import { waitForSessionCompletion } from "./wait.js";
 
 type OpenCodeConfig = AppConfig["opencode"];
 
@@ -129,7 +130,16 @@ export class OpenCodeAgent implements AgentPort {
 
   async waitForCompletion(sessionId: string, signal?: AbortSignal): Promise<void> {
     const client = await this.#service.getClient();
-    await client.session.wait({ sessionID: sessionId }, signal ? { signal } : undefined);
+    await waitForSessionCompletion({
+      wait: (sliceSignal) => client.session.wait({ sessionID: sessionId }, { signal: sliceSignal }),
+      ...(signal ? { signal } : {}),
+      onRetry: (info) => {
+        this.#logger.debug(
+          { sessionId, attempt: info.attempt, reason: info.reason, err: info.error },
+          "OpenCode session wait retry",
+        );
+      },
+    });
   }
 
   async interrupt(sessionId: string): Promise<boolean> {

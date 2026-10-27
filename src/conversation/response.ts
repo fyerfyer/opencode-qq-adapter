@@ -28,13 +28,16 @@ export async function collectResponse(
   if (assistant.length === 0) {
     return { text: active.partialText, error: null, usage: active.usage };
   }
+  const latest = assistant[0];
   const finalText =
     assistant.find((entry) => entry.text.trim().length > 0)?.text.trim() ?? active.partialText;
-  const firstError = assistant.find((entry) => entry.error !== null)?.error ?? null;
+  // An older step may have been aborted and then retried successfully. Only
+  // the newest assistant message represents the final state of this prompt.
+  const error = latest?.error ?? null;
   const usage = sumUsage(assistant);
   return {
     text: finalText,
-    error: firstError,
+    error,
     usage: usage ?? active.usage,
   };
 }

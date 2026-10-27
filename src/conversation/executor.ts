@@ -180,9 +180,21 @@ export class RunExecutor {
           await this.#agent.interrupt(record.sessionId ?? session.id).catch(() => undefined);
           throw new Error(`OpenCode 处理超时（${Math.round(timeoutMs / 1000)} 秒），已请求中断。`);
         }
+        // A failed wait does not prove that the execution finished. Only fall
+        // back to message history when OpenCode reports an idle session;
+        // otherwise the run is still active (for example blocked on a tool).
+        const current = await this.#agent.getSession(record.sessionId ?? session.id);
+        if (current === null) {
+          throw new Error("等待 OpenCode 完成时会话已不存在，请重新发送消息。");
+        }
+        if (current.idle === null) {
+          throw new Error(
+            "等待 OpenCode 完成时连接中断，但会话仍在运行。请发送 !status 查看状态，或发送 !stop 中断后重试。",
+          );
+        }
         this.#logger.warn(
           { err: error, runId: record.id },
-          "Wait for OpenCode completion failed; trying message history",
+          "Wait for OpenCode completion failed; session is idle, trying message history",
         );
       } finally {
         clearTimeout(timer);

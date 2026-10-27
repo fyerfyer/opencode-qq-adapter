@@ -398,6 +398,7 @@ export class App {
     await this.http.stop().catch((error) => {
       this.logger.warn({ err: error }, "HTTP shutdown failed");
     });
+    this.admin.dispose();
     await this.approvals.stop().catch((error) => {
       this.logger.warn({ err: error }, "Approval broker shutdown failed");
     });

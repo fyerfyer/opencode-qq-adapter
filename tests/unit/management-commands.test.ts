@@ -112,6 +112,29 @@ describe("QQ management commands", () => {
     expect(app.conversations.getConversation("private:20000")?.sessionId).toBe(firstSession);
   });
 
+  it("tells the user when a prompt is queued behind an active run", async () => {
+    const { app, agent, onebot } = await startApp();
+    agent.autoComplete = false;
+
+    onebot.emit(messageEvent("first"));
+    await waitFor(() => agent.prompts.length === 1, 3000, "first prompt");
+    onebot.emit(messageEvent("second"));
+
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("已排队")),
+      3000,
+      "queue acknowledgement",
+    );
+
+    const sessionId = app.conversations.status("private:20000").activeRun?.sessionId ?? "";
+    agent.complete(sessionId);
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("fake answer")),
+      3000,
+      "final answer",
+    );
+  });
+
   it("restricts config reload to owner/admin", async () => {
     const { app, onebot } = await startApp();
     app.config.users["30000"] = {

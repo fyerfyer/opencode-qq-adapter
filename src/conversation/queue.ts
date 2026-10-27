@@ -15,6 +15,7 @@ export class ChatRunQueue {
   readonly #maxQueued: number;
   readonly #execute: (chatKey: string, active: ActiveRun) => Promise<void>;
   readonly #logger: Logger;
+  readonly #onIdle: (() => void) | undefined;
   readonly #states = new Map<string, ChatState>();
   readonly #activeBySession = new Map<string, ActiveRun>();
   readonly #inflight = new Set<Promise<void>>();
@@ -23,10 +24,12 @@ export class ChatRunQueue {
     maxQueued: number;
     execute: (chatKey: string, active: ActiveRun) => Promise<void>;
     logger: Logger;
+    onIdle?: () => void;
   }) {
     this.#maxQueued = options.maxQueued;
     this.#execute = options.execute;
     this.#logger = options.logger;
+    this.#onIdle = options.onIdle;
   }
 
   canAccept(chatKey: string): boolean {
@@ -188,6 +191,13 @@ export class ChatRunQueue {
         state.draining = false;
         this.#inflight.delete(promise);
         this.#drain(chatKey);
+        if (this.activeCount() === 0 && this.queuedCount() === 0) {
+          try {
+            this.#onIdle?.();
+          } catch (error) {
+            this.#logger.error({ err: error }, "Run queue idle callback failed");
+          }
+        }
       });
     this.#inflight.add(promise);
   }

@@ -62,7 +62,7 @@ export function mapSession(session: {
   agent?: string;
   model?: { id: string; providerID: string; variant?: string };
   projectID?: string;
-  time?: { created?: number; updated?: number };
+  time?: { created?: number; updated?: number; idle?: number };
   cost?: number;
   tokens?: {
     input: number;
@@ -79,6 +79,7 @@ export function mapSession(session: {
     projectId: session.projectID ?? null,
     created: session.time?.created ?? null,
     updated: session.time?.updated ?? null,
+    idle: session.time?.idle ?? null,
     cost: session.cost ?? 0,
     tokens: session.tokens
       ? {

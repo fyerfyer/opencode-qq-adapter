@@ -28,6 +28,7 @@ export function permissionEffects(profile: PermissionProfile): Record<string, Pe
     shell: profile.writable ? "ask" : "deny",
     webfetch: "allow",
     websearch: "allow",
+    question: "deny",
     external_directory: "deny",
     subagent: "deny",
     execute: profile.writable ? "allow" : "deny",
@@ -57,7 +58,7 @@ export function compilePermissionRuleset(profile: PermissionProfile): Permission
   for (const action of DISCOVERY_ACTIONS) {
     rules.push({ action, resource: "*", effect: "allow" });
   }
-  for (const action of ["webfetch", "websearch", "question", "skill"] as const) {
+  for (const action of ["webfetch", "websearch", "skill"] as const) {
     rules.push({ action, resource: "*", effect: "allow" });
   }
 
@@ -77,6 +78,9 @@ export function compilePermissionRuleset(profile: PermissionProfile): Permission
     effect: profile.writable ? "allow" : "deny",
   });
   rules.push({ action: "external_directory", resource: "*", effect: "deny" });
+  // QQ has no interactive form UI, so the question tool would block the
+  // session forever. The agent must ask in plain text instead.
+  rules.push({ action: "question", resource: "*", effect: "deny" });
   // Subagents can carry their own, broader ruleset, so never let a QQ user
   // launch one as a permission bypass.
   rules.push({ action: "subagent", resource: "*", effect: "deny" });

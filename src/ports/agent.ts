@@ -29,6 +29,8 @@ export interface AgentSession {
   projectId: string | null;
   created: number | null;
   updated: number | null;
+  /** Timestamp when the session became idle; null/undefined while it is running. */
+  idle?: number | null;
   cost: number;
   tokens: {
     input: number;

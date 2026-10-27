@@ -267,7 +267,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 成员：QQ、Bot 角色（所有者/管理员/使用者）、可访问项目、可修改项目、可收紧的个人限制。
 - 项目：项目路径、agent/model、workspace 模式；插件内部项目默认隐藏。
 - 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session；可直接切换当前会话的 Agent/model，模型列表会标注 vision/tools capability。
-- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。角色卡和记忆仍在 Roleplay 页面。
+- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。若当前有任务运行或排队，保存会被拒绝，避免热重载中断正在执行的任务；请等任务结束后再保存。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。

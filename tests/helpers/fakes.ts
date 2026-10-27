@@ -81,6 +81,7 @@ export class FakeAgent implements AgentPort {
   autoComplete = true;
   answer = "fake answer";
   failWith: string | null = null;
+  waitError: Error | null = null;
   healthy = true;
   #lastError: string | null = null;
 
@@ -107,6 +108,7 @@ export class FakeAgent implements AgentPort {
       projectId: "fake",
       created: Date.now(),
       updated: Date.now(),
+      idle: null,
       cost: 0,
       tokens: null,
     };
@@ -142,6 +144,9 @@ export class FakeAgent implements AgentPort {
   }
 
   async waitForCompletion(sessionId: string, signal?: AbortSignal): Promise<void> {
+    if (this.waitError !== null) {
+      throw this.waitError;
+    }
     if (this.failWith !== null) {
       this.#lastError = this.failWith;
       this.emit({
@@ -296,6 +301,11 @@ export class FakeAgent implements AgentPort {
       tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
     };
     this.messages.get(sessionId)?.unshift(message);
+    const session = this.sessions.get(sessionId);
+    if (session !== undefined) {
+      session.updated = Date.now();
+      session.idle = Date.now();
+    }
     this.emit({
       type: "session.execution.succeeded",
       sessionId,

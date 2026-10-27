@@ -186,4 +186,44 @@ describe("ConversationManager", () => {
     );
     expect(manager.status("private:20000").recentRuns[0]?.status).toBe("failed");
   });
+
+  it("does not report completion when the wait fails while the session is still running", async () => {
+    const { agent, onebot, manager } = await setup();
+    agent.waitError = new Error("Headers Timeout Error");
+    await manager.submit(makeIncomingMessage({ text: "still working" }), "demo");
+
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("仍在运行")),
+      3000,
+      "still running failure",
+    );
+    expect(manager.status("private:20000").recentRuns[0]?.status).toBe("failed");
+    expect(onebot.texts().some((text) => text.includes("任务已完成"))).toBe(false);
+  });
+
+  it("rejects new prompts while an OpenCode reload is in progress", async () => {
+    const { manager } = await setup();
+    const gate = manager.beginMaintenance();
+    expect(gate.ok).toBe(true);
+
+    const rejected = await manager.submit(makeIncomingMessage({ text: "during reload" }), "demo");
+    expect(rejected.accepted).toBe(false);
+    expect(rejected.reason).toContain("重载");
+
+    manager.endMaintenance();
+    const accepted = await manager.submit(makeIncomingMessage({ text: "after reload" }), "demo");
+    expect(accepted.accepted).toBe(true);
+  });
+
+  it("refuses to start a maintenance gate while a run is active", async () => {
+    const { agent, manager } = await setup();
+    agent.autoComplete = false;
+    await manager.submit(makeIncomingMessage({ text: "hold" }), "demo");
+    await waitFor(() => manager.activeRuns() === 1, 3000, "active run");
+
+    const gate = manager.beginMaintenance();
+    expect(gate.ok).toBe(false);
+    expect(gate.activeRuns).toBe(1);
+    await manager.stop("private:20000");
+  });
 });

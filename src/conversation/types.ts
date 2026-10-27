@@ -54,6 +54,15 @@ export interface SubmitResult {
   accepted: boolean;
   runId: string;
   queued: boolean;
+  /** Present when the prompt was rejected for a transient reason. */
+  reason?: string;
+}
+
+export interface MaintenanceGate {
+  ok: boolean;
+  reason?: string;
+  activeRuns: number;
+  queuedRuns: number;
 }
 
 export interface ConversationStatus {

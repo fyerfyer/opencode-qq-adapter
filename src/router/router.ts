@@ -204,23 +204,34 @@ export class MessageRouter {
       images,
     };
     const submitted = await conversations.submit(promptMessage, projectId, permissions.ruleset);
-    if (submitted.accepted) {
-      this.#deps.quota.recordPrompt(message.userId, projectId);
-      this.#deps.audit.record({
-        ts: Date.now(),
-        actorQq: message.userId,
-        chatKey: message.chat.chatKey,
-        projectId,
-        workspaceId: null,
-        action: "prompt.accepted",
-        detail: {
-          runId: submitted.runId,
-          queued: submitted.queued,
-          textLength: text.length,
-          images: images.length,
-          writable: permissions.writable,
-        },
-      });
+    if (!submitted.accepted) {
+      if (submitted.reason !== undefined) {
+        await sender.reply(message.chat, message.id, submitted.reason);
+      }
+      return;
     }
+    if (submitted.queued) {
+      await sender.reply(
+        message.chat,
+        message.id,
+        "已排队：前面还有任务正在执行，完成后会自动处理这条消息。",
+      );
+    }
+    this.#deps.quota.recordPrompt(message.userId, projectId);
+    this.#deps.audit.record({
+      ts: Date.now(),
+      actorQq: message.userId,
+      chatKey: message.chat.chatKey,
+      projectId,
+      workspaceId: null,
+      action: "prompt.accepted",
+      detail: {
+        runId: submitted.runId,
+        queued: submitted.queued,
+        textLength: text.length,
+        images: images.length,
+        writable: permissions.writable,
+      },
+    });
   }
 }

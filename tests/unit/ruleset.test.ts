@@ -46,6 +46,15 @@ describe("compilePermissionRuleset", () => {
     expect(lastMatch(rules, "subagent", "*")?.effect).toBe("deny");
   });
 
+  it("denies the interactive question tool on QQ", () => {
+    const writable = compilePermissionRuleset({ writable: true });
+    const readonly = compilePermissionRuleset({ writable: false });
+
+    expect(lastMatch(writable, "question", "*")?.effect).toBe("deny");
+    expect(lastMatch(readonly, "question", "*")?.effect).toBe("deny");
+    expect(permissionEffects({ writable: true }).question).toBe("deny");
+  });
+
   it("denies .env reads after the broad read allow rule", () => {
     const rules = compilePermissionRuleset({ writable: true });
     expect(lastMatch(rules, "read", ".env")?.effect).toBe("deny");

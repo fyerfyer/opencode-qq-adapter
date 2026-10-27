@@ -392,6 +392,31 @@ describe("Admin HTTP API", () => {
     expect(harness.agent.reloads).toBe(1);
   });
 
+  it("defers an OpenCode reload until the active run finishes", async () => {
+    const harness = await startAdminApp();
+    harness.agent.autoComplete = false;
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hold the run" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun?.sessionId !== null,
+      3000,
+      "active run",
+    );
+
+    const response = await request(harness, "/admin/api/opencode/reload", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      deferred: true,
+      activeRuns: 1,
+      queuedRuns: 0,
+    });
+    expect(harness.agent.reloads).toBe(0);
+
+    const sessionId = harness.app.conversations.status("private:20000").activeRun?.sessionId ?? "";
+    harness.agent.complete(sessionId);
+    await waitFor(() => harness.agent.reloads === 1, 3000, "deferred reload");
+  });
+
   it("updates an agent model and hot-reloads OpenCode", async () => {
     const harness = await startAdminApp();
     await mkdir(harness.promptRoot, { recursive: true });
@@ -416,6 +441,87 @@ describe("Admin HTTP API", () => {
     expect(await readFile(join(harness.promptRoot, "my-agent.md"), "utf8")).toContain(
       "model: fake/model-b",
     );
+  });
+
+  it("reloads OpenCode after saving agent prompt content", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(join(harness.promptRoot, "my-agent.md"), "Body\n", "utf8");
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md", {
+      method: "PUT",
+      body: { content: "---\n---\n\nChanged\n" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ reload: { ok: true } });
+    expect(harness.agent.reloads).toBe(1);
+  });
+
+  it("refuses to save an agent model while a run is active", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(
+      join(harness.promptRoot, "my-agent.md"),
+      "---\ndescription: Mine\n---\n\nBody\n",
+      "utf8",
+    );
+    harness.agent.autoComplete = false;
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hold" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun?.sessionId !== null,
+      3000,
+      "active run",
+    );
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md/model", {
+      method: "PUT",
+      body: { model: "fake/model-b" },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "agent_config_busy" });
+    expect(harness.agent.reloads).toBe(0);
+    expect(await readFile(join(harness.promptRoot, "my-agent.md"), "utf8")).not.toContain(
+      "model: fake/model-b",
+    );
+
+    const sessionId = harness.app.conversations.status("private:20000").activeRun?.sessionId ?? "";
+    harness.agent.complete(sessionId);
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun === null,
+      3000,
+      "run completion",
+    );
+
+    const retry = await request(harness, "/admin/api/prompts/my-agent.md/model", {
+      method: "PUT",
+      body: { model: "fake/model-b" },
+    });
+    expect(retry.status).toBe(200);
+    expect(harness.agent.reloads).toBe(1);
+  });
+
+  it("refuses to save agent prompt content while a run is active", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(join(harness.promptRoot, "my-agent.md"), "Body\n", "utf8");
+    harness.agent.autoComplete = false;
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hold" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun?.sessionId !== null,
+      3000,
+      "active run",
+    );
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md", {
+      method: "PUT",
+      body: { content: "---\n---\n\nChanged\n" },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "agent_config_busy" });
+    expect(await readFile(join(harness.promptRoot, "my-agent.md"), "utf8")).toBe("Body\n");
+
+    const sessionId = harness.app.conversations.status("private:20000").activeRun?.sessionId ?? "";
+    harness.agent.complete(sessionId);
   });
 
   it("marks plugin-managed agents read-only until advanced override", async () => {

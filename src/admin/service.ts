@@ -84,6 +84,16 @@ export interface ConversationOverview extends ConversationRecord {
   recentRuns: RunRecord[];
 }
 
+export interface OpenCodeReloadResult {
+  ok: boolean;
+  /** True when the reload was queued because runs were active. */
+  deferred?: boolean;
+  warnings?: string[];
+  error?: string;
+  activeRuns?: number;
+  queuedRuns?: number;
+}
+
 export class AdminService {
   readonly auth: AdminAuth;
   readonly configEditor: ConfigEditor;
@@ -100,6 +110,9 @@ export class AdminService {
   readonly #audit: AuditTrail;
   readonly #logger: Logger;
   readonly #reloadConfig: () => Promise<ConfigReloadResult>;
+  readonly #disposeIdle: () => void;
+  #pendingOpenCodeReload = false;
+  #openCodeReloading = false;
 
   constructor(options: AdminServiceOptions) {
     this.#config = options.config;
@@ -143,6 +156,13 @@ export class AdminService {
       ...(options.now !== undefined ? { now: options.now } : {}),
     });
     this.prompts = new PromptStore({ root: options.promptRoot });
+    this.#disposeIdle = this.#conversations.onIdle(() => {
+      void this.#flushDeferredOpenCodeReload();
+    });
+  }
+
+  dispose(): void {
+    this.#disposeIdle();
   }
 
   get configPath(): string | null {
@@ -384,15 +404,114 @@ export class AdminService {
     }
   }
 
-  async reloadOpenCode(): Promise<{ ok: boolean; error?: string }> {
+  async reloadOpenCode(): Promise<OpenCodeReloadResult> {
+    return this.#reloadOpenCode("manual");
+  }
+
+  async #reloadOpenCode(reason: string): Promise<OpenCodeReloadResult> {
+    if (this.#openCodeReloading) {
+      return {
+        ok: false,
+        error: "OpenCode 配置正在重载，请稍后重试。",
+        activeRuns: this.#conversations.activeRuns(),
+        queuedRuns: this.#conversations.queuedRuns(),
+      };
+    }
+    if (this.#pendingOpenCodeReload) {
+      return {
+        ok: true,
+        deferred: true,
+        warnings: ["已有一个 OpenCode 重载在等待任务结束后执行。"],
+        activeRuns: this.#conversations.activeRuns(),
+        queuedRuns: this.#conversations.queuedRuns(),
+      };
+    }
+
+    const gate = this.#conversations.beginMaintenance();
+    if (!gate.ok) {
+      this.#pendingOpenCodeReload = true;
+      const message = "当前还有任务运行或排队，OpenCode 重载已推迟到所有任务结束后自动执行。";
+      this.#logger.info(
+        { reason, activeRuns: gate.activeRuns, queuedRuns: gate.queuedRuns },
+        "OpenCode reload deferred until idle",
+      );
+      this.record({
+        action: "admin.opencode.reload_deferred",
+        detail: {
+          reason,
+          activeRuns: gate.activeRuns,
+          queuedRuns: gate.queuedRuns,
+        },
+      });
+      return {
+        ok: true,
+        deferred: true,
+        warnings: [message],
+        activeRuns: gate.activeRuns,
+        queuedRuns: gate.queuedRuns,
+      };
+    }
+
+    try {
+      return await this.#applyOpenCodeReload(reason);
+    } finally {
+      this.#conversations.endMaintenance();
+    }
+  }
+
+  async #applyOpenCodeReload(reason: string): Promise<OpenCodeReloadResult> {
+    if (this.#openCodeReloading) {
+      return { ok: false, error: "OpenCode 配置正在重载，请稍后重试。" };
+    }
+    this.#openCodeReloading = true;
     try {
       await this.#agent.reloadConfig();
-      this.record({ action: "admin.opencode.reloaded", detail: {} });
+      this.#pendingOpenCodeReload = false;
+      this.record({ action: "admin.opencode.reloaded", detail: { reason } });
       return { ok: true };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.record({ action: "admin.opencode.reload_failed", detail: { error: message } });
+      this.record({ action: "admin.opencode.reload_failed", detail: { reason, error: message } });
       return { ok: false, error: message };
+    } finally {
+      this.#openCodeReloading = false;
+    }
+  }
+
+  async #withAgentConfigGate<T>(reason: string, work: () => Promise<T>): Promise<T> {
+    const gate = this.#conversations.beginMaintenance();
+    if (!gate.ok) {
+      this.#logger.warn(
+        { reason, activeRuns: gate.activeRuns, queuedRuns: gate.queuedRuns },
+        "Agent configuration change rejected while runs are active",
+      );
+      throw new AdminError(
+        409,
+        "agent_config_busy",
+        gate.activeRuns > 0 || gate.queuedRuns > 0
+          ? `当前有 ${gate.activeRuns} 个任务运行、${gate.queuedRuns} 个任务排队。修改 Agent 配置会触发 OpenCode 热重载并中断正在执行的任务；请等任务结束后再保存。`
+          : (gate.reason ?? "OpenCode 正在重载，请稍后重试。"),
+      );
+    }
+    try {
+      return await work();
+    } finally {
+      this.#conversations.endMaintenance();
+    }
+  }
+
+  async #flushDeferredOpenCodeReload(): Promise<void> {
+    if (!this.#pendingOpenCodeReload || this.#openCodeReloading) return;
+    this.#pendingOpenCodeReload = false;
+    const result = await this.#reloadOpenCode("deferred");
+    if (result.deferred) {
+      this.#pendingOpenCodeReload = true;
+      return;
+    }
+    if (result.ok) {
+      this.#logger.info("Deferred OpenCode reload applied after runs became idle");
+    } else {
+      this.#logger.warn({ error: result.error }, "Deferred OpenCode reload failed");
     }
   }
 
@@ -426,6 +545,12 @@ export class AdminService {
     });
   }
 
+  /**
+   * OpenCode watches the global agents directory and reloads the location when
+   * an agent file changes. Writing while a run is active would therefore
+   * interrupt it even if we skip the explicit location.reload() call.
+   * The maintenance gate keeps the write and the explicit reload atomic.
+   */
   #projectDirectory(projectId: string | undefined): string | undefined {
     if (projectId === undefined || projectId.length === 0) return undefined;
     const project = this.#config.projects[projectId];
@@ -508,13 +633,20 @@ export class AdminService {
     name: string,
     content: string,
     options: { override?: boolean } = {},
-  ): Promise<PromptFile> {
-    const file = await this.prompts.write(name, content, options);
-    this.record({
-      action: "admin.prompt.saved",
-      detail: { name, override: options.override === true },
+  ): Promise<PromptFile & { reload: OpenCodeReloadResult }> {
+    return this.#withAgentConfigGate("prompt_saved", async () => {
+      const file = await this.prompts.write(name, content, options);
+      const reload = await this.#applyOpenCodeReload("prompt_saved");
+      this.record({
+        action: "admin.prompt.saved",
+        detail: {
+          name,
+          override: options.override === true,
+          reloaded: reload.ok,
+        },
+      });
+      return { ...file, reload };
     });
-    return file;
   }
 
   async setPromptModel(
@@ -523,22 +655,22 @@ export class AdminService {
     options: { override?: boolean } = {},
   ): Promise<{
     prompt: PromptFile;
-    reload: { ok: boolean; warnings: string[]; error?: string };
+    reload: OpenCodeReloadResult & { warnings: string[] };
   }> {
-    const prompt = await this.prompts.setModel(name, model, options);
-    let reload: { ok: boolean; warnings: string[]; error?: string };
-    try {
-      await this.#agent.reloadConfig();
-      reload = { ok: true, warnings: [] };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      reload = { ok: false, warnings: [message], error: message };
-    }
-    this.record({
-      action: "admin.prompt.model",
-      detail: { name, model, reloaded: reload.ok },
+    return this.#withAgentConfigGate("prompt_model", async () => {
+      const prompt = await this.prompts.setModel(name, model, options);
+      const result = await this.#applyOpenCodeReload("prompt_model");
+      const reload = { ...result, warnings: result.warnings ?? [] };
+      this.record({
+        action: "admin.prompt.model",
+        detail: {
+          name,
+          model,
+          reloaded: reload.ok,
+        },
+      });
+      return { prompt, reload };
     });
-    return { prompt, reload };
   }
 
   async promptBackups(
@@ -555,13 +687,16 @@ export class AdminService {
     name: string,
     backup: string,
     options: { override?: boolean } = {},
-  ): Promise<PromptFile> {
-    const file = await this.prompts.restoreBackup(name, backup, options);
-    this.record({
-      action: "admin.prompt.restored",
-      detail: { name, backup, override: options.override === true },
+  ): Promise<PromptFile & { reload: OpenCodeReloadResult }> {
+    return this.#withAgentConfigGate("prompt_restored", async () => {
+      const file = await this.prompts.restoreBackup(name, backup, options);
+      const reload = await this.#applyOpenCodeReload("prompt_restored");
+      this.record({
+        action: "admin.prompt.restored",
+        detail: { name, backup, override: options.override === true, reloaded: reload.ok },
+      });
+      return { ...file, reload };
     });
-    return file;
   }
 
   audit(limit: number): unknown[] {

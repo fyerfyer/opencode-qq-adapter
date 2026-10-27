@@ -14,7 +14,7 @@ import type { MessageSender } from "../qq/sender.js";
 import type { WorkspaceDiff, WorkspaceManager, WorkspaceStatus } from "../workspace/manager.js";
 import { RunExecutor } from "./executor.js";
 import { ChatRunQueue } from "./queue.js";
-import type { ActiveRun, ConversationStatus, SubmitResult } from "./types.js";
+import type { ActiveRun, ConversationStatus, MaintenanceGate, SubmitResult } from "./types.js";
 
 export type { ConversationStatus, SubmitResult } from "./types.js";
 export { RunStoppedError } from "./types.js";
@@ -34,6 +34,8 @@ export class ConversationManager {
   readonly #workspaces: WorkspaceManager;
   readonly #plugins: PluginHost | undefined;
   readonly #recoveredRuns: number;
+  readonly #idleListeners = new Set<() => void>();
+  #maintenance = false;
 
   constructor(
     config: AppConfig,
@@ -62,6 +64,7 @@ export class ConversationManager {
       maxQueued: config.security.max_queued_prompts,
       logger,
       execute: (chatKey, active) => this.#executor.execute(chatKey, active),
+      onIdle: () => this.#emitIdle(),
     });
     this.#executor = new RunExecutor(config, store, agent, sender, logger, {
       workspaces: this.#workspaces,
@@ -139,6 +142,14 @@ export class ConversationManager {
     projectId: string,
     permissions: PermissionRuleset = [],
   ): Promise<SubmitResult> {
+    if (this.#maintenance) {
+      return {
+        accepted: false,
+        runId: "",
+        queued: false,
+        reason: "正在重载 OpenCode 配置，请稍后重试。",
+      };
+    }
     let message = inputMessage;
     let profile: PluginConversationProfile | null = null;
     if (this.#plugins !== undefined) {
@@ -261,6 +272,9 @@ export class ConversationManager {
   }
 
   setProject(chatKey: string, projectId: string, userId: number): { ok: boolean; reason?: string } {
+    if (this.#maintenance) {
+      return { ok: false, reason: "正在重载 OpenCode 配置，请稍后重试。" };
+    }
     if (this.#queue.active(chatKey) !== null) {
       return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
     }
@@ -288,6 +302,9 @@ export class ConversationManager {
   }
 
   resetSession(chatKey: string): { ok: boolean; reason?: string } {
+    if (this.#maintenance) {
+      return { ok: false, reason: "正在重载 OpenCode 配置，请稍后重试。" };
+    }
     if (this.#queue.active(chatKey) !== null) {
       return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
     }
@@ -410,6 +427,9 @@ export class ConversationManager {
   }
 
   #preferenceGuard(chatKey: string): { ok: false; reason: string } | null {
+    if (this.#maintenance) {
+      return { ok: false, reason: "正在重载 OpenCode 配置，请稍后重试。" };
+    }
     if (this.#queue.active(chatKey) !== null) {
       return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
     }
@@ -462,6 +482,54 @@ export class ConversationManager {
 
   queuedRuns(): number {
     return this.#queue.queuedCount();
+  }
+
+  /**
+   * Block new work while OpenCode's global configuration is being reloaded.
+   * The gate is only granted when the queue is completely idle, so a reload
+   * can never tear down a running location.
+   */
+  beginMaintenance(): MaintenanceGate {
+    const activeRuns = this.#queue.activeCount();
+    const queuedRuns = this.#queue.queuedCount();
+    if (this.#maintenance) {
+      return {
+        ok: false,
+        reason: "OpenCode 重载已在进行中。",
+        activeRuns,
+        queuedRuns,
+      };
+    }
+    if (activeRuns > 0 || queuedRuns > 0) {
+      return {
+        ok: false,
+        reason: "还有任务正在运行或排队，暂时不能重载 OpenCode。",
+        activeRuns,
+        queuedRuns,
+      };
+    }
+    this.#maintenance = true;
+    return { ok: true, activeRuns: 0, queuedRuns: 0 };
+  }
+
+  endMaintenance(): void {
+    this.#maintenance = false;
+  }
+
+  /** Called after the last active and queued run has finished. */
+  onIdle(listener: () => void): () => void {
+    this.#idleListeners.add(listener);
+    return () => this.#idleListeners.delete(listener);
+  }
+
+  #emitIdle(): void {
+    for (const listener of this.#idleListeners) {
+      try {
+        listener();
+      } catch (error) {
+        this.#logger.error({ err: error }, "Conversation idle listener failed");
+      }
+    }
   }
 
   async shutdown(): Promise<void> {
