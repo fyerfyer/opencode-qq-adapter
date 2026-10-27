@@ -93,13 +93,21 @@ describe("NapCat Docker setup", () => {
     expect(calls.some((call) => call.includes("up"))).toBe(true);
   });
 
-  it("does not overwrite an existing OneBot config without force", async () => {
+  it("updates every OneBot config token without dropping other settings", async () => {
     const dir = await tempDir();
     const dataDir = join(dir, "data");
     const configDir = join(dir, "config");
     await mkdir(join(dataDir, "napcat", "config"), { recursive: true });
     const onebotPath = join(dataDir, "napcat", "config", "onebot11.json");
-    await writeFile(onebotPath, '{"network":{"websocketServers":[]}}\n');
+    const accountPath = join(dataDir, "napcat", "config", "onebot11_3384461856.json");
+    await writeFile(
+      onebotPath,
+      '{"network":{"websocketServers":[{"name":"opencode-qq","token":"old-token","port":1}]},"custom":"keep"}\n',
+    );
+    await writeFile(
+      accountPath,
+      '{"network":{"websocketServers":[{"name":"opencode-qq","token":"old-token","port":1}]},"account":"keep"}\n',
+    );
     const { runner } = fakeRunner({
       dataDir,
       onUp: async () => {
@@ -116,8 +124,25 @@ describe("NapCat Docker setup", () => {
       portAvailable: async () => true,
     });
 
-    expect(result.warnings.some((warning) => warning.includes("left untouched"))).toBe(true);
-    expect(await readFile(onebotPath, "utf8")).toContain('"websocketServers":[]');
+    expect(result.warnings.some((warning) => warning.includes("Updated"))).toBe(true);
+    const onebot = JSON.parse(await readFile(onebotPath, "utf8")) as {
+      custom: string;
+      network: { websocketServers: Array<{ token: string; port: number }> };
+    };
+    expect(onebot.custom).toBe("keep");
+    expect(onebot.network.websocketServers[0]).toMatchObject({
+      token: "new-token",
+      port: 3001,
+    });
+    const account = JSON.parse(await readFile(accountPath, "utf8")) as {
+      account: string;
+      network: { websocketServers: Array<{ token: string; port: number }> };
+    };
+    expect(account.account).toBe("keep");
+    expect(account.network.websocketServers[0]).toMatchObject({
+      token: "new-token",
+      port: 3001,
+    });
   });
 
   it("fails clearly when a port is occupied", async () => {

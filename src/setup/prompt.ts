@@ -1,6 +1,7 @@
 import {
   cancel,
   confirm as clackConfirm,
+  password as clackPassword,
   select as clackSelect,
   isCancel,
   text,
@@ -9,6 +10,7 @@ import { SetupError } from "./files.js";
 
 export interface Prompt {
   ask(question: string, defaultValue?: string): Promise<string>;
+  password(question: string): Promise<string>;
   confirm(question: string, defaultValue: boolean): Promise<boolean>;
   select<T extends string>(
     question: string,
@@ -35,6 +37,14 @@ export function createPrompt(): Prompt {
       }
       const answer = value.trim();
       return answer.length > 0 ? answer : defaultValue;
+    },
+    async password(question) {
+      const value = await clackPassword({ message: question });
+      if (isCancel(value)) {
+        cancel("Setup cancelled.");
+        throw new SetupError("cancelled", "Setup cancelled.");
+      }
+      return value;
     },
     async confirm(question, defaultValue) {
       const value = await clackConfirm({

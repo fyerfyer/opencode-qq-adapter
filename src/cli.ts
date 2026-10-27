@@ -40,7 +40,10 @@ export async function runCli(argv: string[]): Promise<void> {
     )
     .option("--napcat-url <url>", "existing NapCat WebSocket URL")
     .option("--napcat-token <token>", "NapCat access token")
-    .option("--admin-password <password>", "first-run /admin password (default: generated)")
+    .option(
+      "--admin-password <password>",
+      "admin password: set for a new database, reset an existing one (default: prompt or generate)",
+    )
     .option("--ws-port <port>", "NapCat WebSocket host port", parsePort, 3001)
     .option("--webui-port <port>", "NapCat WebUI host port", parsePort, 6099)
     .option("--yes", "use defaults and do not prompt", false)

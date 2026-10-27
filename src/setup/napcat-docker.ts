@@ -1,10 +1,16 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { stringify as stringifyYaml } from "yaml";
-import { ensureDirectory, readJsonIfExists, writePrivateFile, writePublicFile } from "./files.js";
+import {
+  backupFile,
+  ensureDirectory,
+  readJsonIfExists,
+  writePrivateFile,
+  writePublicFile,
+} from "./files.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -121,6 +127,52 @@ export function generateOneBotConfig(accessToken: string): string {
     null,
     2,
   )}\n`;
+}
+
+function updateOneBotConfigSource(source: string, accessToken: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch {
+    return generateOneBotConfig(accessToken);
+  }
+  if (!isRecord(parsed)) return generateOneBotConfig(accessToken);
+
+  const network = isRecord(parsed.network) ? parsed.network : {};
+  const servers = Array.isArray(network.websocketServers) ? network.websocketServers : [];
+  const template = (
+    JSON.parse(generateOneBotConfig(accessToken)) as {
+      network: { websocketServers: Array<Record<string, unknown>> };
+    }
+  ).network.websocketServers[0];
+  if (template === undefined) return generateOneBotConfig(accessToken);
+
+  const named = servers.findIndex((server) => isRecord(server) && server.name === "opencode-qq");
+  const targetIndex = named >= 0 ? named : servers.findIndex((server) => isRecord(server));
+  if (targetIndex >= 0) {
+    const existing = servers[targetIndex];
+    servers[targetIndex] = { ...(isRecord(existing) ? existing : {}), ...template };
+  } else {
+    servers.push(template);
+  }
+  network.websocketServers = servers;
+  parsed.network = network;
+  return `${JSON.stringify(parsed, null, 2)}\n`;
+}
+
+function listOneBotConfigPaths(configPath: string): string[] {
+  try {
+    return readdirSync(configPath)
+      .filter((name) => /^onebot11_.*\.json$/.test(name) || name === "onebot11.json")
+      .sort((left, right) => left.localeCompare(right))
+      .map((name) => join(configPath, name));
+  } catch {
+    return [];
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 /** Pick `docker compose` when available, otherwise legacy `docker-compose`. */
@@ -244,13 +296,25 @@ export async function setupNapCatDocker(options: NapCatDockerOptions): Promise<N
   // the default OneBot file avoids racing that copy with our token write.
   await waitForFile(oneBotPath, 10_000, sleep);
 
-  if (existsSync(oneBotPath) && options.force !== true) {
+  const oneBotPaths = listOneBotConfigPaths(configPath);
+  const targets = oneBotPaths.length > 0 ? oneBotPaths : [oneBotPath];
+  const updated: string[] = [];
+  progress("Writing NapCat OneBot WebSocket config (token and port 3001)...");
+  for (const path of targets) {
+    const source = existsSync(path) ? readFileSync(path, "utf8") : null;
+    const next =
+      source === null
+        ? generateOneBotConfig(options.accessToken)
+        : updateOneBotConfigSource(source, options.accessToken);
+    if (source === next) continue;
+    if (source !== null) backupFile(path);
+    writePrivateFile(path, next);
+    updated.push(path);
+  }
+  if (updated.length > 0) {
     warnings.push(
-      `Existing NapCat OneBot config left untouched: ${oneBotPath}. Make sure its WebSocket token matches NAPCAT_ACCESS_TOKEN.`,
+      `Updated the NapCat OneBot WebSocket token in ${updated.length} config file(s): ${updated.join(", ")}`,
     );
-  } else {
-    progress("Writing NapCat OneBot WebSocket config (token and port 3001)...");
-    writePrivateFile(oneBotPath, generateOneBotConfig(options.accessToken));
   }
 
   // The container entrypoint may have copied default config files on first

@@ -1,6 +1,6 @@
 {
   "name": "opencode-qq-adapter",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bridge OpenCode to QQ through NapCat / OneBot 11",
   "type": "module",
   "private": false,

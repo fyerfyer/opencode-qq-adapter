@@ -97,7 +97,7 @@ opencode-qq setup \
 --agent <existing>   使用已有的 OpenCode agent ID
 --napcat-url <url>    已有 NapCat 的 WS 地址
 --napcat-token <tok>  NapCat access token
---admin-password <p>  首次 /admin 登录密码（默认自动生成）
+--admin-password <p>  管理员密码（新数据库设置 / 已有数据库重置；默认交互询问或生成）
 --with-roleplay       启用 Roleplay 插件与项目
 --roleplay-path <p>   @opencode-qq/roleplay 包目录
 --roleplay-personas <p> 角色卡目录
@@ -120,7 +120,7 @@ opencode-qq setup
 
 ```bash
 # 从本地 tarball 安装
-npm install -g ./opencode-qq-adapter-0.1.1.tgz
+npm install -g ./opencode-qq-adapter-0.1.2.tgz
 opencode-qq start
 
 # 或在源码目录
@@ -132,7 +132,7 @@ pnpm start
 
 ```bash
 npm_config_audit=false npm_config_fund=false \
-  npx -y -p ./opencode-qq-adapter-0.1.1.tgz opencode-qq start
+  npx -y -p ./opencode-qq-adapter-0.1.2.tgz opencode-qq start
 ```
 
 ### OpenCode agent
@@ -242,7 +242,7 @@ http://127.0.0.1:8787/admin
 opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 ```
 
-也可以用 `OPENCODE_QQ_ADMIN_PASSWORD`（或 `setup --admin-password`）在**首次**创建管理员时指定密码；账号已存在后该变量不再生效。
+也可以用 `OPENCODE_QQ_ADMIN_PASSWORD` 在**首次**创建管理员时指定密码；账号已存在后该环境变量不再生效。已有数据库请用 `setup --admin-password` 重置，或运行 `opencode-qq admin reset-password`。
 
 管理台提供：
 
@@ -295,11 +295,13 @@ cd opencode-qq-adapter
 pnpm install
 cp .env.example .env
 cp config/config.example.yaml config/config.yaml
-pnpm setup -- --force
+pnpm run setup -- --force
 pnpm dev
 ```
 
-`pnpm setup` / `pnpm start` 使用仓库内的 `config/config.yaml` 和 `config/.env`；不要同时用全局 `opencode-qq setup` 写出的 `~/.config/opencode-qq/config.yaml`，否则容易启动到另一份配置。
+`pnpm run setup` / `pnpm start` 使用仓库内的 `config/config.yaml` 和 `config/.env`；不要同时用全局 `opencode-qq setup` 写出的 `~/.config/opencode-qq/config.yaml`，否则容易启动到另一份配置。
+
+首次 setup 会询问管理员密码，留空则自动生成；已有数据库默认重置并显示新密码，也可以显式选择保留。existing NapCat 模式会先探测 WebSocket 和 Token，失败时可重试，避免启动后才发现 Token 不匹配。
 
 管理前端是 `packages/webui` 下的 Vite + React + shadcn/ui SPA：
 
@@ -316,7 +318,7 @@ pnpm test:e2e        # 构建后用 Playwright 跑插件 iframe / Roleplay 世�
 
 `pnpm dev:webui` 默认使用隔离的临时数据、fake OneBot/OpenCode 和真实 Roleplay 插件，不会碰生产数据库；密码默认 `webui-test-password`，后端固定 `8790`，Vite `5173`。`pnpm dev` 只是真实 backend 的 watch 模式，不会启动前端 dev server。
 
-`pnpm setup` 使用仓库内的 `config/config.yaml`，方便开发时直接修改。也可以手动编辑：
+`pnpm run setup` 使用仓库内的 `config/config.yaml`，方便开发时直接修改。也可以手动编辑：
 
 ```dotenv
 NAPCAT_WS_URL=ws://127.0.0.1:3001
