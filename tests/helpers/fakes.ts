@@ -325,6 +325,8 @@ export class FakeOneBot implements OneBotPort {
   readonly imageUrls = new Map<string, string>();
   readonly listeners = new Set<(event: unknown) => void>();
   connected = true;
+  /** Set to override the derived login state; `null` means use `connected`. */
+  loginOk: boolean | null = null;
   selfId: number | null = 10000;
   lastEventAt: number | null = Date.now();
   lastError: string | null = null;
@@ -390,7 +392,11 @@ export class FakeOneBot implements OneBotPort {
   }
 
   async getLoginInfo(): Promise<{ userId: number; nickname: string }> {
-    if (this.loginInfoError !== null) throw new Error(this.loginInfoError);
+    if (this.loginInfoError !== null) {
+      this.loginOk = false;
+      throw new Error(this.loginInfoError);
+    }
+    this.loginOk = true;
     return { userId: this.selfId ?? 0, nickname: "FakeBot" };
   }
 
@@ -398,6 +404,7 @@ export class FakeOneBot implements OneBotPort {
     return {
       mode: "forward",
       connected: this.connected,
+      loginOk: this.loginOk ?? this.connected,
       selfId: this.selfId,
       lastEventAt: this.lastEventAt,
       lastConnectedAt: Date.now(),

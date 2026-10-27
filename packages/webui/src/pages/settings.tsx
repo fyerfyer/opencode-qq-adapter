@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { formatDate } from "@/lib/utils";
+import { ConnectionsSettings } from "./settings-connections";
 
 export function SettingsPage() {
   const meta = useApiQuery<MetaInfo>("/meta");
@@ -72,13 +73,14 @@ export function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="设置"
-        description="运行时信息、YAML 配置编辑和管理员密码。"
+        description="运行时信息、外部连接、YAML 配置编辑和管理员密码。"
         actions={<Badge variant="outline">本机模式</Badge>}
       />
 
       <Tabs defaultValue="config">
         <TabsList>
           <TabsTrigger value="config">配置</TabsTrigger>
+          <TabsTrigger value="connections">连接</TabsTrigger>
           <TabsTrigger value="security">安全</TabsTrigger>
           <TabsTrigger value="runtime">运行时</TabsTrigger>
         </TabsList>
@@ -174,6 +176,10 @@ export function SettingsPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="connections" className="mt-4">
+          <ConnectionsSettings />
         </TabsContent>
 
         <TabsContent value="security" className="mt-4">

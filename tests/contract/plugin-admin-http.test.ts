@@ -383,4 +383,70 @@ describe("Plugin admin HTTP API", () => {
     expect(response.status).toBe(413);
     expect(await response.json()).toMatchObject({ error: "plugin_archive_too_large" });
   });
+
+  it("reports connection status and updates NapCat env values without exposing secrets", async () => {
+    const harness = await startApp();
+    const before = await adminRequest(harness, "/connections");
+    expect(before.status).toBe(200);
+    const beforeBody = (await before.json()) as {
+      envHash: string | null;
+      envPath: string;
+      napcat: {
+        url: string;
+        tokenConfigured: boolean;
+        status: { connected: boolean; loginOk: boolean | null };
+      };
+      jev: unknown;
+    };
+    expect(beforeBody.envPath).toBe(join(harness.configPath, "..", ".env"));
+    expect(beforeBody.napcat).toMatchObject({
+      url: "ws://127.0.0.1:3001",
+      tokenConfigured: true,
+      status: { connected: true, loginOk: true },
+    });
+    expect(beforeBody.jev).toBeNull();
+    expect(JSON.stringify(beforeBody)).not.toMatch(/accessToken|token"|secret/i);
+
+    const updated = await adminRequest(harness, "/connections/napcat", {
+      method: "PUT",
+      body: {
+        url: "ws://127.0.0.1:3002",
+        accessToken: "new-napcat-secret",
+        expectedEnvHash: beforeBody.envHash,
+      },
+    });
+    expect(updated.status).toBe(200);
+    const updatedBody = (await updated.json()) as {
+      napcat: { url: string; tokenConfigured: boolean };
+      restartRequired: string[];
+      warnings: string[];
+    };
+    expect(updatedBody.napcat).toMatchObject({
+      url: "ws://127.0.0.1:3002",
+      tokenConfigured: true,
+    });
+    expect(updatedBody.restartRequired).toContain("onebot");
+    expect(JSON.stringify(updatedBody)).not.toContain("new-napcat-secret");
+    expect(await readFile(join(harness.configPath, "..", ".env"), "utf8")).toContain(
+      "NAPCAT_ACCESS_TOKEN=new-napcat-secret",
+    );
+    expect(await readFile(harness.configPath, "utf8")).toContain("NAPCAT_WS_URL");
+
+    const invalid = await adminRequest(harness, "/connections/napcat", {
+      method: "PUT",
+      body: { url: "http://127.0.0.1:3001" },
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ error: "invalid_napcat_url" });
+  });
+
+  it("requires roleplay before saving a Jev API key", async () => {
+    const harness = await startApp();
+    const response = await adminRequest(harness, "/connections/jev", {
+      method: "PUT",
+      body: { apiKey: "jev-secret" },
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "roleplay_not_configured" });
+  });
 });

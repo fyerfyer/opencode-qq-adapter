@@ -60,10 +60,11 @@ describe("Application + OneBot port contract", () => {
     expect(response.status).toBe(200);
     const health = (await response.json()) as {
       status: string;
-      onebot: { connected: boolean; mode: string };
+      onebot: { connected: boolean; mode: string; loginOk: boolean | null };
     };
     expect(health.onebot.connected).toBe(true);
     expect(health.onebot.mode).toBe("forward");
+    expect(health.onebot.loginOk).toBe(true);
     expect(health.status).toBe("ok");
   });
 

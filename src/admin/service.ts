@@ -28,6 +28,11 @@ import {
   type AdminRequestMeta,
 } from "./auth.js";
 import { ConfigEditor, type ConfigSaveResult, type ConfigSnapshot } from "./config-editor.js";
+import {
+  AdminConnectionService,
+  type ConnectionSaveResult,
+  type ConnectionsSnapshot,
+} from "./connections.js";
 import { AdminError } from "./errors.js";
 import {
   type AdminPluginHostStatus,
@@ -39,6 +44,10 @@ import {
 } from "./plugin-service.js";
 import { type PromptFile, PromptStore, type PromptSummary } from "./prompts.js";
 
+export type {
+  ConnectionSaveResult,
+  ConnectionsSnapshot,
+} from "./connections.js";
 export { AdminError } from "./errors.js";
 export type {
   AdminPluginHostStatus,
@@ -85,6 +94,7 @@ export interface ConversationOverview extends ConversationRecord {
 export class AdminService {
   readonly auth: AdminAuth;
   readonly configEditor: ConfigEditor;
+  readonly connectionService: AdminConnectionService;
   readonly pluginService: AdminPluginService;
   readonly prompts: PromptStore;
   readonly #config: AppConfig;
@@ -118,6 +128,15 @@ export class AdminService {
     this.configEditor = new ConfigEditor({
       configPath: options.configPath,
       reload: options.reloadConfig,
+      logger: options.logger,
+    });
+    this.connectionService = new AdminConnectionService({
+      config: options.config,
+      configPath: options.configPath,
+      configEditor: this.configEditor,
+      health: options.health,
+      plugins: options.plugins,
+      audit: options.audit,
       logger: options.logger,
     });
     this.pluginService = new AdminPluginService({
@@ -363,6 +382,25 @@ export class AdminService {
       detail: { ok: result.ok, applied: result.applied, restartRequired: result.restartRequired },
     });
     return result;
+  }
+
+  connections(): Promise<ConnectionsSnapshot> {
+    return this.connectionService.snapshot();
+  }
+
+  saveNapcatConnection(input: {
+    url: string;
+    accessToken?: string;
+    expectedEnvHash?: string | null;
+  }): Promise<ConnectionSaveResult> {
+    return this.connectionService.saveNapcat(input);
+  }
+
+  saveJevConnection(
+    apiKey: string,
+    expectedEnvHash?: string | null,
+  ): Promise<ConnectionSaveResult> {
+    return this.connectionService.saveJev(apiKey, expectedEnvHash);
   }
 
   async conversations(): Promise<ConversationOverview[]> {

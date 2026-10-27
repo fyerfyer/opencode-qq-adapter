@@ -254,6 +254,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。
+- 设置：配置 YAML、管理员密码、运行时信息，以及“连接”页管理 NapCat WebSocket URL/Access Token 和 Roleplay 的 Jev API Key；密钥只写入 `.env`，页面只显示“已配置/未配置”。
 - 第三方插件页面：插件自带 `ui/` 静态资源，由核心在 `sandbox` iframe 中挂载；页面通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 调用本插件 admin API，不接触管理员 cookie 和 CSRF。
 - Roleplay：角色卡导入、备注编辑、世界书条目新增/编辑/删除/启停与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。Roleplay 页面本身也已迁移到 iframe。
 - Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
@@ -263,8 +264,19 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 默认 `admin.allow_remote: false`，非 loopback 请求会被拒绝。
 - 管理员密码用 scrypt 哈希存入 SQLite；浏览器只保留 HttpOnly session cookie。
 - 所有写操作要求 CSRF token 和同源 Origin 校验。
-- WebUI 不编辑 `.env`；密钥仍通过环境变量注入。
+- WebUI 只在“设置 → 连接”页写入受控的 `.env` 键（NapCat URL/Token、Jev API Key），不在前端回显密钥，也不写进 YAML。
 - 如果确实需要局域网访问，请显式开启 `admin.allow_remote`，并放在 TLS 反向代理后。
+
+### 连接与密钥
+
+`/admin` →「设置」→「连接」可以：
+
+- 查看 NapCat WebSocket 连接状态、Bot QQ、最后连接/事件和错误。
+- 修改 NapCat WebSocket URL 和 Access Token；保存到 `config/.env`，需要重启 bridge 后生效。URL 不要带 token/query，Token 单独填写。
+- 查看 Roleplay 的 Jev 密钥环境变量名和“已配置/未配置”状态；保存 Key 后会自动重载 Roleplay 插件。
+- 密钥字段始终是 write-only，留空表示保持现有值。
+
+NapCat 的进程/容器保活由 Docker `restart: unless-stopped` 和 `deploy/systemd/opencode-qq.service` 的 `Restart=always` 负责；bridge 的 OneBot SDK 也会自动重连。QQ 登录态失效时 HTTP `get_login_info` 会失败，WebUI 会显示“QQ 登录态失效”，这需要你到 NapCat WebUI 重新扫码或快速登录，不能靠自动重启绕过。
 
 ```yaml
 admin:
@@ -286,6 +298,8 @@ cp config/config.example.yaml config/config.yaml
 pnpm setup -- --force
 pnpm dev
 ```
+
+`pnpm setup` / `pnpm start` 使用仓库内的 `config/config.yaml` 和 `config/.env`；不要同时用全局 `opencode-qq setup` 写出的 `~/.config/opencode-qq/config.yaml`，否则容易启动到另一份配置。
 
 管理前端是 `packages/webui` 下的 Vite + React + shadcn/ui SPA：
 

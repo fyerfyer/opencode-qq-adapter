@@ -145,6 +145,42 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
 
   api.get("/overview", async (context) => context.json(await service.overview()));
 
+  api.get("/connections", async (context) => context.json(await service.connections()));
+
+  api.put("/connections/napcat", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        url: z.string().min(1).max(2000),
+        accessToken: z.string().max(4096).optional(),
+        expectedEnvHash: z.string().nullable().optional(),
+      }),
+    );
+    return context.json(
+      await service.saveNapcatConnection({
+        url: body.url,
+        ...(body.accessToken !== undefined ? { accessToken: body.accessToken } : {}),
+        ...(body.expectedEnvHash !== undefined ? { expectedEnvHash: body.expectedEnvHash } : {}),
+      }),
+    );
+  });
+
+  api.put("/connections/jev", async (context) => {
+    const body = await readJson(
+      context,
+      z.object({
+        apiKey: z.string().min(1).max(4096),
+        expectedEnvHash: z.string().nullable().optional(),
+      }),
+    );
+    return context.json(
+      await service.saveJevConnection(
+        body.apiKey,
+        body.expectedEnvHash !== undefined ? body.expectedEnvHash : undefined,
+      ),
+    );
+  });
+
   api.get("/access", async (context) => context.json(await service.access()));
 
   api.put("/users/:qq", async (context) => {

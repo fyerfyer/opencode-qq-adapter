@@ -6,8 +6,10 @@ export interface HealthSnapshot {
   onebot: {
     mode: string;
     connected: boolean;
+    loginOk: boolean | null;
     selfId: number | null;
     lastEventAt: number | null;
+    lastConnectedAt: number | null;
     lastError: string | null;
   };
   opencode: {
@@ -304,6 +306,46 @@ export interface MetaInfo {
     plugins: PluginInfo[];
     message: string;
   };
+}
+
+export interface ConnectionStatus {
+  connected: boolean;
+  loginOk: boolean | null;
+  selfId: number | null;
+  lastConnectedAt: number | null;
+  lastEventAt: number | null;
+  lastError: string | null;
+}
+
+export interface ConnectionsSnapshot {
+  envPath: string | null;
+  envHash: string | null;
+  napcat: {
+    url: string;
+    tokenConfigured: boolean;
+    status: ConnectionStatus;
+  };
+  jev: {
+    available: boolean;
+    pluginStatus: PluginInfo["status"] | null;
+    apiKeyEnv: string;
+    apiKeyConfigured: boolean;
+    baseUrl: string | null;
+    endpoint: string | null;
+    model: string | null;
+    judge: string | null;
+  } | null;
+}
+
+export interface ConnectionSaveResult extends ConnectionsSnapshot {
+  backup: string | null;
+  restartRequired: string[];
+  warnings: string[];
+  reload: {
+    ok: boolean;
+    warnings: string[];
+    error?: string;
+  } | null;
 }
 
 export type PluginSourceKind = "path" | "package";

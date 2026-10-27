@@ -63,6 +63,7 @@ export class NapCatOneBotAdapter implements OneBotPort {
   #client: NapCatClientLike | null = null;
   #listeners = new Set<(event: unknown) => void>();
   #connected = false;
+  #loginOk: boolean | null = null;
   #lastConnectedAt: number | null = null;
   #lastEventAt: number | null = null;
   #lastError: string | null = null;
@@ -96,6 +97,7 @@ export class NapCatOneBotAdapter implements OneBotPort {
     const client = this.#client;
     this.#client = null;
     this.#connected = false;
+    this.#loginOk = null;
     if (client !== null) {
       await client.disconnect().catch((error) => {
         this.#logger.warn({ err: error }, "Failed to disconnect NapCat SDK");
@@ -108,6 +110,7 @@ export class NapCatOneBotAdapter implements OneBotPort {
     return {
       mode: "forward",
       connected: this.#connected,
+      loginOk: this.#loginOk,
       selfId: this.#selfId,
       lastEventAt: this.#lastEventAt,
       lastConnectedAt: this.#lastConnectedAt,
@@ -238,11 +241,18 @@ export class NapCatOneBotAdapter implements OneBotPort {
   async getLoginInfo(): Promise<{ userId: number; nickname: string }> {
     const client = this.#requireClient();
     if (client.get_login_info === undefined) {
+      this.#loginOk = false;
       throw new OneBotError("NapCat client does not expose get_login_info");
     }
-    const info = await client.get_login_info();
-    this.#selfId = info.user_id;
-    return { userId: info.user_id, nickname: info.nickname };
+    try {
+      const info = await client.get_login_info();
+      this.#loginOk = true;
+      this.#selfId = info.user_id;
+      return { userId: info.user_id, nickname: info.nickname };
+    } catch (error) {
+      this.#loginOk = false;
+      throw error;
+    }
   }
 
   #createClient(): NapCatClientLike {
@@ -269,6 +279,7 @@ export class NapCatOneBotAdapter implements OneBotPort {
   #attach(client: NapCatClientLike): void {
     client.on("socket.open", () => {
       this.#connected = true;
+      this.#loginOk = null;
       this.#lastConnectedAt = Date.now();
       this.#lastError = null;
       this.#logger.info({ url: this.#config.url }, "NapCat websocket connected");
@@ -276,6 +287,7 @@ export class NapCatOneBotAdapter implements OneBotPort {
     });
     client.on("socket.close", (context) => {
       this.#connected = false;
+      this.#loginOk = null;
       const info = context as { code?: number; reason?: string };
       this.#lastError = `websocket closed (${info.code ?? "?"} ${info.reason ?? ""})`;
       this.#logger.warn(info, "NapCat websocket closed");
@@ -301,9 +313,11 @@ export class NapCatOneBotAdapter implements OneBotPort {
     if (client.get_login_info === undefined) return;
     try {
       const info = await client.get_login_info();
+      this.#loginOk = true;
       this.#selfId = info.user_id;
       this.#logger.info({ selfId: info.user_id, nickname: info.nickname }, "NapCat login info");
     } catch (error) {
+      this.#loginOk = false;
       this.#logger.debug({ err: error }, "Could not read NapCat login info");
     }
   }

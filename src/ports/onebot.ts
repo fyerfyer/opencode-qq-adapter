@@ -3,6 +3,8 @@ import type { ChatRef, OutgoingSegment } from "../domain/chat.js";
 export interface OneBotStatus {
   mode: "forward";
   connected: boolean;
+  /** Whether NapCat reports a valid QQ login. `null` means unknown/not checked. */
+  loginOk: boolean | null;
   selfId: number | null;
   lastEventAt: number | null;
   lastConnectedAt: number | null;

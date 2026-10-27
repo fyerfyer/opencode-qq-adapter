@@ -1,7 +1,7 @@
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import type { AgentPort } from "../ports/agent.js";
-import type { OneBotPort } from "../ports/onebot.js";
+import type { OneBotPort, OneBotStatus } from "../ports/onebot.js";
 import type { StorePort } from "../ports/store.js";
 
 export interface HealthSnapshot {
@@ -12,8 +12,10 @@ export interface HealthSnapshot {
   onebot: {
     mode: "forward";
     connected: boolean;
+    loginOk: boolean | null;
     selfId: number | null;
     lastEventAt: number | null;
+    lastConnectedAt: number | null;
     lastError: string | null;
   };
   opencode: {
@@ -57,8 +59,13 @@ export class HealthService {
     this.#version = deps.version ?? "0.1.0";
   }
 
+  /** Live OneBot status, without running the slower agent/database probes. */
+  onebotStatus(): OneBotStatus {
+    return this.#onebot.status();
+  }
+
   async snapshot(): Promise<HealthSnapshot> {
-    const onebotStatus = this.#onebot.status();
+    const onebotStatus = this.onebotStatus();
     const dbOk = this.#store.ping();
     let agentHealth: Awaited<ReturnType<AgentPort["health"]>>;
     try {
@@ -90,8 +97,10 @@ export class HealthService {
       onebot: {
         mode: onebotStatus.mode,
         connected: onebotStatus.connected,
+        loginOk: onebotStatus.loginOk,
         selfId: onebotStatus.selfId,
         lastEventAt: onebotStatus.lastEventAt,
+        lastConnectedAt: onebotStatus.lastConnectedAt,
         lastError: onebotStatus.lastError,
       },
       opencode: {

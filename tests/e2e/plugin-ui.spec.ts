@@ -161,3 +161,23 @@ test("roleplay iframe loads, edits worldbook and renders bridge-backed images", 
     .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0);
 });
+
+test("settings connections shows NapCat status and Jev secret management", async ({ page }) => {
+  await login(page);
+  await page.goto("/admin/settings");
+  await page.getByRole("tab", { name: "连接" }).click();
+
+  await expect(page.getByText("NapCat", { exact: true })).toBeVisible();
+  await expect(page.getByText("已连接", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("NapCat WebSocket URL")).toHaveValue("ws://127.0.0.1:1");
+  await expect(page.getByText("Jev / Roleplay", { exact: true })).toBeVisible();
+  await expect(page.getByText("JEV_API_KEY", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存连接配置" })).toBeVisible();
+
+  await page.getByLabel("NapCat WebSocket URL").fill("ws://127.0.0.1:3002");
+  await page.getByLabel("NapCat Access Token").fill("e2e-napcat-token");
+  await page.getByRole("button", { name: "保存连接配置" }).click();
+  await expect(page.getByText(/需要重启 bridge：onebot/)).toBeVisible();
+  await expect(page.getByText(/NapCat URL\/Token 已保存/)).toBeVisible();
+  await expect(page.getByLabel("NapCat Access Token")).toHaveValue("");
+});
