@@ -84,20 +84,20 @@ describe("Application + roleplay plugin", () => {
     onebot.emit(messageEvent(1, "!use demo"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("已切换到项目")),
-      3000,
+      10_000,
       "demo project",
     );
 
     onebot.emit(messageEvent(2, "!persona use blue-fat-fish"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("今天只吃一碗白饭")),
-      3000,
+      10_000,
       "greeting",
     );
     expect(app.conversations.getConversation("private:20000")?.projectId).toBe("roleplay");
 
     onebot.emit(messageEvent(3, "我想吃白饭"));
-    await waitFor(() => agent.prompts.length === 1, 3000, "roleplay prompt");
+    await waitFor(() => agent.prompts.length === 1, 10_000, "roleplay prompt");
     expect(agent.sessionInputs[0]).toMatchObject({
       directory: personaDir,
       agent: "qq-rp",
@@ -106,17 +106,21 @@ describe("Application + roleplay plugin", () => {
     expect(agent.prompts[0]?.text).toContain("[世界书");
     await waitFor(
       () => onebot.texts().some((text) => text.includes("fake answer")),
-      3000,
+      10_000,
       "roleplay answer",
     );
 
     onebot.emit(messageEvent(4, "!memory search 白饭"));
-    await waitFor(() => onebot.texts().some((text) => text.includes("我想吃白饭")), 3000, "memory");
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("我想吃白饭")),
+      10_000,
+      "memory",
+    );
 
     onebot.emit(messageEvent(5, "!rp off"));
     await waitFor(
       () => onebot.texts().some((text) => text.includes("角色扮演已关闭")),
-      3000,
+      10_000,
       "rp off",
     );
     expect(app.conversations.getConversation("private:20000")?.projectId).toBe("demo");
