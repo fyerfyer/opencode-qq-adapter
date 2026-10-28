@@ -43,16 +43,6 @@ await writeFile(
   "---\n# managed by opencode-qq-adapter\ndescription: QQ coding agent\nmode: primary\n---\n\nKeep replies concise.\n",
   "utf8",
 );
-await writeFile(
-  join(promptRoot, "qq-rp.md"),
-  "---\n# managed by @opencode-qq/roleplay; version: 0.4.0\ndescription: QQ roleplay engine\nmode: primary\n---\n\nRoleplay engine prompt.\n",
-  "utf8",
-);
-await writeFile(
-  join(promptRoot, "qq-rp-utility.md"),
-  "---\n# managed by @opencode-qq/roleplay; version: 0.4.0\ndescription: QQ roleplay memory worker\nmode: primary\n---\n\nReturn JSON only.\n",
-  "utf8",
-);
 await importCard({
   sourcePath: resolve("tests/fixtures/roleplay/blue-fat-fish.card.json"),
   personasDir,
@@ -126,7 +116,7 @@ const configSource = stringify({
       path: personasDir,
       description: "Roleplay personas",
       workspace: "none",
-      agent: "qq-rp",
+      agent: "qq-code",
       hidden: true,
       managed_by: "roleplay",
     },
@@ -145,8 +135,6 @@ const configSource = stringify({
       path: roleplayPath,
       options: {
         project_id: "roleplay",
-        agent: "qq-rp",
-        install_agent: false,
         personas_dir: personasDir,
         default_persona: "blue-fat-fish",
         fallback_project: "demo",

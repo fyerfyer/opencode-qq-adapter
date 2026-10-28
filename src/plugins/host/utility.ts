@@ -6,7 +6,6 @@ import type { PluginAgentCompletion, PluginAgentResult } from "../sdk.js";
 import {
   describeError,
   isRecord,
-  optionalPattern,
   requireCapability,
   sumUtilityUsage,
   withTimeout,
@@ -23,8 +22,6 @@ const DENY_ALL_PERMISSIONS = [{ action: "*", resource: "*", effect: "deny" as co
 
 interface NormalizedUtilityInput {
   prompt: string;
-  agent: string | null;
-  model: string | null;
   timeoutMs: number;
   label: string;
   chatKey: string | null;
@@ -47,6 +44,7 @@ export interface UtilityRunnerOptions {
  */
 export class UtilityRunner {
   readonly #agent: AgentPort | undefined;
+  readonly #coreAgent: string;
   readonly #logger: Logger;
   readonly #audit: AuditTrail;
   readonly #now: () => number;
@@ -56,6 +54,7 @@ export class UtilityRunner {
 
   constructor(options: UtilityRunnerOptions) {
     this.#agent = options.agent;
+    this.#coreAgent = options.config.opencode.default_agent ?? "qq-code";
     this.#logger = options.logger;
     this.#audit = options.audit;
     this.#now = options.now;
@@ -141,13 +140,14 @@ export class UtilityRunner {
 
     let sessionId: string | null = null;
     let usage: PluginAgentResult["usage"] = null;
+    let resultAgent: string | null = null;
+    let resultModel: string | null = null;
     let errorMessage: string | null = null;
     try {
       const session = await agent.createSession({
         directory: instance.dataDir,
         title: `plugin:${instance.id}:${request.label}`.slice(0, 120),
-        ...(request.agent !== null ? { agent: request.agent } : {}),
-        ...(request.model !== null ? { model: request.model } : {}),
+        agent: this.#coreAgent,
         permissions: DENY_ALL_PERMISSIONS,
       });
       sessionId = session.id;
@@ -166,16 +166,24 @@ export class UtilityRunner {
         5_000,
         "utility message read",
       );
-      const text = messages
+      const latest = messages
         .filter((message) => message.type === "assistant" && message.text.trim().length > 0)
         .sort((left, right) => left.created - right.created)
-        .at(-1)
-        ?.text.trim();
-      if (text === undefined || text.length === 0) {
+        .at(-1);
+      const text = latest?.text.trim();
+      if (latest === undefined || text === undefined || text.length === 0) {
         throw new Error("utility agent returned no text");
       }
       usage = sumUtilityUsage(messages);
-      return { text, sessionId, usage };
+      resultAgent = latest.agent;
+      resultModel = latest.model;
+      return {
+        text,
+        sessionId,
+        usage,
+        agent: resultAgent,
+        model: resultModel,
+      };
     } catch (error) {
       errorMessage = describeError(error);
       if (sessionId !== null && controller.signal.aborted) {
@@ -208,8 +216,8 @@ export class UtilityRunner {
         detail: {
           pluginId: instance.id,
           label: request.label,
-          agent: request.agent,
-          model: request.model,
+          agent: resultAgent,
+          model: resultModel,
           sessionId,
           ok: errorMessage === null,
           ...(errorMessage !== null ? { error: errorMessage } : {}),
@@ -239,8 +247,6 @@ function normalizeUtilityInput(input: PluginAgentCompletion): NormalizedUtilityI
   if (prompt.length > UTILITY_PROMPT_MAX_CHARS) {
     throw new Error(`utility prompt exceeds ${UTILITY_PROMPT_MAX_CHARS} characters`);
   }
-  const agent = optionalPattern(input.agent, /^[A-Za-z0-9._/-]{1,80}$/, "utility agent");
-  const model = optionalPattern(input.model, /^[A-Za-z0-9._/:#-]{1,160}$/, "utility model");
   const timeoutMs =
     typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs)
       ? Math.min(
@@ -260,5 +266,5 @@ function normalizeUtilityInput(input: PluginAgentCompletion): NormalizedUtilityI
     typeof input.actorQq === "number" && Number.isSafeInteger(input.actorQq) && input.actorQq > 0
       ? input.actorQq
       : null;
-  return { prompt, agent, model, timeoutMs, label, chatKey, actorQq };
+  return { prompt, timeoutMs, label, chatKey, actorQq };
 }

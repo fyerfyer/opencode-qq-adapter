@@ -19,20 +19,21 @@ export async function normalizePluginProfile(
   const project = config.projects[projectId];
   if (project === undefined) return null;
 
-  const workspace = raw.workspace;
-  if (workspace !== undefined && workspace !== "inherit" && workspace !== "none") {
+  const ignoredFields = (["agent", "model", "workspace"] as const).filter(
+    (field) => raw[field] !== undefined,
+  );
+  if (ignoredFields.length > 0) {
     logger.warn(
-      { pluginId, projectId, workspace },
-      "Plugin profile has an invalid workspace mode; ignoring",
+      { pluginId, projectId, fields: ignoredFields },
+      "Plugin profile fields are ignored; core owns agent, model and workspace",
     );
-    return null;
   }
 
   const directory =
     typeof raw.directory === "string" && raw.directory.trim().length > 0
       ? raw.directory.trim()
       : undefined;
-  if ((directory !== undefined || workspace === "none") && project.workspace !== "none") {
+  if (directory !== undefined && project.workspace !== "none") {
     logger.warn(
       { pluginId, projectId },
       "Plugin profile requested a lock-free directory for a normal workspace project; ignoring",
@@ -63,19 +64,5 @@ export async function normalizePluginProfile(
     }
   }
 
-  const agent =
-    typeof raw.agent === "string" && raw.agent.trim().length > 0 && raw.agent.length <= 200
-      ? raw.agent.trim()
-      : undefined;
-  const model =
-    typeof raw.model === "string" && raw.model.trim().length > 0 && raw.model.length <= 200
-      ? raw.model.trim()
-      : undefined;
-
-  return {
-    ...(resolvedDirectory !== undefined ? { directory: resolvedDirectory } : {}),
-    ...(agent !== undefined ? { agent } : {}),
-    ...(model !== undefined ? { model } : {}),
-    ...(workspace === "none" || project.workspace === "none" ? { workspace: "none" as const } : {}),
-  };
+  return resolvedDirectory !== undefined ? { directory: resolvedDirectory } : {};
 }

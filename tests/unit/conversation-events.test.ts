@@ -85,4 +85,18 @@ describe("conversation agent events", () => {
     applyAgentEvent(active, event("session.idle"));
     expect(active.agentError).toBe("provider.transport: ECONNREFUSED");
   });
+
+  it("captures the agent and model from a step event", () => {
+    const active = activeRun();
+    applyAgentEvent(
+      active,
+      event("session.step.started", {
+        agent: "qq-code",
+        model: { providerID: "opencode-go", id: "deepseek-v4.1-flash" },
+      }),
+    );
+
+    expect(active.agentName).toBe("qq-code");
+    expect(active.modelRef).toBe("opencode-go/deepseek-v4.1-flash");
+  });
 });

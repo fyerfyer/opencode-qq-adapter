@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConversationManager } from "../../src/conversation/manager.js";
+import { AuditTrail } from "../../src/observability/audit.js";
 import { buildLogger } from "../../src/observability/logger.js";
 import { MessageSender } from "../../src/qq/sender.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
@@ -31,13 +32,32 @@ async function setup(maxQueued = 3) {
   const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
   const sender = new MessageSender(onebot, config.qq, logger);
   const workspaces = new WorkspaceManager({ config, store, logger });
-  const manager = new ConversationManager(config, store, agent, sender, logger, { workspaces });
+  const audit = new AuditTrail(store, logger);
+  const manager = new ConversationManager(config, store, agent, sender, logger, {
+    workspaces,
+    audit,
+  });
   disposers.push(async () => {
     await manager.shutdown();
     store.close();
     logger.flush?.();
   });
   return { projectPath, config, store, agent, onebot, manager };
+}
+
+function addTestAgent(agent: FakeAgent, id: string, model: string | null): void {
+  agent.agents.push({
+    id,
+    name: id,
+    description: null,
+    mode: "primary",
+    model,
+    hidden: false,
+  });
+}
+
+async function waitForCompletedRun(manager: ConversationManager, chatKey: string): Promise<void> {
+  await waitFor(() => manager.status(chatKey).activeRun === null, 3000, "run completion");
 }
 
 describe("ConversationManager", () => {
@@ -59,6 +79,126 @@ describe("ConversationManager", () => {
     const status = manager.status("private:20000");
     expect(status.recentRuns[0]?.status).toBe("completed");
     expect(status.activeRun).toBeNull();
+
+    const finished = store.audit.listRecent(20).find((record) => record.action === "run.finished");
+    expect(finished?.detail).toMatchObject({
+      status: "completed",
+      agent: "qq-code",
+      model: "fake/model-a",
+    });
+  });
+
+  it("prefers the selected agent's frontmatter model over project and OpenCode defaults", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    config.projects.demo.model = "fake/model-b";
+    config.opencode.default_model = "fake/model-a";
+    addTestAgent(agent, "qq-code", "fake/model-c");
+
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.sessionInputs.length === 1, 3000, "session creation");
+    await waitForCompletedRun(manager, "private:20000");
+
+    expect(agent.sessionInputs[0]).toMatchObject({ agent: "qq-code" });
+    expect(agent.sessionInputs[0]?.model ?? null).toBeNull();
+    expect(store.conversations.get("private:20000")?.model).toBeNull();
+  });
+
+  it("passes an explicit model override to a new session and stores it", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    config.projects.demo.model = "fake/model-b";
+    addTestAgent(agent, "qq-code", "fake/model-c");
+    expect(manager.setProject("private:20000", "demo", 20000).ok).toBe(true);
+    expect((await manager.setModel("private:20000", "fake/model-a")).ok).toBe(true);
+
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.sessionInputs.length === 1, 3000, "session creation");
+
+    expect(agent.sessionInputs[0]).toMatchObject({ agent: "qq-code", model: "fake/model-a" });
+    expect(store.conversations.get("private:20000")?.model).toBe("fake/model-a");
+  });
+
+  it("does not overwrite an explicit conversation model with the session model at run completion", async () => {
+    const { store, agent, manager } = await setup();
+    agent.autoComplete = false;
+    expect(manager.setProject("private:20000", "demo", 20000).ok).toBe(true);
+    expect((await manager.setModel("private:20000", "fake/model-b")).ok).toBe(true);
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+
+    const sessionId = store.conversations.get("private:20000")?.sessionId ?? "";
+    const session = agent.sessions.get(sessionId);
+    expect(session).toBeDefined();
+    if (session !== undefined) session.model = "derived/model-x";
+    agent.complete(sessionId);
+    await waitForCompletedRun(manager, "private:20000");
+
+    expect(store.conversations.get("private:20000")?.model).toBe("fake/model-b");
+  });
+
+  it("switches a live session to the new agent's frontmatter model when no explicit model is set", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    config.projects.demo.model = "fake/model-b";
+    addTestAgent(agent, "qq-code", "fake/model-a");
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+    await waitForCompletedRun(manager, "private:20000");
+    const sessionId = store.conversations.get("private:20000")?.sessionId;
+
+    addTestAgent(agent, "review", "fake/model-c");
+    const result = await manager.setAgent("private:20000", "review");
+    expect(result.ok).toBe(true);
+    expect(agent.switchedAgents).toEqual([{ sessionId, agent: "review" }]);
+    expect(agent.switchedModels).toEqual([{ sessionId, model: "fake/model-c" }]);
+    expect(store.conversations.get("private:20000")).toMatchObject({
+      agent: "review",
+      model: null,
+    });
+  });
+
+  it("applies the new agent's frontmatter model from setPreferences", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    config.projects.demo.model = "fake/model-b";
+    addTestAgent(agent, "qq-code", "fake/model-a");
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+    await waitForCompletedRun(manager, "private:20000");
+    const sessionId = store.conversations.get("private:20000")?.sessionId;
+
+    addTestAgent(agent, "review", "fake/model-c");
+    const result = await manager.setPreferences("private:20000", { agent: "review" });
+    expect(result.ok).toBe(true);
+    expect(agent.switchedAgents).toEqual([{ sessionId, agent: "review" }]);
+    expect(agent.switchedModels).toEqual([{ sessionId, model: "fake/model-c" }]);
+    expect(store.conversations.get("private:20000")).toMatchObject({
+      agent: "review",
+      model: null,
+    });
+  });
+
+  it("keeps an explicit conversation model when switching agents", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    addTestAgent(agent, "qq-code", "fake/model-a");
+    expect(manager.setProject("private:20000", "demo", 20000).ok).toBe(true);
+    expect((await manager.setModel("private:20000", "fake/model-b")).ok).toBe(true);
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+    await waitForCompletedRun(manager, "private:20000");
+    const sessionId = store.conversations.get("private:20000")?.sessionId;
+
+    addTestAgent(agent, "review", "fake/model-c");
+    const result = await manager.setAgent("private:20000", "review");
+    expect(result.ok).toBe(true);
+    expect(agent.switchedAgents).toEqual([{ sessionId, agent: "review" }]);
+    expect(agent.switchedModels).toEqual([]);
+    expect(store.conversations.get("private:20000")).toMatchObject({
+      agent: "review",
+      model: "fake/model-b",
+    });
   });
 
   it("applies admin agent/model preferences to the current session", async () => {
@@ -132,6 +272,36 @@ describe("ConversationManager", () => {
       sessionId: store.conversations.get("private:20000")?.sessionId,
       permissions,
     });
+  });
+
+  it("applies an agent default model to live sessions without pinning the conversation", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
+    await waitFor(() => manager.status("private:20000").activeRun === null, 3000, "run completion");
+
+    const conversation = store.conversations.get("private:20000");
+    expect(conversation?.sessionId).not.toBeNull();
+    const result = await manager.applyAgentDefaultModel("qq-code", "fake/model-b");
+    expect(result.updated).toBe(1);
+    expect(agent.switchedModels).toEqual([
+      { sessionId: conversation?.sessionId, model: "fake/model-b" },
+    ]);
+    expect(store.conversations.get("private:20000")?.model).toBeNull();
+  });
+
+  it("does not apply an agent default model to a conversation with an explicit model", async () => {
+    const { config, store, agent, manager } = await setup();
+    config.projects.demo.agent = "qq-code";
+    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await waitFor(() => manager.status("private:20000").activeRun === null, 3000, "run completion");
+    await manager.setModel("private:20000", "fake/model-a");
+    const sessionId = store.conversations.get("private:20000")?.sessionId;
+
+    const result = await manager.applyAgentDefaultModel("qq-code", "fake/model-b");
+    expect(result.updated).toBe(0);
+    expect(agent.switchedModels).toEqual([{ sessionId, model: "fake/model-a" }]);
   });
 
   it("serializes runs from different chats that share a workspace", async () => {

@@ -492,10 +492,6 @@ export class MemoryService {
     });
     const response = await this.#agent.complete({
       prompt,
-      agent: this.#options.memoryUtilityAgent,
-      ...(this.#options.memoryUtilityModel !== null
-        ? { model: this.#options.memoryUtilityModel }
-        : {}),
       timeoutMs: this.#options.memoryUtilityTimeoutMs,
       label: "roleplay.memory.consolidate",
       chatKey: input.chatKey,

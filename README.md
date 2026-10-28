@@ -267,7 +267,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 成员：QQ、Bot 角色（所有者/管理员/使用者）、可访问项目、可修改项目、可收紧的个人限制。
 - 项目：项目路径、agent/model、workspace 模式；插件内部项目默认隐藏。
 - 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session；可直接切换当前会话的 Agent/model，模型列表会标注 vision/tools capability。
-- Agents：按 core / plugin / user 分组管理 OpenCode 全局 `agents/*.md`；核心 agent 可编辑并备份/恢复，`qq-rp`、`qq-rp-utility` 等插件管理的 agent 默认只读，需要显式开启高级覆盖。每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。若当前有任务运行或排队，保存会被拒绝，避免热重载中断正在执行的任务；请等任务结束后再保存。角色卡和记忆仍在 Roleplay 页面。
+- Agents：管理 OpenCode 全局 `agents/*.md`；单一核心 `qq-code` Agent 可编辑并备份/恢复，每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。模型变更会同步切换到该 Agent 现有、且没有显式会话模型覆盖的 live session；若当前有任务运行或排队，保存会被拒绝，避免热重载中断正在执行的任务；请等任务结束后再保存。普通 QQ、Roleplay 和后台 utility run 都使用同一个核心 Agent：Roleplay 通过 `projects.roleplay.agent` 指向它，实际模型取自该 Agent frontmatter 的 `model:`。插件不再安装或托管 `qq-rp`/`qq-rp-utility`。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
 - 审计 / 用量：事件明细和按天 token / cost 汇总。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。
@@ -513,7 +513,7 @@ zip -r ../my-plugin-0.1.0.zip package.json dist ui
 
 - 私聊 + 群聊；核心群聊是零配置的每人独立会话，每个成员各自绑定角色、各自维护记忆；
 - 长期记忆是一份可读、可手改的 `memory.md`，原文保存在 SQLite 供 FTS5 检索；
-- 后台 consolidation：隐藏的 `qq-rp-utility` 临时 session，工具全 deny，按 section 级 JSON 操作更新 MD；
+- 后台 consolidation：使用核心 Agent（`opencode.default_agent`，回退 `qq-code`）的临时 session，工具全 deny，按 section 级 JSON 操作更新 MD；
 - `memory_events` 记录每次 consolidate/manual_add/manual_delete，`history/` 保留最近版本；
 - 触发条件是每 N 轮或 idle debounce，不再使用硬编码的“记忆关键词”正则；
 - `!remember` 写入手动记忆，`!memory diff|history|search|refresh`，`!forget section|confirm`；
@@ -521,7 +521,7 @@ zip -r ../my-plugin-0.1.0.zip package.json dist ui
 - 群聊记忆详情私聊发送；
 - 世界书 lite：常驻/关键词/次关键词、默认 1 轮额外递归、按 entry 的 ASCII 整词匹配、`!worldbook check <text>` 调试；
 - 表情包：`dataDir/stickers/<persona>/<emotion>/`，每条回复最多 1 张；`sticker_judge: jev` 用 Jev 对当前对话做情绪分类；`hybrid`/`tag` 模式仍支持 `[emotion:xxx]` 标签，失败自动降级为纯文本；Jev Base URL / API Key / 模型可在 Roleplay 设置页配置，并提供“测试连接”健康检查；
-- 角色扮演引擎不再设置 `steps: 1`，避免 OpenCode 在 final step 注入 max-steps 提示导致模型输出元叙述；回复还会经过一层 meta guard；
+- 角色扮演行为规则由插件在 `beforePrompt` 注入固定前缀，不再依赖专用 agent；回复还会经过一层 meta guard 清理 OpenCode 的 max-steps 元叙述；
 - 通用记忆基础设施抽到 `@opencode-qq/memory`（transcript/FTS、Markdown 文档、retrieval）；roleplay 只保留 persona/scope/section/prompt 策略。
 
 仍不在本阶段：
@@ -576,9 +576,9 @@ opencode-qq setup --with-roleplay --reconfigure --yes
 !rp off
 ```
 
-`install_agent` 默认写入两个 agent：`~/.config/opencode/agents/qq-rp.md`（角色引擎）和 `qq-rp-utility.md`（隐藏的 JSON 记忆整理器）。已有用户文件不会被覆盖。首次安装后需要重启或 reload OpenCode 才能看到新 agent。角色卡会被渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。
+Roleplay 不再有 `agent`、`memory_utility_agent`、`install_agent` 等插件选项，也不会创建 `qq-rp`/`qq-rp-utility`。所有 QQ run（普通、角色扮演、后台 utility）使用单一核心 Agent：`opencode.default_agent`，未配置时回退 `qq-code`；`opencode-qq setup --with-roleplay` 会把 `projects.roleplay.agent` 设为 `qq-code`。模型只在核心 **Agents** 页编辑该 Agent 的 frontmatter `model:`。插件只负责注入角色上下文、记忆、世界书、表情与回复格式；角色扮演行为规则由插件在 `beforePrompt` 中固定注入，不再写在专属 agent 文件里。角色卡仍会渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。通用模型优先级为：会话显式 `!model` 覆盖 > Agent frontmatter `model:` > 项目/全局默认（仅在 Agent 没有写 model 时使用）。
 
-`memory_enabled: false` 可关闭后台 LLM consolidation，只保留手动 `!remember` 和原文检索；consolidation 会把当前 MD + 最近对话发送给你配置的模型，详情和隐私说明见角色扮演 README。
+`memory_enabled: false` 可关闭后台 LLM consolidation，只保留手动 `!remember` 和原文检索；consolidation 会把当前 MD + 最近对话发送给核心 Agent 的临时无工具 session，模型由该 Agent frontmatter 决定，详情和隐私说明见角色扮演 README。
 
 注意：插件选项里的 `personas_dir` 必须与 `projects.roleplay.path` 完全一致。两者不一致时，核心会拒绝角色目录（`Plugin profile directory escapes the project root`），bot 会退回项目根目录运行，角色卡的 `AGENTS.md` 不会生效。
 
@@ -869,7 +869,7 @@ tail -n 200 ~/.local/share/opencode/log/opencode.log
 - 项目里配置了 context7、playwright 等 MCP，每次 session 初始化都要等待连接或超时；
 - 大体量系统提示、工具定义或项目文件导致输入 token 很多。
 
-bridge 的 JSON 日志现在会记录 `phases.lockMs`、`phases.sessionMs`、`phases.promptMs`、`phases.waitMs`、`phases.collectMs`，可以直接看时间花在哪一段。`!status` 也会显示最近一次 run 的总耗时。
+bridge 的 JSON 日志现在会记录 `phases.lockMs`、`phases.sessionMs`、`phases.promptMs`、`phases.waitMs`、`phases.collectMs`，可以直接看时间花在哪一段。`Run completed` / `Run failed` 还会记录实际使用的 `agent`、`model`、`sessionId` 和完整 usage（cost 与 input/output/reasoning/cache token）；`!status` 会显示最近一次 run 的总耗时，WebUI 审计里的 `run.finished` 也包含同样的模型和 token 明细。
 
 校验配置：
 

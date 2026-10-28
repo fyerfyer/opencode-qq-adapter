@@ -93,6 +93,9 @@ export interface OpenCodeReloadResult {
   error?: string;
   activeRuns?: number;
   queuedRuns?: number;
+  /** Number of live sessions switched to the new agent default model. */
+  appliedSessions?: number;
+  failedSessions?: number;
 }
 
 export class AdminService {
@@ -495,6 +498,36 @@ export class AdminService {
     }
   }
 
+  async #syncPromptModel(
+    name: string,
+    previousModel: string | null,
+    nextModel: string | null,
+    reload: OpenCodeReloadResult,
+  ): Promise<OpenCodeReloadResult> {
+    if (nextModel === previousModel) return reload;
+    if (nextModel === null) {
+      return {
+        ...reload,
+        warnings: [
+          ...(reload.warnings ?? []),
+          "取消 Agent 默认模型只影响新会话；现有会话需要 !new 或手动切换。",
+        ],
+        appliedSessions: 0,
+        failedSessions: 0,
+      };
+    }
+    const applied = await this.#conversations.applyAgentDefaultModel(
+      promptAgentId(name),
+      nextModel,
+    );
+    return {
+      ...reload,
+      warnings: [...(reload.warnings ?? []), ...applied.warnings],
+      appliedSessions: applied.updated,
+      failedSessions: applied.failed,
+    };
+  }
+
   async #withAgentConfigGate<T>(reason: string, work: () => Promise<T>): Promise<T> {
     const gate = this.#conversations.beginMaintenance();
     if (!gate.ok) {
@@ -502,6 +535,14 @@ export class AdminService {
         { reason, activeRuns: gate.activeRuns, queuedRuns: gate.queuedRuns },
         "Agent configuration change rejected while runs are active",
       );
+      this.record({
+        action: "admin.agent_config.rejected",
+        detail: {
+          reason,
+          activeRuns: gate.activeRuns,
+          queuedRuns: gate.queuedRuns,
+        },
+      });
       throw new AdminError(
         409,
         "agent_config_busy",
@@ -583,7 +624,7 @@ export class AdminService {
     if (session === null) {
       throw new AdminError(404, "session_not_found", "该 OpenCode 会话不属于当前项目。");
     }
-    const result = this.#conversations.switchSession(chatKey, session);
+    const result = await this.#conversations.switchSession(chatKey, session);
     if (!result.ok) throw new AdminError(409, "conversation_busy", result.reason ?? "会话正忙。");
     this.record({
       action: "admin.conversation.switched",
@@ -652,14 +693,22 @@ export class AdminService {
     options: { override?: boolean } = {},
   ): Promise<PromptFile & { reload: OpenCodeReloadResult }> {
     return this.#withAgentConfigGate("prompt_saved", async () => {
+      const previous = await this.prompts.read(name).catch(() => null);
       const file = await this.prompts.write(name, content, options);
-      const reload = await this.#applyOpenCodeReload("prompt_saved");
+      const reload = await this.#syncPromptModel(
+        name,
+        previous?.model ?? null,
+        file.model,
+        await this.#applyOpenCodeReload("prompt_saved"),
+      );
       this.record({
         action: "admin.prompt.saved",
         detail: {
           name,
           override: options.override === true,
           reloaded: reload.ok,
+          appliedSessions: reload.appliedSessions ?? 0,
+          failedSessions: reload.failedSessions ?? 0,
         },
       });
       return { ...file, reload };
@@ -675,15 +724,24 @@ export class AdminService {
     reload: OpenCodeReloadResult & { warnings: string[] };
   }> {
     return this.#withAgentConfigGate("prompt_model", async () => {
+      const previous = await this.prompts.read(name).catch(() => null);
       const prompt = await this.prompts.setModel(name, model, options);
-      const result = await this.#applyOpenCodeReload("prompt_model");
+      const result = await this.#syncPromptModel(
+        name,
+        previous?.model ?? null,
+        prompt.model,
+        await this.#applyOpenCodeReload("prompt_model"),
+      );
       const reload = { ...result, warnings: result.warnings ?? [] };
       this.record({
         action: "admin.prompt.model",
         detail: {
           name,
+          agent: promptAgentId(name),
           model,
           reloaded: reload.ok,
+          appliedSessions: reload.appliedSessions ?? 0,
+          failedSessions: reload.failedSessions ?? 0,
         },
       });
       return { prompt, reload };
@@ -706,11 +764,24 @@ export class AdminService {
     options: { override?: boolean } = {},
   ): Promise<PromptFile & { reload: OpenCodeReloadResult }> {
     return this.#withAgentConfigGate("prompt_restored", async () => {
+      const previous = await this.prompts.read(name).catch(() => null);
       const file = await this.prompts.restoreBackup(name, backup, options);
-      const reload = await this.#applyOpenCodeReload("prompt_restored");
+      const reload = await this.#syncPromptModel(
+        name,
+        previous?.model ?? null,
+        file.model,
+        await this.#applyOpenCodeReload("prompt_restored"),
+      );
       this.record({
         action: "admin.prompt.restored",
-        detail: { name, backup, override: options.override === true, reloaded: reload.ok },
+        detail: {
+          name,
+          backup,
+          override: options.override === true,
+          reloaded: reload.ok,
+          appliedSessions: reload.appliedSessions ?? 0,
+          failedSessions: reload.failedSessions ?? 0,
+        },
       });
       return { ...file, reload };
     });
@@ -827,6 +898,10 @@ function compactObject<T extends object>(value: T): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(value).filter(([, item]) => item !== undefined),
   ) as Record<string, unknown>;
+}
+
+function promptAgentId(name: string): string {
+  return name.endsWith(".md") ? name.slice(0, -3) : name;
 }
 
 function dayKey(now = new Date()): string {

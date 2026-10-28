@@ -8,8 +8,6 @@ export default definePlugin({
         handler: async (command) => {
           const result = await context.agent.complete({
             prompt: command.rawArgs || "hello",
-            agent: "helper",
-            model: "test/model",
             timeoutMs: 5_000,
             label: "fixture.utility",
             chatKey: command.message.chat.chatKey,

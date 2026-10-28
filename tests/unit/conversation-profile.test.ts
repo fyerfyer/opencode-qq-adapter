@@ -40,6 +40,8 @@ async function setup() {
     ...demo,
     path: personas,
     workspace: "none",
+    agent: "build",
+    model: "fake/model-b",
   };
   config.plugins = {
     "profile-fixture": {
@@ -79,7 +81,7 @@ async function setup() {
 }
 
 describe("ConversationManager roleplay profile", () => {
-  it("runs in the profile directory without a workspace lock and uses profile agent/model", async () => {
+  it("runs in the profile directory without a workspace lock and uses project agent/model", async () => {
     const { persona, store, agent, manager, workspaces } = await setup();
     const message = makeIncomingMessage({ text: "raw hello" });
     const result = await manager.submit(message, "demo");
@@ -88,8 +90,8 @@ describe("ConversationManager roleplay profile", () => {
 
     expect(agent.sessionInputs[0]).toMatchObject({
       directory: persona,
-      agent: "qq-rp-fixture",
-      model: "fake/model-a",
+      agent: "build",
+      model: "fake/model-b",
     });
     expect(store.conversations.get("private:20000")?.workspaceId).toBeNull();
     expect(store.runs.listRecent("private:20000", 1)[0]?.workspaceId).toBeNull();

@@ -254,6 +254,8 @@ export interface OpenCodeReloadResult {
   error?: string;
   activeRuns?: number;
   queuedRuns?: number;
+  appliedSessions?: number;
+  failedSessions?: number;
 }
 
 export interface PromptBackup {
@@ -463,9 +465,7 @@ export interface RoleplaySummary {
     stickers: string;
     memory: string;
     database: string;
-    agents: string;
   };
-  agents: { persona: boolean; utility: boolean };
   jev: {
     judge: string;
     apiKeyEnv: string;

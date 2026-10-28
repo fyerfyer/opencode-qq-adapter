@@ -96,14 +96,14 @@ export interface PluginConversation {
 }
 
 /**
- * Optional per-run overrides selected by a plugin. The core validates
- * `directory` against the configured project root before using it.
+ * Optional per-run overrides selected by a plugin.
+ *
+ * Core owns Agent/model/workspace/permissions. A plugin may only select a
+ * context directory, which the core validates against the configured project
+ * root before use.
  */
 export interface PluginConversationProfile {
   directory?: string;
-  agent?: string;
-  model?: string;
-  workspace?: "inherit" | "none";
 }
 
 export interface PluginProfileContext {
@@ -148,16 +148,13 @@ export interface PluginLogger {
 /**
  * Input for a one-shot OpenCode utility run.
  *
- * The core creates an ephemeral session in the plugin data directory, denies
- * every tool, waits for completion and deletes the session. The prompt is the
- * only input: utility runs cannot read plugin/core files or send QQ messages.
+ * The core creates an ephemeral session in the plugin data directory using the
+ * configured core Agent, denies every tool, waits for completion and deletes
+ * the session. The prompt is the only input: utility runs cannot read
+ * plugin/core files, choose an Agent/model, or send QQ messages.
  */
 export interface PluginAgentCompletion {
   prompt: string;
-  /** OpenCode agent id. Defaults to `build` when omitted. */
-  agent?: string;
-  /** `provider/model` override. */
-  model?: string;
   /** Hard timeout; clamped by the core. Defaults to 90 seconds. */
   timeoutMs?: number;
   /** Short audit label, e.g. `roleplay.memory.facts`. */
@@ -171,6 +168,10 @@ export interface PluginAgentResult {
   text: string;
   sessionId: string;
   usage: PluginRunUsage | null;
+  /** Agent reported on the latest assistant message, after core routing. */
+  agent: string | null;
+  /** Model reported on the latest assistant message, after Agent frontmatter wins. */
+  model: string | null;
 }
 
 /** Ephemeral, tool-free OpenCode session for plugin background work. */
@@ -310,7 +311,7 @@ export interface PluginConfigReloadContext {
 }
 
 export interface PluginHooksDefinition {
-  /** Select a per-run directory/agent/model before the prompt is queued. */
+  /** Select a per-run context directory before the prompt is queued. */
   resolveConversationProfile?(
     context: PluginProfileContext,
   ): PluginConversationProfile | void | Promise<PluginConversationProfile | void>;

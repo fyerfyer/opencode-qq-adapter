@@ -173,6 +173,8 @@ export class ChatRunQueue {
       stopRequested: false,
       interrupted: false,
       agentError: null,
+      agentName: null,
+      modelRef: null,
       partialText: "",
       usage: null,
       workspaceId: null,

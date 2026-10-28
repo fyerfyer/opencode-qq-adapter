@@ -127,15 +127,6 @@ export function toPluginMessage(message: IncomingMessage): PluginMessage {
   };
 }
 
-export function optionalPattern(value: unknown, pattern: RegExp, label: string): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") throw new Error(`${label} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (!pattern.test(trimmed)) throw new Error(`${label} contains invalid characters`);
-  return trimmed;
-}
-
 export function sumUtilityUsage(messages: AgentMessage[]): PluginAgentResult["usage"] {
   let cost = 0;
   const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };

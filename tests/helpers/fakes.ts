@@ -137,6 +137,8 @@ export class FakeAgent implements AgentPort {
       created,
       error: null,
       cost: null,
+      agent: null,
+      model: null,
       tokens: null,
     };
     this.messages.get(input.sessionId)?.unshift(message);
@@ -291,6 +293,7 @@ export class FakeAgent implements AgentPort {
   }
 
   #complete(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
     const message: AgentMessage = {
       id: `msg_fake_${++messageSequence}`,
       type: "assistant",
@@ -298,10 +301,11 @@ export class FakeAgent implements AgentPort {
       created: Date.now(),
       error: null,
       cost: 0.001,
+      agent: session?.agent ?? "qq-code",
+      model: session?.model ?? "fake/model-a",
       tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
     };
     this.messages.get(sessionId)?.unshift(message);
-    const session = this.sessions.get(sessionId);
     if (session !== undefined) {
       session.updated = Date.now();
       session.idle = Date.now();

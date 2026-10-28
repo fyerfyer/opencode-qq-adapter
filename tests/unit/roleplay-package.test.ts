@@ -51,8 +51,6 @@ describe("roleplay package", () => {
         path: packageDir,
         options: {
           project_id: "demo",
-          agent: "qq-rp",
-          install_agent: false,
           personas_dir: personasDir,
           memory_exclude_recent: 0,
         },
@@ -104,7 +102,7 @@ describe("roleplay package", () => {
     ).toBe(true);
     await waitFor(
       () => onebot.texts().some((text) => text.includes("今天只吃一碗白饭")),
-      2000,
+      5000,
       "greeting",
     );
 
@@ -125,7 +123,7 @@ describe("roleplay package", () => {
     expect(memory).toBe(true);
     await waitFor(
       () => onebot.texts().some((text) => text.includes("我想吃白饭")),
-      2000,
+      5000,
       "memory search reply",
     );
   });

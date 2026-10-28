@@ -179,7 +179,7 @@ export function generateConfigObject(options: {
       path: roleplay.personasDir,
       description: "Roleplay personas (internal)",
       workspace: "none",
-      agent: "qq-rp",
+      agent: "qq-code",
       model: null,
       hidden: true,
       managed_by: "roleplay",
@@ -190,14 +190,11 @@ export function generateConfigObject(options: {
       path: roleplay.pluginPath,
       options: {
         project_id: roleplay.projectId,
-        agent: "qq-rp",
-        model: null,
         personas_dir: roleplay.personasDir,
         ...(roleplay.defaultPersona !== null ? { default_persona: roleplay.defaultPersona } : {}),
         ...(roleplay.fallbackProject !== null
           ? { fallback_project: roleplay.fallbackProject }
           : {}),
-        install_agent: true,
       },
     };
   }

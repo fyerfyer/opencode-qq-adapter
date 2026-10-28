@@ -7,12 +7,10 @@ import {
   definePlugin,
   type PluginChat,
   type PluginCommandContext,
-  type PluginContext,
   type PluginGroupMode,
   type PluginMessage,
   type PluginRunContext,
 } from "@opencode-qq/plugin-sdk";
-import { installQqRpAgent, installQqRpUtilityAgent } from "./agent.js";
 import { registerRoleplayAdmin } from "./admin.js";
 import {
   type DeliveryOptions,
@@ -31,7 +29,7 @@ import {
   stickerCount,
   type StickerCatalog,
 } from "./stickers.js";
-import { buildContextBlock } from "./prompt.js";
+import { buildContextBlock, ROLEPLAY_MODE_INSTRUCTIONS } from "./prompt.js";
 import { guardRoleplayReply } from "./guard.js";
 import { formatTimestamp } from "./time.js";
 import { BindingStore } from "./bindings.js";
@@ -44,7 +42,6 @@ import {
   type WorldbookEntry,
 } from "./worldbook.js";
 
-const VERSION = "0.4.1";
 const MAX_REMEMBER_CHARS = 200;
 const MEMORY_OUTPUT_CHARS = 1800;
 
@@ -52,13 +49,6 @@ function expandPath(input: string): string {
   if (input === "~") return homedir();
   if (input.startsWith("~/")) return join(homedir(), input.slice(2));
   return isAbsolute(input) ? input : resolve(input);
-}
-
-function roleplayConfigDir(explicit: string | null): string {
-  if (explicit !== null) return expandPath(explicit);
-  const env = process.env.OPENCODE_CONFIG_DIR;
-  if (env !== undefined && env.trim().length > 0) return expandPath(env);
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "opencode");
 }
 
 function deliveryOptions(options: RoleplayOptions): DeliveryOptions {
@@ -794,12 +784,7 @@ export default definePlugin<RoleplayOptions>({
         if (profile.projectId !== options.projectId) return undefined;
         const active = await activePersona(profile.message.chat.chatKey);
         if (active === null) return undefined;
-        return {
-          directory: active.persona.dir,
-          agent: options.agent,
-          ...(options.model !== null ? { model: options.model } : {}),
-          workspace: "none" as const,
-        };
+        return { directory: active.persona.dir };
       },
 
       async beforePrompt(prompt) {
@@ -874,7 +859,12 @@ export default definePlugin<RoleplayOptions>({
             raw: options.memoryRawMaxChars,
           },
         });
-        return { prepend: block };
+        return {
+          prepend:
+            block.length > 0
+              ? `${ROLEPLAY_MODE_INSTRUCTIONS}\n\n${block}`
+              : ROLEPLAY_MODE_INSTRUCTIONS,
+        };
       },
 
       async formatReply(reply) {
@@ -989,7 +979,6 @@ export default definePlugin<RoleplayOptions>({
       stickerRoot,
       memoryRoot: join(context.dataDir, "memory"),
       databasePath: join(context.dataDir, "roleplay.db"),
-      agentConfigDir: roleplayConfigDir(options.opencodeConfigDir),
       memory,
       documents,
       transcript,
@@ -1012,57 +1001,5 @@ export default definePlugin<RoleplayOptions>({
       transcript.close();
       bindings.close();
     };
-  },
-
-  async start(context: PluginContext<RoleplayOptions>) {
-    if (!context.config.installAgent) return;
-    const configDir = roleplayConfigDir(context.config.opencodeConfigDir);
-    const engine = context.config.agent;
-    if (!/^[a-z][a-z0-9-]*$/.test(engine)) {
-      context.logger.warn(
-        { agent: engine },
-        "Roleplay agent id is not a safe filename; skip agent installation",
-      );
-    } else {
-      try {
-        const result = await installQqRpAgent({
-          configDir,
-          agentId: engine,
-          version: context.manifest.version || VERSION,
-        });
-        context.logger.info(
-          { path: result.path, action: result.action, agent: engine },
-          result.action === "kept"
-            ? "Roleplay engine agent already present"
-            : "Roleplay engine agent installed; restart or reload OpenCode before using it",
-        );
-      } catch (error) {
-        context.logger.warn({ err: error }, "Failed to install the qq-rp agent");
-      }
-    }
-
-    const utility = context.config.memoryUtilityAgent;
-    if (!/^[a-z][a-z0-9-]*$/.test(utility)) {
-      context.logger.warn(
-        { agent: utility },
-        "Roleplay utility agent id is not a safe filename; skip utility agent installation",
-      );
-      return;
-    }
-    try {
-      const result = await installQqRpUtilityAgent({
-        configDir,
-        agentId: utility,
-        version: context.manifest.version || VERSION,
-      });
-      context.logger.info(
-        { path: result.path, action: result.action, agent: utility },
-        result.action === "kept"
-          ? "Roleplay utility agent already present"
-          : "Roleplay utility agent installed; restart or reload OpenCode before using it",
-      );
-    } catch (error) {
-      context.logger.warn({ err: error }, "Failed to install the qq-rp utility agent");
-    }
   },
 });

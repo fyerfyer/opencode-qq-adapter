@@ -459,7 +459,7 @@ describe("setup wizard", () => {
       workspace: "none",
       hidden: true,
       managed_by: "roleplay",
-      agent: "qq-rp",
+      agent: "qq-code",
     });
     expect(loaded.config.plugins.roleplay?.path).toContain("packages/roleplay");
     expect(loaded.config.plugins.roleplay?.options).toMatchObject({
@@ -467,6 +467,10 @@ describe("setup wizard", () => {
       personas_dir: personasDir,
       fallback_project: "demo",
     });
+    expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("agent");
+    expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("model");
+    expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("install_agent");
+    expect(await readFile(configPath, "utf8")).not.toContain("install_agent");
     expect(loaded.config.security.allowed_roots.some((root) => root === dataDir)).toBe(true);
     expect(formatSetupSummary(result).join("\n")).toContain("Roleplay");
   });

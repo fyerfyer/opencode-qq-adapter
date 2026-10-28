@@ -20,6 +20,17 @@ export function applyAgentEvent(active: ActiveRun, event: AgentEvent): void {
     case "session.execution.interrupted":
       active.interrupted = true;
       break;
+    case "session.step.started": {
+      if (typeof data.agent === "string") active.agentName = data.agent;
+      const model = data.model;
+      if (model !== null && typeof model === "object") {
+        const ref = model as Record<string, unknown>;
+        if (typeof ref.providerID === "string" && typeof ref.id === "string") {
+          active.modelRef = `${ref.providerID}/${ref.id}`;
+        }
+      }
+      break;
+    }
     case "session.text.delta": {
       if (typeof data.delta === "string" && active.partialText.length < 4000) {
         active.partialText += data.delta;

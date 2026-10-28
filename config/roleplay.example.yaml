@@ -23,7 +23,9 @@ projects:
     path: ~/.local/share/opencode-qq/plugins/roleplay/personas
     description: Roleplay personas (internal)
     workspace: none
-    agent: qq-rp
+    # Every QQ/roleplay run uses the single core Agent. Its frontmatter model
+    # is the only model selection; keep model: null here.
+    agent: qq-code
     model: null
     hidden: true
     managed_by: roleplay
@@ -38,18 +40,17 @@ plugins:
     path: /absolute/path/to/opencode-qq-adapter/packages/roleplay
     options:
       project_id: roleplay
-      agent: qq-rp
-      model: null
+      # The plugin injects roleplay instructions, persona context, worldbook,
+      # memory and reply formatting. It never installs or selects an Agent or
+      # model. Configure the single qq-code Agent and its frontmatter model on
+      # the core Agents page (Agents -> qq-code).
       # default_persona: blue-fat-fish
       # Project to restore on !rp off when there was no previous project.
       # fallback_project: demo
-      install_agent: true
       # Must match projects.roleplay.path. If this points elsewhere, the core
       # rejects the profile directory (it escapes the project root) and the bot
       # runs at the project root without the persona's AGENTS.md.
       personas_dir: ~/.local/share/opencode-qq/plugins/roleplay/personas
-      # Optional: pin a cheap/fast roleplay model, for example:
-      # model: opencode-go/deepseek-v4.1-flash
       max_segments: 4
       max_chars_per_segment: 180
       delay_per_char_ms: 28
@@ -93,9 +94,9 @@ plugins:
       # false to disable background consolidation (manual !remember and raw
       # FTS still work).
       memory_enabled: true
-      memory_utility_agent: qq-rp-utility
-      # null inherits the OpenCode default. Pin a cheap model here if desired:
-      # memory_utility_model: opencode-go/deepseek-v4.1-flash
+      # Background consolidation uses the core Agent configured by
+      # opencode.default_agent (fallback qq-code) in a tool-free, ephemeral
+      # session. Its frontmatter model applies; plugin options cannot set one.
       memory_utility_timeout_ms: 90000
       # Consolidate after N user turns, or after the chat has been idle for
       # memory_idle_debounce_ms. No keyword heuristics are used.

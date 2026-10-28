@@ -19,6 +19,7 @@ import { api, errorMessage } from "@/api/client";
 import type {
   AgentModelRecord,
   OpenCodeReloadResult,
+  Overview,
   PromptBackup,
   PromptFile,
   PromptOwner,
@@ -96,8 +97,8 @@ const OWNER_GROUPS: Array<{
   },
   {
     owner: "plugin",
-    label: "插件管理",
-    description: "由插件安装和升级；默认只读，避免与插件版本漂移。",
+    label: "旧版插件 Agent",
+    description: "旧版本插件安装的 Agent；仅为兼容保留，默认只读，可高级覆盖接管。",
   },
   {
     owner: "user",
@@ -109,6 +110,9 @@ const OWNER_GROUPS: Array<{
 export function AgentsPage() {
   const list = useApiQuery<{ root: string; prompts: PromptSummary[] }>("/prompts");
   const models = useApiQuery<{ models: AgentModelRecord[] }>("/models");
+  const overview = useApiQuery<Overview>("/overview", { intervalMs: 15_000 });
+  const activeRuns = overview.data?.counts.activeRuns ?? 0;
+  const configBusy = activeRuns > 0;
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedName = searchParams.get("name");
   const [selectedName, setSelectedName] = useState<string | null>(requestedName);
@@ -169,6 +173,10 @@ export function AgentsPage() {
 
   const save = async () => {
     if (selectedName === null || locked) return;
+    if (configBusy) {
+      toast.info("当前有任务运行中，请等任务结束后再保存 Agent 配置。");
+      return;
+    }
     setSaving(true);
     try {
       const result = await api.put<PromptFile & { reload: OpenCodeReloadResult }>(
@@ -197,6 +205,10 @@ export function AgentsPage() {
 
   const changeModel = async (value: string) => {
     if (selectedName === null || locked || saving) return;
+    if (configBusy) {
+      toast.info("当前有任务运行中，请等任务结束后再切换模型。");
+      return;
+    }
     setSaving(true);
     try {
       const result = await api.put<{
@@ -210,10 +222,18 @@ export function AgentsPage() {
       setOriginal(result.prompt.content);
       if (result.reload.deferred === true) {
         toast.info("模型已保存；当前有任务运行中，OpenCode 将在任务结束后自动重载");
-      } else if (result.reload.ok) {
-        toast.success("模型已保存，OpenCode 配置已热重载");
-      } else {
+      } else if (!result.reload.ok) {
         toast.warning(`模型已保存，但 OpenCode 重载失败：${result.reload.error ?? "未知错误"}`);
+      } else if ((result.reload.failedSessions ?? 0) > 0) {
+        toast.warning(
+          `模型已保存，有 ${result.reload.failedSessions} 个会话同步失败；${result.reload.warnings?.join("；") ?? ""}`,
+        );
+      } else if ((result.reload.appliedSessions ?? 0) > 0) {
+        toast.success(`模型已保存，并同步到 ${result.reload.appliedSessions} 个现有会话`);
+      } else if ((result.reload.warnings?.length ?? 0) > 0) {
+        toast.warning(`模型已保存；${result.reload.warnings?.join("；")}`);
+      } else {
+        toast.success("模型已保存，OpenCode 配置已热重载");
       }
       await list.refresh(true);
       await prompt.refresh(true);
@@ -225,6 +245,10 @@ export function AgentsPage() {
   };
 
   const create = async (name: string, content: string) => {
+    if (configBusy) {
+      toast.info("当前有任务运行中，请等任务结束后再创建 Agent。");
+      return;
+    }
     try {
       const result = await api.put<PromptFile & { reload: OpenCodeReloadResult }>(
         `/prompts/${encodeURIComponent(name)}`,
@@ -249,7 +273,7 @@ export function AgentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Agents"
-        description="管理 OpenCode 全局 agents。核心 agent 可编辑；插件管理的 agent 默认只读，需要高级覆盖。"
+        description="管理 OpenCode 全局 agents。核心 agent 可直接编辑；旧版插件安装的 agent 默认只读，需要高级覆盖后才能接管。"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => void list.refresh()}>
@@ -261,6 +285,16 @@ export function AgentsPage() {
           </>
         }
       />
+
+      {configBusy && (
+        <Alert>
+          <Bot />
+          <AlertTitle>有 {activeRuns} 个任务正在运行或排队</AlertTitle>
+          <AlertDescription>
+            为避免 OpenCode 热重载中断任务，Agent 保存和模型切换已暂时禁用；任务结束后会自动恢复。
+          </AlertDescription>
+        </Alert>
+      )}
 
       {list.error !== null && (
         <ErrorState
@@ -274,12 +308,12 @@ export function AgentsPage() {
       )}
 
       <Card className="sticky top-0 z-20 border bg-background/95 shadow-sm backdrop-blur">
-        <CardContent className="flex flex-wrap items-center gap-3 p-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Bot className="size-4 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium">默认模型</p>
-              <p className="text-xs text-muted-foreground">
+        <CardContent className="flex flex-wrap items-start gap-3 p-4">
+          <div className="flex min-w-0 items-start gap-2">
+            <Bot className="mt-0.5 size-4 shrink-0" />
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium leading-5">默认模型</p>
+              <p className="text-xs leading-5 text-muted-foreground">
                 写入当前 Agent 的 frontmatter；选择后立即保存。任务运行中时保存会被拒绝， 以免
                 OpenCode 热重载中断正在执行的任务。
               </p>
@@ -300,6 +334,7 @@ export function AgentsPage() {
               locked ||
               saving ||
               dirty ||
+              configBusy ||
               models.loading ||
               models.error !== null
             }
@@ -358,10 +393,10 @@ export function AgentsPage() {
                 </SelectContent>
               </Select>
               {selected !== null && (
-                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-5 text-muted-foreground">
                   <Badge variant="outline">{ownerLabel(selected.owner)}</Badge>
                   {selected.managedBy !== null && (
-                    <span className="font-mono text-[10px]">{selected.managedBy}</span>
+                    <span className="font-mono text-[10px] leading-5">{selected.managedBy}</span>
                   )}
                   <span>{selected.description ?? selected.title ?? `${selected.size} bytes`}</span>
                 </div>
@@ -385,14 +420,14 @@ export function AgentsPage() {
                 </Badge>
               )}
             </CardTitle>
-            <CardDescription className="space-y-1">
+            <CardDescription className="space-y-1 leading-5">
               <span className="block">
                 {prompt.data === null
                   ? "从上方选择 Agent"
                   : `更新于 ${formatDate(prompt.data.updatedAt)} · ${prompt.data.size} bytes`}
               </span>
               {selected !== null && (
-                <span className="flex flex-wrap items-center gap-1.5">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <Badge variant="outline">{ownerLabel(selected.owner)}</Badge>
                   {selected.managedBy !== null && (
                     <span className="font-mono text-[10px]">{selected.managedBy}</span>
@@ -410,7 +445,7 @@ export function AgentsPage() {
             )}
             <Button
               size="sm"
-              disabled={selectedName === null || !dirty || saving || locked}
+              disabled={selectedName === null || !dirty || saving || locked || configBusy}
               onClick={() => void save()}
             >
               <Save /> 保存
@@ -439,14 +474,14 @@ export function AgentsPage() {
                 <Alert variant={override ? "destructive" : "default"}>
                   <ShieldCheck />
                   <AlertTitle className="flex items-center gap-2">
-                    {override ? "高级覆盖已开启" : "此 Agent 由插件管理"}
+                    {override ? "高级覆盖已开启" : "此 Agent 由旧版插件安装"}
                     <Badge variant="outline">{selected.managedBy ?? "plugin"}</Badge>
                   </AlertTitle>
                   <AlertDescription className="space-y-3">
                     <p>
                       {override
-                        ? "保存后插件升级不会覆盖你的修改；请注意与插件默认 prompt 的版本漂移。"
-                        : "默认只读。角色卡、备注、世界书和记忆请在 Roleplay 页面编辑；只有确实要调整引擎规则时才开启高级覆盖。"}
+                        ? "保存后旧版插件的升级不会覆盖你的修改；请注意与插件默认 prompt 的版本漂移。"
+                        : "默认只读，避免与旧版插件的模板漂移。确认要接管此 Agent 后，再开启高级覆盖。"}
                     </p>
                     <div className="flex items-center gap-2">
                       <Switch checked={override} onCheckedChange={setOverride} />
@@ -614,7 +649,7 @@ function ModelPicker({
 
 function ownerLabel(owner: PromptOwner): string {
   if (owner === "core") return "core";
-  if (owner === "plugin") return "plugin";
+  if (owner === "plugin") return "legacy";
   return "user";
 }
 
@@ -634,7 +669,7 @@ function CreatePromptDialog({
           <DialogTitle>新建 Agent</DialogTitle>
           <DialogDescription>
             文件名必须是扁平 `*.md`，保存到 OpenCode 全局 agents
-            目录。插件管理的同名文件不会被覆盖，除非显式高级覆盖。
+            目录。旧版插件安装的同名文件不会被覆盖，除非显式高级覆盖。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -729,7 +764,7 @@ function BackupSheet({
               <ShieldCheck />
               <AlertTitle>先开启高级覆盖</AlertTitle>
               <AlertDescription>
-                插件管理的 agent 默认只读；恢复历史版本也需要高级覆盖。
+                旧版插件安装的 agent 默认只读；恢复历史版本也需要高级覆盖。
               </AlertDescription>
             </Alert>
           )}

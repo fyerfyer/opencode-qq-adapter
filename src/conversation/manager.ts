@@ -82,8 +82,24 @@ export class ConversationManager {
           detail: { runId: active.record.id, sessionId: active.record.sessionId },
         });
       },
+      onSession: (active, session) => {
+        this.#audit?.record({
+          ts: Date.now(),
+          actorQq: active.record.actorQq,
+          chatKey: active.record.chatKey,
+          projectId: active.record.projectId,
+          workspaceId: active.workspaceId,
+          action: "run.session",
+          detail: {
+            runId: active.record.id,
+            sessionId: session.id,
+            agent: session.agent,
+            model: session.model,
+          },
+        });
+      },
       onRunFailed: (active, error) => options.onRunFailed?.(active, error),
-      onFinished: (active, status, usage, error) => {
+      onFinished: (active, status, usage, error, metadata) => {
         if (usage !== null && active.record.actorQq !== null) {
           this.#quota?.recordRunUsage(active.record.actorQq, active.record.projectId, {
             inputTokens: usage.tokens.input,
@@ -104,9 +120,15 @@ export class ConversationManager {
           detail: {
             runId: active.record.id,
             status,
+            agent: metadata?.agent ?? null,
+            model: metadata?.model ?? null,
+            sessionId: active.record.sessionId,
             costUsd: usage?.cost ?? 0,
             inputTokens: usage?.tokens.input ?? 0,
             outputTokens: usage?.tokens.output ?? 0,
+            reasoningTokens: usage?.tokens.reasoning ?? 0,
+            cacheReadTokens: usage?.tokens.cacheRead ?? 0,
+            cacheWriteTokens: usage?.tokens.cacheWrite ?? 0,
             durationMs: Date.now() - active.record.startedAt,
           },
         });
@@ -354,6 +376,14 @@ export class ConversationManager {
       } catch (error) {
         return { ok: false, reason: `切换 agent 失败：${describeError(error)}` };
       }
+      if (conversation.model === null) {
+        await this.#applyAgentModelToSession(
+          chatKey,
+          conversation.projectId,
+          conversation.sessionId,
+          agent,
+        );
+      }
     }
     this.#store.conversations.setSession(
       chatKey,
@@ -376,6 +406,7 @@ export class ConversationManager {
     if (conversation === null) {
       return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
     }
+    let explicitModel = conversation.model;
     if (preferences.model !== undefined) {
       if (conversation.sessionId !== null) {
         try {
@@ -384,11 +415,12 @@ export class ConversationManager {
           return { ok: false, reason: `切换模型失败：${describeError(error)}` };
         }
       }
+      explicitModel = preferences.model;
       this.#store.conversations.setSession(
         chatKey,
         conversation.sessionId,
         conversation.agent,
-        preferences.model,
+        explicitModel,
       );
     }
     if (preferences.agent !== undefined) {
@@ -398,30 +430,83 @@ export class ConversationManager {
         } catch (error) {
           return { ok: false, reason: `切换 agent 失败：${describeError(error)}` };
         }
+        if (explicitModel === null) {
+          await this.#applyAgentModelToSession(
+            chatKey,
+            conversation.projectId,
+            conversation.sessionId,
+            preferences.agent,
+          );
+        }
       }
       this.#store.conversations.setSession(
         chatKey,
         conversation.sessionId,
         preferences.agent,
-        preferences.model ?? conversation.model,
+        explicitModel,
       );
     }
     this.#logger.info({ chatKey, ...preferences }, "Conversation preferences changed");
     return { ok: true };
   }
 
-  switchSession(chatKey: string, session: AgentSession): { ok: boolean; reason?: string } {
+  async #resolveAgentModel(projectId: string, agentId: string): Promise<string | null> {
+    const project = this.#config.projects[projectId];
+    if (project === undefined) return null;
+    try {
+      const agents = await this.#agent.listAgents(project.path);
+      return agents.find((entry) => entry.id === agentId)?.model ?? null;
+    } catch (error) {
+      this.#logger.warn(
+        { err: error, projectId, agent: agentId },
+        "Failed to resolve agent frontmatter model",
+      );
+      return null;
+    }
+  }
+
+  async #applyAgentModelToSession(
+    chatKey: string,
+    projectId: string,
+    sessionId: string,
+    agent: string,
+  ): Promise<void> {
+    const model = await this.#resolveAgentModel(projectId, agent);
+    if (model === null) {
+      this.#logger.warn(
+        { chatKey, agent },
+        "Selected agent has no frontmatter model; keeping the current session model. Send !new to fully apply the agent default.",
+      );
+      return;
+    }
+    try {
+      await this.#agent.switchModel(sessionId, model);
+      this.#logger.info(
+        { chatKey, agent, model },
+        "Applied agent frontmatter model to live session",
+      );
+    } catch (error) {
+      this.#logger.warn(
+        { err: error, chatKey, agent, model },
+        "Failed to apply agent frontmatter model to live session; !new may be needed",
+      );
+    }
+  }
+
+  async switchSession(
+    chatKey: string,
+    session: AgentSession,
+  ): Promise<{ ok: boolean; reason?: string }> {
     const guard = this.#preferenceGuard(chatKey);
     if (guard !== null) return guard;
     const conversation = this.#store.conversations.get(chatKey);
     if (conversation === null)
       return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
-    this.#store.conversations.setSession(
-      chatKey,
-      session.id,
-      session.agent ?? conversation.agent,
-      session.model ?? conversation.model,
-    );
+    const agent = session.agent ?? conversation.agent;
+    if (conversation.model === null && agent !== null) {
+      await this.#applyAgentModelToSession(chatKey, conversation.projectId, session.id, agent);
+    }
+    this.#store.conversations.setSession(chatKey, session.id, agent, conversation.model);
     this.#logger.info({ chatKey, sessionId: session.id }, "Conversation switched");
     return { ok: true };
   }
@@ -474,6 +559,40 @@ export class ConversationManager {
 
   cleanWorkspaces(): number {
     return this.#workspaces.cleanup();
+  }
+
+  async applyAgentDefaultModel(
+    agentId: string,
+    model: string,
+  ): Promise<{ updated: number; failed: number; warnings: string[] }> {
+    const defaultAgent = this.#config.opencode.default_agent;
+    const targets = this.#store.conversations.list().filter((conversation) => {
+      if (conversation.sessionId === null || conversation.model !== null) return false;
+      if (conversation.agent === agentId) return true;
+      if (conversation.agent !== null) return false;
+      const projectAgent = this.#config.projects[conversation.projectId]?.agent ?? null;
+      return (projectAgent ?? defaultAgent) === agentId;
+    });
+
+    let updated = 0;
+    let failed = 0;
+    const warnings: string[] = [];
+    for (const conversation of targets) {
+      const sessionId = conversation.sessionId;
+      if (sessionId === null) continue;
+      try {
+        await this.#agent.switchModel(sessionId, model);
+        updated += 1;
+      } catch (error) {
+        failed += 1;
+        warnings.push(`${conversation.chatKey}: ${describeError(error)}`);
+      }
+    }
+    this.#logger.info(
+      { agentId, model, matched: targets.length, updated, failed },
+      "Applied agent default model to live sessions",
+    );
+    return { updated, failed, warnings };
   }
 
   activeRuns(): number {

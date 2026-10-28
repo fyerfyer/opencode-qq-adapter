@@ -2,6 +2,7 @@ import { parseApprovalDecision } from "../approval/broker.js";
 import { isChatProjectId } from "../chat/project.js";
 import type { AuditRecord } from "../domain/audit.js";
 import { formatDiff, formatProjects, formatStatus, formatWorkspace, HELP_TEXT } from "./format.js";
+import { type ModelSource, resolveEffectiveModel } from "./model.js";
 import type { CommandHandler, RouterDeps } from "./types.js";
 
 /** Built-in names that plugins may not shadow. Keep this list in sync with createCommands. */
@@ -437,7 +438,14 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
         );
         return;
       }
-      const current = conversation?.model ?? deps.config.opencode.default_model;
+      const current = (
+        await resolveEffectiveModel({
+          agent: deps.agent,
+          config: deps.config,
+          conversation,
+          directory,
+        })
+      ).model;
       const lines = [`可用模型（${visible.length}）：`];
       for (const model of visible.slice(0, 30)) {
         const marker = model.id === current ? "*" : "-";
@@ -475,16 +483,17 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
       return;
     }
 
-    const project = conversation ? deps.config.projects[conversation.projectId] : undefined;
-    const current =
-      conversation?.model ??
-      project?.model ??
-      deps.config.opencode.default_model ??
-      "OpenCode 默认";
+    const directory = workspaceDirectory(deps, message.chat.chatKey);
+    const resolved = await resolveEffectiveModel({
+      agent: deps.agent,
+      config: deps.config,
+      conversation,
+      directory,
+    });
     await deps.sender.reply(
       message.chat,
       message.id,
-      `当前模型：${current}\n使用 !model list 查看可用模型，!model provider/model 切换。`,
+      `当前模型：${resolved.model ?? "OpenCode 默认"}（${modelSourceLabel(resolved.source)}）\n使用 !model list 查看可用模型，!model provider/model 切换。`,
     );
   });
 
@@ -619,7 +628,7 @@ export function createCommands(deps: RouterDeps): Map<string, CommandHandler> {
     }
     const session = matches[0];
     if (session === undefined) return;
-    const result = deps.conversations.switchSession(message.chat.chatKey, session);
+    const result = await deps.conversations.switchSession(message.chat.chatKey, session);
     if (!result.ok) {
       await deps.sender.reply(message.chat, message.id, result.reason ?? "切换会话失败。");
       return;
@@ -656,6 +665,21 @@ function workspaceDirectory(deps: RouterDeps, chatKey: string): string | null {
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.length > 240 ? `${message.slice(0, 240)}…` : message;
+}
+
+function modelSourceLabel(source: ModelSource): string {
+  switch (source) {
+    case "conversation":
+      return "会话覆盖";
+    case "agent":
+      return "Agent 默认";
+    case "project":
+      return "项目配置";
+    case "opencode":
+      return "OpenCode 默认";
+    case "none":
+      return "OpenCode 默认";
+  }
 }
 
 function formatAudit(records: AuditRecord[]): string {

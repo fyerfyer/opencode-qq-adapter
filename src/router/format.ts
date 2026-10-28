@@ -7,6 +7,7 @@ import type { PolicyEngine } from "../policy/engine.js";
 import type { AgentPort } from "../ports/agent.js";
 import type { OneBotPort } from "../ports/onebot.js";
 import type { WorkspaceDiff, WorkspaceStatus } from "../workspace/manager.js";
+import { resolveEffectiveModel } from "./model.js";
 
 export const HELP_TEXT = [
   "OpenCode QQ Adapter 命令",
@@ -78,6 +79,12 @@ export async function formatStatus(
   const health = await deps.agent.health();
   const onebot = deps.onebot.status();
   const active = status.activeRun;
+  const effectiveModel = await resolveEffectiveModel({
+    agent: deps.agent,
+    config: deps.config,
+    conversation,
+    directory: project?.path ?? null,
+  });
   const workspace =
     currentProjectId === null ? null : deps.conversations.workspaceStatus(currentProjectId);
 
@@ -89,8 +96,8 @@ export async function formatStatus(
     `工作区：${project?.path ?? "-"}`,
     `工作区锁：${formatLockState(workspace, Date.now())}`,
     `会话：${conversation?.sessionId ?? "未创建"}`,
-    `Agent：${conversation?.agent ?? deps.config.opencode.default_agent ?? "默认"}`,
-    `模型：${conversation?.model ?? deps.config.opencode.default_model ?? "默认"}`,
+    `Agent：${conversation?.agent ?? project?.agent ?? deps.config.opencode.default_agent ?? "默认"}`,
+    `模型：${effectiveModel.model ?? "OpenCode 默认"}`,
     `运行：${active === null ? "空闲" : `${active.status} (${active.id})`}`,
     `队列：${status.queued}`,
     `待审批：${deps.approvals.pending(message.chat.chatKey).length}`,

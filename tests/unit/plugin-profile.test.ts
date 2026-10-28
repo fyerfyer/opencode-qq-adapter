@@ -7,6 +7,7 @@ import type { ActiveRun } from "../../src/conversation/types.js";
 import type { RunRecord } from "../../src/domain/conversation.js";
 import { AuditTrail } from "../../src/observability/audit.js";
 import { buildLogger } from "../../src/observability/logger.js";
+import { normalizePluginProfile } from "../../src/plugins/host/profile.js";
 import { PluginHost, type PluginSessionActions } from "../../src/plugins/host.js";
 import { MessageSender } from "../../src/qq/sender.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
@@ -76,7 +77,7 @@ async function makeHost(options: { directory?: string } = {}) {
     store.close();
     logger.flush?.();
   });
-  return { host, onebot, sessionCalls, persona, root };
+  return { host, onebot, sessionCalls, persona, root, config, logger };
 }
 
 function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
@@ -119,12 +120,22 @@ describe("PluginHost conversation profile", () => {
     const message = makeIncomingMessage({ text: "你好" });
     const result = await host.resolveProfile(message, "demo");
     expect(result.plugins).toEqual(["profile-fixture"]);
-    expect(result.profile).toMatchObject({
-      directory: persona,
-      agent: "qq-rp-fixture",
-      model: "fake/model-a",
-      workspace: "none",
+    expect(result.profile).toEqual({ directory: persona });
+  });
+
+  it("ignores plugin-supplied agent, model and workspace fields", async () => {
+    const { config, logger, persona } = await makeHost();
+    const profile = await normalizePluginProfile({
+      raw: { directory: persona, agent: "x", model: "y", workspace: "none" },
+      projectId: "demo",
+      pluginId: "profile-fixture",
+      config,
+      logger,
     });
+    expect(profile).toEqual({ directory: persona });
+    expect(profile).not.toHaveProperty("agent");
+    expect(profile).not.toHaveProperty("model");
+    expect(profile).not.toHaveProperty("workspace");
   });
 
   it("rejects a profile directory outside the project root", async () => {

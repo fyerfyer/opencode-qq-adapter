@@ -120,6 +120,8 @@ export function mapMessage(message: {
   text?: string;
   error?: { type: string; message: string };
   cost?: number;
+  agent?: string;
+  model?: { id: string; providerID: string };
   tokens?: {
     input: number;
     output: number;
@@ -149,6 +151,8 @@ export function mapMessage(message: {
     created: message.time?.created ?? 0,
     error: message.error ? `${message.error.type}: ${message.error.message}` : null,
     cost: message.cost ?? null,
+    agent: message.agent ?? null,
+    model: message.model ? `${message.model.providerID}/${message.model.id}` : null,
     tokens: message.tokens
       ? {
           input: message.tokens.input,

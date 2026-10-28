@@ -130,6 +130,8 @@ function makeFakeAgent(options: { slow?: boolean } = {}): FakeAgentState {
           created: Date.now(),
           error: null,
           cost: 0.01,
+          agent: "resolved-agent",
+          model: "resolved/model",
           tokens: {
             input: 10,
             output: 5,
@@ -170,6 +172,7 @@ function makeFakeAgent(options: { slow?: boolean } = {}): FakeAgentState {
 async function makeHost(
   plugins: Record<string, string>,
   agent?: AgentPort,
+  options: { defaultAgent?: string | null } = {},
 ): Promise<{
   host: PluginHost;
   store: SqliteStore;
@@ -178,6 +181,9 @@ async function makeHost(
 }> {
   const root = await mkdtemp(join(tmpdir(), "qq-plugin-agent-"));
   const config = makeTestConfig({ projectPath: root });
+  if (options.defaultAgent !== undefined) {
+    config.opencode.default_agent = options.defaultAgent;
+  }
   config.storage.plugins_dir = join(root, "plugins");
   config.plugins = Object.fromEntries(
     Object.entries(plugins).map(([id, path]) => [id, { enabled: true, path, options: {} }]),
@@ -232,16 +238,31 @@ describe("PluginHost utility agent", () => {
     const pluginDir = join(root, "plugins", "utility-fixture");
     expect(fake.createInputs[0]).toMatchObject({
       directory: pluginDir,
-      agent: "helper",
-      model: "test/model",
+      agent: "qq-code",
       permissions: [{ action: "*", resource: "*", effect: "deny" }],
     });
+    expect(fake.createInputs[0]).not.toHaveProperty("model");
     expect(fake.prompts[0]?.text).toBe("hi");
     expect(fake.deleted).toEqual(["ses_1"]);
     const audit = store.audit.listRecent(10).find((record) => record.action === "plugin.agent");
     expect(audit).toBeDefined();
+    expect(audit?.detail).toMatchObject({
+      agent: "resolved-agent",
+      model: "resolved/model",
+    });
     expect(JSON.stringify(audit?.detail)).toContain("fixture.utility");
     expect(JSON.stringify(audit?.detail)).toContain("costUsd");
+  });
+
+  it("uses opencode.default_agent for the core utility run", async () => {
+    const fake = makeFakeAgent();
+    const { host, onebot } = await makeHost({ "utility-fixture": fixture("utility") }, fake.agent, {
+      defaultAgent: "custom-core",
+    });
+    await host.dispatchCommand(utilityCommand());
+    await waitFor(() => onebot.texts().includes("reply:hi"), 1000, "utility reply");
+    expect(fake.createInputs[0]).toMatchObject({ agent: "custom-core" });
+    expect(fake.createInputs[0]).not.toHaveProperty("model");
   });
 
   it("serializes utility runs per plugin", async () => {

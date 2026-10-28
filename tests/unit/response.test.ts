@@ -14,6 +14,8 @@ function message(
     error: null,
     cost: null,
     tokens: null,
+    agent: null,
+    model: null,
     ...overrides,
   };
 }
@@ -135,5 +137,32 @@ describe("final response extraction", () => {
       activeRun(),
     );
     expect(result.error).toBe("provider.transport: ECONNREFUSED");
+  });
+
+  it("returns the agent and model used by the newest assistant message", async () => {
+    const agent = new FakeAgent();
+    const session = await agent.createSession({ directory: "/tmp" });
+    agent.messages.set(session.id, [
+      message({
+        id: "latest",
+        type: "assistant",
+        text: "answer",
+        agent: "qq-code",
+        model: "opencode-go/deepseek-v4.1-flash",
+        created: 4,
+      }),
+      message({ id: "prompt", type: "user", text: "hello", created: 1 }),
+    ]);
+
+    const result = await collectResponse(
+      agent,
+      session.id,
+      { messageId: "prompt", created: 1 },
+      activeRun(),
+    );
+    expect(result).toMatchObject({
+      agent: "qq-code",
+      model: "opencode-go/deepseek-v4.1-flash",
+    });
   });
 });

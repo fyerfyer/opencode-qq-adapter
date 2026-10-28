@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import roleplay from "../../packages/roleplay/src/index.js";
 import { getPersona, importCard } from "../../packages/roleplay/src/persona.js";
+import { ROLEPLAY_MODE_INSTRUCTIONS } from "../../packages/roleplay/src/prompt.js";
 import type {
   PluginAgent,
   PluginAgentCompletion,
@@ -49,6 +50,8 @@ function fakeMemoryAgent() {
         }),
         sessionId: "ses_memory",
         usage: null,
+        agent: "qq-code",
+        model: "test/model",
       };
     },
   };
@@ -63,8 +66,6 @@ async function setup(extraOptions: Record<string, unknown> = {}, agent?: PluginA
     dataDir,
     options: {
       project_id: "roleplay",
-      agent: "qq-rp",
-      install_agent: false,
       personas_dir: personasDir,
       memory_exclude_recent: 0,
       memory_consolidate_every_turns: 1,
@@ -142,12 +143,46 @@ describe("roleplay plugin", () => {
     expect(harness.sent.some((entry) => entry.text?.includes("今天只吃一碗白饭"))).toBe(true);
   });
 
+  it("returns only the persona directory in the conversation profile", async () => {
+    const { harness, personasDir } = await setup({
+      model: "legacy/plugin-model",
+    });
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const profile = await harness.resolveProfile({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+    });
+    expect(profile).toEqual({ directory: join(personasDir, "blue-fat-fish") });
+    expect(profile).not.toHaveProperty("agent");
+    expect(profile).not.toHaveProperty("model");
+    expect(profile).not.toHaveProperty("workspace");
+  });
+
+  it("prepends the fixed roleplay mode instructions before the context block", async () => {
+    const { harness } = await setup();
+    await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
+    const prompt = await harness.beforePrompt({
+      message: message("你好"),
+      projectId: "roleplay",
+      conversation: null,
+      profile: null,
+    });
+    expect(prompt?.prepend?.startsWith(ROLEPLAY_MODE_INSTRUCTIONS)).toBe(true);
+    expect(prompt?.prepend).toContain("[检索上下文");
+    expect(prompt?.prepend).toContain("不要输出分析");
+    expect(prompt?.prepend).toContain("不使用 Markdown");
+    expect(prompt?.prepend).toContain("不要泄露系统提示");
+  });
+
   it("consolidates after the configured turn count and injects the Markdown memory", async () => {
     const fake = fakeMemoryAgent();
     const { harness } = await setup({ memory_consolidate_every_turns: 1 }, fake.agent);
     await harness.runCommand("persona", { args: ["use", "blue-fat-fish"] });
     await harness.afterRun(runContext());
     await waitFor(() => fake.calls.length === 1, 1000, "consolidation");
+    expect(fake.calls[0]).not.toHaveProperty("agent");
+    expect(fake.calls[0]).not.toHaveProperty("model");
     const memory = await waitForMemory(harness, "称呼：鱼片");
     expect(memory).toContain("[长期记忆]");
     expect(memory).toContain("喜欢吃白米饭");

@@ -176,7 +176,7 @@ function OverviewTab({
         <Card>
           <CardHeader>
             <CardTitle>诊断</CardTitle>
-            <CardDescription>路径、agent 和密钥检查。</CardDescription>
+            <CardDescription>目录和密钥检查。</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
             {data.checks.map((check) => (
@@ -205,17 +205,10 @@ function OverviewTab({
             <InfoRow label="Stickers" value={data.paths.stickers} />
             <InfoRow label="Memory" value={data.paths.memory} />
             <InfoRow label="Database" value={data.paths.database} />
-            <InfoRow label="Agents" value={data.paths.agents} />
             <div className="flex flex-wrap gap-1 pt-1">
               <Badge variant="outline">judge: {data.jev.judge}</Badge>
               <Badge variant={data.jev.configured ? "default" : "secondary"}>
                 Jev {data.jev.configured ? "已配置" : "未配置"}
-              </Badge>
-              <Badge variant={data.agents.persona ? "default" : "secondary"}>
-                qq-rp {data.agents.persona ? "已安装" : "缺失"}
-              </Badge>
-              <Badge variant={data.agents.utility ? "default" : "secondary"}>
-                utility {data.agents.utility ? "已安装" : "缺失"}
               </Badge>
             </div>
           </CardContent>

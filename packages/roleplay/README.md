@@ -6,12 +6,12 @@ Character Card V2/V3 roleplay plugin for `opencode-qq-adapter`. Worldbook select
 
 - Imports Character Card V2/V3 JSON/PNG through `@character-foundry/character-foundry`.
 - Stores each persona in a self-contained directory with `AGENTS.md`, card JSON, worldbook, greetings, and user notes.
-- Runs OpenCode through a dedicated tool-free `qq-rp` primary agent.
+- Runs OpenCode through the single core `qq-code` Agent configured by `projects.<roleplay>.agent`; the plugin never installs or selects an Agent/model.
 - Injects worldbook matches, the Markdown memory document, and retrieved raw transcript snippets into each turn.
 - Supports worldbook lite: keyword/secondary-key/constant activation, one optional recursion pass, ASCII whole-word matching, and `!worldbook check <text>`.
 - Extracts CCv3 `emotion` assets (or manual `stickers/<emotion>/` files) and appends at most one sticker per reply.
 - Uses Jev (System One decision model) to choose an emotion from the visible reply, with confidence/sticker-ok thresholds.
-- Consolidates memory in the background through a hidden, tool-free `qq-rp-utility` agent using section-level JSON operations.
+- Consolidates memory in the background through the core Agent (`opencode.default_agent`, fallback `qq-code`) in a tool-free ephemeral session using section-level JSON operations.
 - Splits replies into 1-4 QQ bubbles with typing delays.
 - Supports private chats and zero-config group chats (one independent conversation per member).
 - Ships an iframe admin WebUI (`/admin/plugins/roleplay`) for cards, worldbook editing, stickers, Markdown memory, bindings and plugin options.
@@ -178,7 +178,9 @@ projects:
     path: ~/.local/share/opencode-qq/plugins/roleplay/personas
     description: Roleplay personas
     workspace: none
-    agent: qq-rp
+    # The org-wide core Agent. Model comes from its frontmatter (`model:`),
+    # edited on the core Agents page; keep model: null here.
+    agent: qq-code
     model: null
     hidden: true
     managed_by: roleplay
@@ -188,13 +190,14 @@ plugins:
     path: /absolute/path/to/packages/roleplay
     options:
       project_id: roleplay
-      agent: qq-rp
-      model: null
+      # The plugin injects roleplay instructions, persona context, worldbook,
+      # memory and reply formatting. It never installs or selects an Agent or
+      # model. Configure qq-code and its frontmatter model on the core Agents
+      # page (/agents?name=qq-code.md).
       # Must match projects.roleplay.path. The default is
       # <storage.plugins_dir>/roleplay/personas, which is only correct when that
       # path is the same as projects.roleplay.path.
       personas_dir: ~/.local/share/opencode-qq/plugins/roleplay/personas
-      install_agent: true
       fallback_project: demo
       max_segments: 4
       max_chars_per_segment: 180
@@ -219,9 +222,8 @@ plugins:
       jev_timeout_ms: 2500
 
       memory_enabled: true
-      memory_utility_agent: qq-rp-utility
-      # null inherits the OpenCode default:
-      # memory_utility_model: opencode-go/deepseek-v4.1-flash
+      # Consolidation uses the core Agent (opencode.default_agent, fallback
+      # qq-code) in a tool-free ephemeral session. The plugin cannot set a model.
       memory_utility_timeout_ms: 90000
       memory_consolidate_every_turns: 8
       memory_idle_debounce_ms: 120000
@@ -235,12 +237,7 @@ plugins:
       memory_refresh_cooldown_ms: 60000
 ```
 
-`install_agent: true` writes two managed agents to `~/.config/opencode/agents/`:
-
-- `qq-rp.md`: the tool-free roleplay engine. It deliberately has no `steps: 1`; OpenCode's final-step max-steps notice would otherwise leak into roleplay replies.
-- `qq-rp-utility.md`: the hidden, JSON-only memory consolidator (`hidden: true`, all tools denied).
-
-Existing user-owned files are never overwritten. After the first install, reload or restart OpenCode so the agents are visible.
+The plugin no longer installs or owns `qq-rp`/`qq-rp-utility` Agent files, and it has no `agent`, `memory_utility_agent` or `install_agent` options. Every roleplay turn uses `projects.roleplay.agent` (setup writes `qq-code`); the model comes from that Agent's frontmatter. Edit the single Agent and its model on the core **Agents** page (`/agents?name=qq-code.md`). Roleplay behaviour rules are injected by the plugin as a prompt prefix, while persona cards and memory remain in the Roleplay page.
 
 **Set `personas_dir` to exactly the same directory as `projects.roleplay.path`.** If they differ, the core logs `Plugin profile directory escapes the project root; ignoring`, falls back to the project root, and the persona card's `AGENTS.md` is not loaded.
 
@@ -248,7 +245,7 @@ Existing user-owned files are never overwritten. After the first install, reload
 
 The bridge mounts the plugin admin API at `/admin/api/plugins/roleplay/*` and an iframe page at `/admin/plugins/roleplay` (legacy `/admin/roleplay` redirects):
 
-- Overview: persona/sticker/memory/binding counts, agent/Jev/path diagnostics.
+- Overview: persona/sticker/memory/binding counts, Jev/path diagnostics.
 - Personas: drag-and-drop CCv2/V3 import, card preview, notes (`notes.md` → `AGENTS.md`), worldbook add/edit/delete/enable and keyword trace, per-persona memory/bindings.
 - Stickers: per-persona/`_global` grid, multi-upload with magic-byte + SHA-256 dedupe, WebP thumbnails via `sharp`, emotion rename/delete, preview and a test send to a bound QQ chat.
 - Memory: scope tree, Markdown editor/preview, protected `手动记忆`, history diff/restore, raw FTS search, background refresh jobs and scope purge.
@@ -259,7 +256,7 @@ The page is built into `packages/roleplay/ui` and talks to the core through `@op
 
 All routes inherit the core admin session, CSRF, loopback restriction and audit. Plugin data stays under `storage.plugins_dir/roleplay`; the core never reads the plugin tables directly.
 
-The installed engine files (`qq-rp.md`, `qq-rp-utility.md`) appear under **Agents** as plugin-managed and are read-only by default. Editing them requires the explicit “高级覆盖” switch, because upgrades replace marker-owned files and manual changes can drift from the plugin version. Persona content, notes, worldbook and memory stay in the Roleplay page.
+All QQ runs use the single core `qq-code` Agent. The Roleplay settings page links directly to its Agents-page entry for model configuration; the plugin does not create, own or override Agent files. Persona content, notes, worldbook and memory stay in the Roleplay page.
 
 ## Use
 
@@ -315,14 +312,14 @@ users:
 QQ private/group message
   -> bridge authorization and @bot policy
   -> roleplay profile: directory = personas/<id>
-  -> beforePrompt: memory.md + scene.md + raw FTS + worldbook + available emotions
-  -> OpenCode qq-rp session (AGENTS.md is the system baseline)
+  -> beforePrompt: roleplay mode rules + memory.md + scene.md + raw FTS + worldbook + available emotions
+  -> OpenCode qq-code session (AGENTS.md is the system baseline)
   -> formatReply: strip [emotion:xxx], sentence groups + delays + optional sticker
   -> QQ
   -> afterRun: store raw text, schedule consolidation
                  |
                  v
-          qq-rp-utility (hidden, tool-free)
+          core Agent utility session (tool-free, ephemeral)
             current memory.md/scene.md + recent transcript
             -> section operations JSON
                  |
@@ -330,16 +327,16 @@ QQ private/group message
           atomic write + history snapshot + memory_events
 ```
 
-Stable character data lives in `personas/<id>/AGENTS.md`, so it stays at the front of the prompt. Engine rules live only in the `qq-rp` agent prompt; `AGENTS.md` contains the card and user notes, not a duplicated safety footer. Volatile memory is a bounded user-message prefix at the end of the conversation prefix.
+Stable character data lives in `personas/<id>/AGENTS.md`, so it stays at the front of the prompt. Roleplay mode rules are injected by the plugin in `beforePrompt`; `AGENTS.md` contains the card and user notes, not a duplicated safety footer. Volatile memory is a bounded user-message prefix near the end of the prompt prefix.
 
-The utility call uses the bridge's `context.agent.complete()` plugin API: an ephemeral OpenCode session in the plugin data directory, every tool denied, a timeout, and the session deleted afterwards. It never touches the user's roleplay session.
+The utility call uses the bridge's `context.agent.complete()` plugin API: an ephemeral OpenCode session in the plugin data directory using `opencode.default_agent` (fallback `qq-code`), every tool denied, a timeout, and the session deleted afterwards. Plugins cannot supply an Agent or model. It never touches the user's roleplay session.
 
 The generic SQLite/Markdown/retrieval primitives are in `@opencode-qq/memory`. This plugin supplies the persona/scope mapping, RP section schema, consolidation prompt, commands, and sticker semantics. It is a project-level component, not a core runtime dependency; if a second consumer appears, the package can be promoted to a core `context.memory` API without putting RP vocabulary into `src/`.
 
 ## Privacy and cost
 
 - Memory documents live under `<storage.plugins_dir>/roleplay/memory/`; the plugin data directory is created with `0700`.
-- LLM consolidation sends the current document plus recent conversation text to `memory_utility_model` (or the OpenCode default). Set `memory_enabled: false` to keep memory local and use only `!remember` + raw FTS.
+- LLM consolidation sends the current document plus recent conversation text to the core Agent (`opencode.default_agent`, fallback `qq-code`); that Agent's frontmatter `model:` selects the model. Set `memory_enabled: false` to keep memory local and use only `!remember` + raw FTS.
 - `memory_events` records action, summary, changed sections, source message id, and timestamps; document versions are kept under `history/`.
 - `!forget confirm` deletes the document directory, history, raw messages, and memory events for the scope in one operation.
 - Group memory is isolated by ChatKey. Every member has an independent `group_<gid>_<uid>/memory.md`; the core bridge does not expose shared group memory.

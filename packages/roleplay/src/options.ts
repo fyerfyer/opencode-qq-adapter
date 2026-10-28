@@ -2,8 +2,6 @@ export type StickerJudge = "off" | "tag" | "jev" | "hybrid";
 
 export interface RoleplayOptions {
   projectId: string;
-  agent: string;
-  model: string | null;
   personasDir: string | null;
   defaultPersona: string | null;
   fallbackProject: string | null;
@@ -28,8 +26,6 @@ export interface RoleplayOptions {
   jevMinStickerOk: number;
   jevTimeoutMs: number;
   memoryEnabled: boolean;
-  memoryUtilityAgent: string;
-  memoryUtilityModel: string | null;
   memoryUtilityTimeoutMs: number;
   memoryConsolidateEveryTurns: number;
   memoryIdleDebounceMs: number;
@@ -41,8 +37,6 @@ export interface RoleplayOptions {
   memoryExcludeRecent: number;
   memoryHistoryLimit: number;
   memoryRefreshCooldownMs: number;
-  installAgent: boolean;
-  opencodeConfigDir: string | null;
 }
 
 function record(input: unknown): Record<string, unknown> {
@@ -88,21 +82,18 @@ function stickerJudge(value: unknown): StickerJudge {
 export function parseRoleplayOptions(input: unknown): RoleplayOptions {
   const value = record(input);
   const projectId = text(value.project_id, "roleplay");
-  const agent = text(value.agent, "qq-rp");
   if (
     value.project_id !== undefined &&
     (typeof value.project_id !== "string" || value.project_id.trim().length === 0)
   ) {
     throw new Error("project_id must be a non-empty string");
   }
-  if (value.agent !== undefined && (typeof value.agent !== "string" || value.agent.trim().length === 0)) {
-    throw new Error("agent must be a non-empty string");
-  }
 
+  // Legacy `agent`, `model`, `memory_utility_agent`, `memory_utility_model`,
+  // `install_agent` and `opencode_config_dir` keys are intentionally ignored:
+  // the core and the project own Agent/model selection.
   return {
     projectId,
-    agent,
-    model: optionalText(value.model),
     personasDir: optionalText(value.personas_dir),
     defaultPersona: optionalText(value.default_persona),
     fallbackProject: optionalText(value.fallback_project),
@@ -127,8 +118,6 @@ export function parseRoleplayOptions(input: unknown): RoleplayOptions {
     jevMinStickerOk: fraction(value.jev_min_sticker_ok, 0.8, 0, 1),
     jevTimeoutMs: number(value.jev_timeout_ms, 2500, 300, 4000),
     memoryEnabled: value.memory_enabled !== false && value.memory_llm !== false,
-    memoryUtilityAgent: text(value.memory_utility_agent, "qq-rp-utility"),
-    memoryUtilityModel: optionalText(value.memory_utility_model),
     memoryUtilityTimeoutMs: number(value.memory_utility_timeout_ms, 90_000, 5_000, 300_000),
     memoryConsolidateEveryTurns: number(
       value.memory_consolidate_every_turns ?? value.memory_extract_every_turns,
@@ -145,7 +134,5 @@ export function parseRoleplayOptions(input: unknown): RoleplayOptions {
     memoryExcludeRecent: number(value.memory_exclude_recent, 10, 0, 100),
     memoryHistoryLimit: number(value.memory_history_limit, 20, 1, 100),
     memoryRefreshCooldownMs: number(value.memory_refresh_cooldown_ms, 60_000, 0, 3_600_000),
-    installAgent: value.install_agent !== false,
-    opencodeConfigDir: optionalText(value.opencode_config_dir),
   };
 }

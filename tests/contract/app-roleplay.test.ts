@@ -50,8 +50,8 @@ describe("Application + roleplay plugin", () => {
       path: personas,
       description: "Roleplay personas",
       workspace: "none",
-      agent: "qq-rp",
-      model: null,
+      agent: "qq-code",
+      model: "fake/model-b",
       setup: [],
       base_branch: null,
       hidden: true,
@@ -63,8 +63,6 @@ describe("Application + roleplay plugin", () => {
         path: packageDir,
         options: {
           project_id: "roleplay",
-          agent: "qq-rp",
-          install_agent: false,
           personas_dir: personas,
           memory_exclude_recent: 0,
         },
@@ -72,6 +70,14 @@ describe("Application + roleplay plugin", () => {
     };
     const store = new SqliteStore(":memory:");
     const agent = new FakeAgent();
+    agent.agents.push({
+      id: "qq-code",
+      name: "QQ Code",
+      description: "Core QQ agent",
+      mode: "primary",
+      model: "fake/model-a",
+      hidden: false,
+    });
     const onebot = new FakeOneBot();
     const logger = buildLogger(config, { env: { NODE_ENV: "test", LOG_LEVEL: "silent" } });
     const app = new App(config, { logger, store, agent, onebot });
@@ -115,8 +121,10 @@ describe("Application + roleplay plugin", () => {
     await waitFor(() => agent.prompts.length === 1, 10_000, "roleplay prompt");
     expect(agent.sessionInputs[0]).toMatchObject({
       directory: personaDir,
-      agent: "qq-rp",
+      agent: "qq-code",
+      model: null,
     });
+    expect(agent.prompts[0]?.text).toContain("角色扮演引擎");
     expect(agent.prompts[0]?.text).toContain("[检索上下文");
     expect(agent.prompts[0]?.text).toContain("[世界书");
     await waitFor(

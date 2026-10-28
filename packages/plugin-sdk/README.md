@@ -2,7 +2,7 @@
 
 Experimental SDK for building QQ-side plugins for [`opencode-qq-adapter`](https://github.com/fyerfyer/opencode-qq-adapter).
 
-A plugin is trusted code that runs inside the bridge process. It can register QQ commands, inject prompt context, observe run completion, send text/images/files through the core media pipeline, and persist data in its own directory. Plugins cannot replace the permission engine or access core SQLite tables.
+A plugin is trusted code that runs inside the bridge process. It can register QQ commands, inject prompt context, observe run completion, send text/images/files through the core media pipeline, and persist data in its own directory. Plugins cannot install or select Agents/models/workspaces/permissions, replace the permission engine, or access core SQLite tables. Every QQ run, including background utility runs, uses the core Agent (`opencode.default_agent`, fallback `qq-code`).
 
 The SDK is at API v1. Additive changes are expected; breaking changes require a new `PLUGIN_API_VERSION`.
 
@@ -197,7 +197,7 @@ Core command names are reserved. Duplicate names/aliases between plugins also fa
 
 ## Run profile and reply plan
 
-A plugin can select a read-only directory and agent/model for a run, and can split the final reply into QQ-sized segments:
+A plugin can select a read-only directory for a run and split the final reply into QQ-sized segments. The core owns agent, model, workspace and permissions; a plugin cannot override them:
 
 ```ts
 context.hooks.register({
@@ -205,9 +205,6 @@ context.hooks.register({
     if (projectId !== "roleplay") return undefined;
     return {
       directory: "/absolute/path/inside/project/root",
-      agent: "qq-rp",
-      model: "provider/model",
-      workspace: "none",
     };
   },
   formatReply({ text }) {
@@ -226,6 +223,7 @@ context.hooks.register({
 
 Rules:
 
+- The profile may return only `directory`. Agent, model and workspace are owned by the project/Agent config and cannot be set by plugins.
 - `directory` is only accepted for projects configured with `workspace: none`.
 - The core resolves both paths with `realpath`; the run directory must stay inside the configured project root.
 - A profile cannot widen permissions; the core still compiles the ruleset from YAML policy.
@@ -248,15 +246,16 @@ context.hooks.register({
     void context.agent
       .complete({
         prompt: "Summarize this in JSON",
-        agent: "my-plugin-worker", // a hidden, tool-free primary agent
-        model: "provider/model",   // optional
         timeoutMs: 90_000,
         label: "my-plugin.summarize",
         chatKey: run.chat.chatKey,
         actorQq: run.userId,
       })
       .then((result) => {
-        context.logger.info({ text: result.text.slice(0, 80) }, "utility done");
+        context.logger.info(
+          { text: result.text.slice(0, 80), agent: result.agent, model: result.model },
+          "utility done",
+        );
       });
   },
 });
@@ -265,9 +264,10 @@ context.hooks.register({
 Rules:
 
 - The prompt is the only input; utility runs cannot read files or send QQ messages.
+- The core chooses the Agent: `opencode.default_agent` in the bridge config, falling back to `qq-code`. Plugins cannot pass an `agent` or `model`, so the Agent frontmatter owns model selection.
+- The result includes the actual `agent` and `model` reported on the latest assistant message.
 - The core serializes utility runs per plugin (at most 3 pending) and aborts them when the plugin is disposed.
 - Timeouts are clamped to 5s–300s. Cost and token usage are written to the audit log as `plugin.agent`; prompt content is not.
-- `agent` defaults to `build` if omitted. A custom hidden agent with `steps: 1` and all permissions denied is recommended.
 
 ## Group-aware commands
 

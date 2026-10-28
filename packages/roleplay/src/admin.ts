@@ -69,7 +69,6 @@ export interface RoleplayAdminDeps {
   stickerRoot: string;
   memoryRoot: string;
   databasePath: string;
-  agentConfigDir: string;
   memory: MemoryService;
   documents: MemoryDocumentStore;
   transcript: TranscriptStore;
@@ -626,11 +625,6 @@ async function summarize(deps: RoleplayAdminDeps): Promise<Record<string, unknow
       stickers: deps.stickerRoot,
       memory: deps.memoryRoot,
       database: deps.databasePath,
-      agents: deps.agentConfigDir,
-    },
-    agents: {
-      persona: await fileExists(join(deps.agentConfigDir, "agents", "qq-rp.md")),
-      utility: await fileExists(join(deps.agentConfigDir, "agents", "qq-rp-utility.md")),
     },
     jev: {
       judge: deps.options.stickerJudge,
@@ -651,23 +645,10 @@ async function summarize(deps: RoleplayAdminDeps): Promise<Record<string, unknow
 async function diagnostics(deps: RoleplayAdminDeps): Promise<
   Array<{ id: string; ok: boolean; label: string; detail: string }>
 > {
-  const agentsDir = join(deps.agentConfigDir, "agents");
   return [
     check("personas", await fileExists(deps.personasDir), "Persona 目录", deps.personasDir),
     check("stickers", await fileExists(deps.stickerRoot), "表情目录", deps.stickerRoot),
     check("memory", await fileExists(deps.memoryRoot), "记忆目录", deps.memoryRoot),
-    check(
-      "agent",
-      await fileExists(join(agentsDir, "qq-rp.md")),
-      "qq-rp agent",
-      join(agentsDir, "qq-rp.md"),
-    ),
-    check(
-      "utility-agent",
-      await fileExists(join(agentsDir, "qq-rp-utility.md")),
-      "记忆整理 agent",
-      join(agentsDir, "qq-rp-utility.md"),
-    ),
     check(
       "jev",
       deps.options.stickerJudge !== "jev" && deps.options.stickerJudge !== "hybrid"

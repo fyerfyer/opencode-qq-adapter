@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parseRoleplayOptions } from "../../packages/roleplay/src/options.js";
 
 describe("roleplay options", () => {
-  it("provides private-chat memory defaults", () => {
-    expect(parseRoleplayOptions({})).toMatchObject({
+  it("provides private-chat memory defaults without Agent ownership", () => {
+    const options = parseRoleplayOptions({});
+    expect(options).toMatchObject({
       projectId: "roleplay",
-      agent: "qq-rp",
-      model: null,
       defaultPersona: null,
       fallbackProject: null,
       maxSegments: 4,
@@ -25,7 +24,6 @@ describe("roleplay options", () => {
       jevMinStickerOk: 0.8,
       jevTimeoutMs: 2500,
       memoryEnabled: true,
-      memoryUtilityAgent: "qq-rp-utility",
       memoryConsolidateEveryTurns: 8,
       memoryIdleDebounceMs: 120_000,
       memoryUserMaxChars: 1200,
@@ -34,15 +32,16 @@ describe("roleplay options", () => {
       memoryRawMaxChars: 600,
       memoryMaxChars: 2400,
       memoryHistoryLimit: 20,
-      installAgent: true,
     });
+    expect(options).not.toHaveProperty("agent");
+    expect(options).not.toHaveProperty("memoryUtilityAgent");
+    expect(options).not.toHaveProperty("installAgent");
+    expect(options).not.toHaveProperty("opencodeConfigDir");
   });
 
   it("accepts overrides and clamps unsafe values", () => {
     const options = parseRoleplayOptions({
       project_id: "rp",
-      agent: "custom-rp",
-      model: "deepseek/deepseek-v4-flash",
       fallback_project: "demo",
       max_segments: 99,
       max_chars_per_segment: 10,
@@ -61,13 +60,9 @@ describe("roleplay options", () => {
       memory_idle_debounce_ms: 99_999_999,
       memory_user_max_chars: 10,
       memory_enabled: false,
-      install_agent: false,
-      opencode_config_dir: "/tmp/opencode",
     });
     expect(options).toMatchObject({
       projectId: "rp",
-      agent: "custom-rp",
-      model: "deepseek/deepseek-v4-flash",
       fallbackProject: "demo",
       maxSegments: 8,
       maxCharsPerSegment: 40,
@@ -85,8 +80,6 @@ describe("roleplay options", () => {
       memoryIdleDebounceMs: 1_800_000,
       memoryUserMaxChars: 200,
       memoryEnabled: false,
-      installAgent: false,
-      opencodeConfigDir: "/tmp/opencode",
     });
   });
 
@@ -94,12 +87,28 @@ describe("roleplay options", () => {
     expect(parseRoleplayOptions({ memory_llm: false }).memoryEnabled).toBe(false);
   });
 
+  it("ignores removed Agent, model and installer keys", () => {
+    const options = parseRoleplayOptions({
+      agent: "",
+      model: "legacy/engine-model",
+      memory_utility_agent: "legacy-utility",
+      memory_utility_model: "legacy/utility-model",
+      install_agent: false,
+      opencode_config_dir: "/tmp/opencode",
+    });
+    expect(options).not.toHaveProperty("agent");
+    expect(options).not.toHaveProperty("model");
+    expect(options).not.toHaveProperty("memoryUtilityAgent");
+    expect(options).not.toHaveProperty("memoryUtilityModel");
+    expect(options).not.toHaveProperty("installAgent");
+    expect(options).not.toHaveProperty("opencodeConfigDir");
+  });
+
   it("rejects an invalid sticker judge", () => {
     expect(() => parseRoleplayOptions({ sticker_judge: "magic" })).toThrow();
   });
 
-  it("rejects an empty project id or agent", () => {
+  it("rejects an empty project id", () => {
     expect(() => parseRoleplayOptions({ project_id: "" })).toThrow();
-    expect(() => parseRoleplayOptions({ agent: "" })).toThrow();
   });
 });

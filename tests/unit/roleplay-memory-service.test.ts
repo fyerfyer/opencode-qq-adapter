@@ -45,6 +45,8 @@ function fakeAgent() {
         }),
         sessionId: "ses_memory",
         usage: null,
+        agent: "qq-code",
+        model: "test/model",
       };
     },
   };
@@ -109,7 +111,8 @@ describe("roleplay memory service", () => {
     await ctx.service.idle();
     expect(ctx.calls).toHaveLength(1);
     expect(ctx.calls[0]?.label).toBe("roleplay.memory.consolidate");
-    expect(ctx.calls[0]?.agent).toBe("qq-rp-utility");
+    expect(ctx.calls[0]).not.toHaveProperty("agent");
+    expect(ctx.calls[0]).not.toHaveProperty("model");
 
     const userDoc = await readFile(join(ctx.root, "memory", "p", "private_1", "memory.md"), "utf8");
     expect(userDoc).toContain("称呼：鱼片");
@@ -117,6 +120,20 @@ describe("roleplay memory service", () => {
     expect(userDoc).toContain("聊了考试");
     const events = ctx.service.history({ personaId: "p", scope: "private:1" });
     expect(events[0]).toMatchObject({ action: "consolidate", summary: "记录称呼、饮食和考试" });
+    await ctx.close();
+  });
+
+  it("lets the core utility runner choose the Agent and model", async () => {
+    const ctx = await setup({
+      memory_consolidate_every_turns: 1,
+      memory_utility_agent: "legacy-utility",
+      memory_utility_model: "legacy/utility-model",
+    });
+    ctx.service.recordRun(runContext());
+    await ctx.service.idle();
+    expect(ctx.calls).toHaveLength(1);
+    expect(ctx.calls[0]).not.toHaveProperty("agent");
+    expect(ctx.calls[0]).not.toHaveProperty("model");
     await ctx.close();
   });
 

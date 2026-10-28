@@ -86,7 +86,7 @@ export interface PluginUiConfirmParams {
 }
 
 export interface PluginUiNavigateParams {
-  /** Core WebUI route, for example `/agents?name=qq-rp.md`. */
+  /** Core WebUI route, for example `/agents?name=qq-code.md`. */
   path: string;
 }
 

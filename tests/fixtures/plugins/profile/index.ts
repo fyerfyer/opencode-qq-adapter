@@ -35,9 +35,6 @@ export default definePlugin<ProfileOptions>({
         if (projectId !== "demo") return undefined;
         return {
           directory: context.config.directory,
-          agent: "qq-rp-fixture",
-          model: "fake/model-a",
-          workspace: "none",
         };
       },
       formatReply({ text }) {

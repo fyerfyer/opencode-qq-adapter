@@ -28,6 +28,9 @@ export interface ActiveRun {
   stopRequested: boolean;
   interrupted: boolean;
   agentError: string | null;
+  /** Last model reported by OpenCode step events; useful when a run fails before final text. */
+  agentName?: string | null;
+  modelRef?: string | null;
   partialText: string;
   usage: RunUsage | null;
   workspaceId: string | null;

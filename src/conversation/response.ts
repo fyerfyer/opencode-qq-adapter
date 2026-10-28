@@ -5,6 +5,8 @@ export interface CollectedResponse {
   text: string;
   error: string | null;
   usage: RunUsage | null;
+  agent: string | null;
+  model: string | null;
 }
 
 /** Extract assistant text/usage from messages created by the current prompt. */
@@ -26,7 +28,13 @@ export async function collectResponse(
   // first non-empty assistant message is the final answer.
   const assistant = relevant.filter((entry) => entry.type === "assistant");
   if (assistant.length === 0) {
-    return { text: active.partialText, error: null, usage: active.usage };
+    return {
+      text: active.partialText,
+      error: null,
+      usage: active.usage,
+      agent: null,
+      model: null,
+    };
   }
   const latest = assistant[0];
   const finalText =
@@ -39,6 +47,8 @@ export async function collectResponse(
     text: finalText,
     error,
     usage: usage ?? active.usage,
+    agent: assistant.find((entry) => entry.agent !== null)?.agent ?? latest?.agent ?? null,
+    model: assistant.find((entry) => entry.model !== null)?.model ?? latest?.model ?? null,
   };
 }
 

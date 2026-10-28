@@ -26,8 +26,6 @@ async function setup() {
     dataDir,
     options: {
       project_id: "roleplay",
-      agent: "qq-rp",
-      install_agent: false,
       personas_dir: personasDir,
       memory_exclude_recent: 0,
       memory_consolidate_every_turns: 99,

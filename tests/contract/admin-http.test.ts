@@ -525,6 +525,64 @@ describe("Admin HTTP API", () => {
     harness.agent.complete(sessionId);
   });
 
+  it("applies an agent model change to existing live sessions", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(
+      join(harness.promptRoot, "my-agent.md"),
+      "---\ndescription: Mine\n---\n\nBody\n",
+      "utf8",
+    );
+    harness.app.config.opencode.default_agent = "my-agent";
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hold" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun === null,
+      3000,
+      "run completion",
+    );
+    const sessionId = harness.app.conversations.getConversation("private:20000")?.sessionId;
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md/model", {
+      method: "PUT",
+      body: { model: "fake/model-b" },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      reload: { appliedSessions?: number; failedSessions?: number };
+    };
+    expect(body.reload).toMatchObject({ appliedSessions: 1, failedSessions: 0 });
+    expect(harness.agent.switchedModels).toEqual([{ sessionId, model: "fake/model-b" }]);
+  });
+
+  it("applies a model edited through the raw prompt editor to live sessions", async () => {
+    const harness = await startAdminApp();
+    await mkdir(harness.promptRoot, { recursive: true });
+    await writeFile(
+      join(harness.promptRoot, "my-agent.md"),
+      "---\ndescription: Mine\n---\n\nBody\n",
+      "utf8",
+    );
+    harness.app.config.opencode.default_agent = "my-agent";
+    await harness.app.conversations.submit(makeIncomingMessage({ text: "hold" }), "demo");
+    await waitFor(
+      () => harness.app.conversations.status("private:20000").activeRun === null,
+      3000,
+      "run completion",
+    );
+    const sessionId = harness.app.conversations.getConversation("private:20000")?.sessionId;
+
+    const response = await request(harness, "/admin/api/prompts/my-agent.md", {
+      method: "PUT",
+      body: { content: "---\nmodel: fake/model-b\n---\n\nBody\n" },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      reload: { appliedSessions?: number; failedSessions?: number };
+    };
+    expect(body.reload).toMatchObject({ appliedSessions: 1, failedSessions: 0 });
+    expect(harness.agent.switchedModels).toEqual([{ sessionId, model: "fake/model-b" }]);
+  });
+
   it("marks plugin-managed agents read-only until advanced override", async () => {
     const harness = await startAdminApp();
     await mkdir(harness.promptRoot, { recursive: true });

@@ -44,8 +44,6 @@ type Options = Record<string, unknown>;
  */
 const ROLEPLAY_DEFAULTS: Options = {
   project_id: "roleplay",
-  agent: "qq-rp",
-  model: null,
   personas_dir: null,
   default_persona: null,
   fallback_project: null,
@@ -70,8 +68,6 @@ const ROLEPLAY_DEFAULTS: Options = {
   jev_min_sticker_ok: 0.8,
   jev_timeout_ms: 2500,
   memory_enabled: true,
-  memory_utility_agent: "qq-rp-utility",
-  memory_utility_model: null,
   memory_utility_timeout_ms: 90000,
   memory_consolidate_every_turns: 8,
   memory_idle_debounce_ms: 120000,
@@ -83,9 +79,9 @@ const ROLEPLAY_DEFAULTS: Options = {
   memory_exclude_recent: 10,
   memory_history_limit: 20,
   memory_refresh_cooldown_ms: 60000,
-  install_agent: true,
-  opencode_config_dir: null,
 };
+
+const CORE_AGENT_LINK = "/agents?name=qq-code.md";
 
 export function SettingsTab() {
   const snapshot = useApiQuery<PluginOptionsSnapshot>("/plugins/roleplay/options");
@@ -243,8 +239,8 @@ export function SettingsTab() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" asChild>
-            <CoreLink to="/agents?name=qq-rp.md">
-              <Bot /> 引擎 Prompt
+            <CoreLink to={CORE_AGENT_LINK}>
+              <Bot /> qq-code Agent / 模型
             </CoreLink>
           </Button>
           <Button variant="outline" size="sm" asChild>
@@ -258,17 +254,7 @@ export function SettingsTab() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <HealthCard
-          label="qq-rp agent"
-          ok={summary.data?.agents.persona ?? false}
-          detail={summary.data?.paths.agents ?? "加载中…"}
-        />
-        <HealthCard
-          label="记忆整理 agent"
-          ok={summary.data?.agents.utility ?? false}
-          detail={summary.data?.paths.agents ?? "加载中…"}
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
         <HealthCard
           label="Jev"
           ok={jevState === undefined ? false : jevNeedsKey ? jevState.apiKeyConfigured : true}
@@ -521,7 +507,7 @@ export function SettingsTab() {
             <CardHeader>
               <CardTitle>记忆整理</CardTitle>
               <CardDescription>
-                后台 utility agent 使用 Markdown section 操作，不直接覆盖手动记忆。
+                后台通过核心 qq-code Agent 的临时 session 生成 Markdown section 操作，不直接覆盖手动记忆。
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -533,17 +519,6 @@ export function SettingsTab() {
                   onCheckedChange={(value) => set("memory_enabled", value)}
                 />
               </div>
-              <TextField
-                label="整理 agent"
-                value={options.memory_utility_agent}
-                onChange={(value) => set("memory_utility_agent", value)}
-              />
-              <TextField
-                label="整理模型（可选）"
-                value={options.memory_utility_model}
-                onChange={(value) => set("memory_utility_model", value)}
-                placeholder="provider/model"
-              />
               <NumberField
                 label="整理超时（ms）"
                 value={options.memory_utility_timeout_ms}
@@ -647,17 +622,7 @@ export function SettingsTab() {
                 label="Project ID"
                 value={options.project_id}
                 onChange={(value) => set("project_id", value)}
-              />
-              <TextField
-                label="Agent"
-                value={options.agent}
-                onChange={(value) => set("agent", value)}
-              />
-              <TextField
-                label="Model（可选）"
-                value={options.model}
-                onChange={(value) => set("model", value)}
-                placeholder="provider/model"
+                hint="projects.<id>.agent 必须指向核心 qq-code Agent。"
               />
               <TextField
                 label="Personas 目录"
@@ -674,19 +639,6 @@ export function SettingsTab() {
                 value={options.fallback_project}
                 onChange={(value) => set("fallback_project", value)}
               />
-              <TextField
-                label="OpenCode 配置目录（可选）"
-                value={options.opencode_config_dir}
-                onChange={(value) => set("opencode_config_dir", value)}
-              />
-              <div className="md:col-span-2 xl:col-span-3">
-                <SwitchField
-                  label="自动安装 qq-rp agent"
-                  hint="首次启动时写入 ~/.config/opencode/agents/qq-rp.md 和 qq-rp-utility.md；已有用户文件不会被覆盖。"
-                  checked={options.install_agent !== false}
-                  onCheckedChange={(value) => set("install_agent", value)}
-                />
-              </div>
             </CardContent>
           </Card>
 

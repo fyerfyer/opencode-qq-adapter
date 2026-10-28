@@ -398,15 +398,11 @@ async function doctor(configPath: string): Promise<void> {
       report(existsSync(personasDir), "personas dir exists", personasDir);
     }
     const agentDir = defaultOpenCodeConfigDir(configHome(process.env));
+    const coreAgent = config.opencode.default_agent ?? "qq-code";
     report(
-      existsSync(join(agentDir, "agents", "qq-rp.md")),
-      "qq-rp agent",
-      join(agentDir, "agents", "qq-rp.md"),
-    );
-    report(
-      existsSync(join(agentDir, "agents", "qq-rp-utility.md")),
-      "qq-rp-utility agent",
-      join(agentDir, "agents", "qq-rp-utility.md"),
+      existsSync(join(agentDir, "agents", `${coreAgent}.md`)),
+      `${coreAgent} agent`,
+      join(agentDir, "agents", `${coreAgent}.md`),
     );
     const judge = typeof options.sticker_judge === "string" ? options.sticker_judge : "jev";
     const keyName =

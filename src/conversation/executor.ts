@@ -24,17 +24,27 @@ interface ProgressState {
   closed: boolean;
 }
 
+export interface RunMetadata {
+  agent: string | null;
+  model: string | null;
+}
+
 export interface RunHooks {
   workspaces: WorkspaceManager;
   bindSession(sessionId: string, active: ActiveRun): void;
   unbindSession(sessionId: string): void;
   formatReply?(active: ActiveRun, text: string): Promise<ResolvedReplyPlan | null>;
   onStarted?(active: ActiveRun): void;
+  onSession?(
+    active: ActiveRun,
+    session: { id: string; agent: string | null; model: string | null },
+  ): void;
   onFinished?(
     active: ActiveRun,
     status: RunStatus,
     usage: RunUsage | null,
     error: string | null,
+    metadata?: RunMetadata,
   ): void;
   onRunFailed?(active: ActiveRun, error: string): void;
 }
@@ -78,6 +88,8 @@ export class RunExecutor {
     };
     let timeoutController: AbortController | null = null;
     let lease: WorkspaceLease | null = null;
+    let sessionAgent: string | null = null;
+    let sessionModel: string | null = null;
     const progress = this.#startProgress(message);
     this.#store.runs.setStatus(record.id, "running");
     this.#hooks.onStarted?.(active);
@@ -119,9 +131,28 @@ export class RunExecutor {
       const ensured = await this.#ensureSession(conversation, directory, message, active);
       const session = ensured.session;
       const updated = ensured.conversation;
+      sessionAgent = session.agent ?? active.agentName ?? null;
+      sessionModel = session.model ?? active.modelRef ?? null;
       record.sessionId = session.id;
       this.#store.runs.setSession(record.id, session.id);
       this.#hooks.bindSession(session.id, active);
+      this.#hooks.onSession?.(active, {
+        id: session.id,
+        agent: sessionAgent,
+        model: sessionModel,
+      });
+      this.#logger.info(
+        {
+          runId: record.id,
+          chatKey,
+          projectId: record.projectId,
+          sessionId: session.id,
+          directory,
+          agent: session.agent,
+          model: session.model,
+        },
+        "Run session ready",
+      );
 
       if (active.permissions.length > 0) {
         await this.#agent.updatePermissions(session.id, active.permissions);
@@ -148,12 +179,18 @@ export class RunExecutor {
           directory,
           message,
           active.permissions,
-          active.profile,
         );
         this.#hooks.unbindSession(session.id);
         record.sessionId = recreated.id;
+        sessionAgent = recreated.agent ?? active.agentName ?? null;
+        sessionModel = recreated.model ?? active.modelRef ?? null;
         this.#store.runs.setSession(record.id, recreated.id);
         this.#hooks.bindSession(recreated.id, active);
+        this.#hooks.onSession?.(active, {
+          id: recreated.id,
+          agent: sessionAgent,
+          model: sessionModel,
+        });
         receipt = await this.#agent.prompt({
           sessionId: recreated.id,
           text: message.text,
@@ -232,19 +269,35 @@ export class RunExecutor {
         await this.#sender.reply(message.chat, message.id, finalText);
       }
       const usage = result.usage ?? active.usage;
+      const metadata = {
+        agent: result.agent ?? sessionAgent ?? active.agentName ?? null,
+        model: result.model ?? sessionModel ?? active.modelRef ?? null,
+      };
       this.#finish(record.id, "completed", {
         usageJson: usage ? JSON.stringify(usage) : undefined,
       });
-      this.#hooks.onFinished?.(active, "completed", usage, null);
-      this.#store.conversations.setSession(chatKey, record.sessionId, session.agent, session.model);
+      this.#hooks.onFinished?.(active, "completed", usage, null, metadata);
+      // `conversation.model` is an explicit user override only. OpenCode may
+      // report the derived agent/model on the session, so re-read the stored
+      // preference instead of persisting the effective session model.
+      const stored = this.#store.conversations.get(chatKey);
+      this.#store.conversations.setSession(
+        chatKey,
+        record.sessionId,
+        session.agent,
+        stored?.model ?? null,
+      );
       this.#logger.info(
         {
           runId: record.id,
           chatKey,
+          projectId: record.projectId,
           sessionId: record.sessionId,
+          agent: metadata.agent,
+          model: metadata.model,
           durationMs: Date.now() - started,
           phases,
-          cost: usage?.cost,
+          usage,
         },
         "Run completed",
       );
@@ -255,16 +308,43 @@ export class RunExecutor {
         error instanceof WorkspaceLockAbortedError
       ) {
         this.#finish(record.id, "interrupted", { stopReason: "user" });
-        this.#hooks.onFinished?.(active, "interrupted", active.usage, null);
-        this.#logger.info({ runId: record.id, chatKey }, "Run interrupted by user");
+        this.#hooks.onFinished?.(active, "interrupted", active.usage, null, {
+          agent: sessionAgent ?? active.agentName ?? null,
+          model: sessionModel ?? active.modelRef ?? null,
+        });
+        this.#logger.info(
+          {
+            runId: record.id,
+            chatKey,
+            projectId: record.projectId,
+            sessionId: record.sessionId,
+            agent: sessionAgent ?? active.agentName ?? null,
+            model: sessionModel ?? active.modelRef ?? null,
+            durationMs: Date.now() - started,
+          },
+          "Run interrupted by user",
+        );
         return;
       }
       const friendly = friendlyError(error);
       this.#finish(record.id, "failed", { error: friendly });
-      this.#hooks.onFinished?.(active, "failed", active.usage, friendly);
+      this.#hooks.onFinished?.(active, "failed", active.usage, friendly, {
+        agent: sessionAgent ?? active.agentName ?? null,
+        model: sessionModel ?? active.modelRef ?? null,
+      });
       this.#hooks.onRunFailed?.(active, friendly);
       this.#logger.error(
-        { err: error, runId: record.id, chatKey, phases, durationMs: Date.now() - started },
+        {
+          err: error,
+          runId: record.id,
+          chatKey,
+          projectId: record.projectId,
+          sessionId: record.sessionId,
+          agent: sessionAgent ?? active.agentName ?? null,
+          model: sessionModel ?? active.modelRef ?? null,
+          phases,
+          durationMs: Date.now() - started,
+        },
         "Run failed",
       );
       try {
@@ -471,13 +551,7 @@ export class RunExecutor {
         );
       }
     }
-    const session = await this.#createSession(
-      conversation,
-      directory,
-      message,
-      active.permissions,
-      active.profile,
-    );
+    const session = await this.#createSession(conversation, directory, message, active.permissions);
     return { session, conversation: { ...conversation, sessionId: session.id } };
   }
 
@@ -486,15 +560,21 @@ export class RunExecutor {
     directory: string,
     message: IncomingMessage,
     permissions: PermissionRuleset,
-    profile: ActiveRun["profile"],
   ): Promise<Awaited<ReturnType<AgentPort["createSession"]>>> {
     const project = this.#config.projects[conversation.projectId];
     if (project === undefined) {
       throw new Error(`Project '${conversation.projectId}' no longer exists`);
     }
     const resolved = projectModels(this.#config, project);
-    const agent = profile?.agent ?? conversation.agent ?? resolved.agent;
-    const model = profile?.model ?? conversation.model ?? resolved.model;
+    const agent = conversation.agent ?? resolved.agent;
+    const explicitModel = conversation.model;
+    let model = explicitModel;
+    if (model === null) {
+      // Agent frontmatter wins over project/global defaults. When the agent
+      // declares a model, omit the explicit model so OpenCode applies it.
+      const agentModel = await this.#agentModel(agent, directory);
+      model = agentModel === null ? resolved.model : null;
+    }
     const session = await this.#agent.createSession({
       directory,
       title: `${conversation.projectId} · QQ ${message.userId}`,
@@ -502,8 +582,22 @@ export class RunExecutor {
       model,
       ...(permissions.length > 0 ? { permissions } : {}),
     });
-    this.#store.conversations.setSession(conversation.chatKey, session.id, agent, model);
+    this.#store.conversations.setSession(conversation.chatKey, session.id, agent, explicitModel);
     return session;
+  }
+
+  async #agentModel(agentId: string | null, directory: string): Promise<string | null> {
+    if (agentId === null) return null;
+    try {
+      const agents = await this.#agent.listAgents(directory);
+      return agents.find((entry) => entry.id === agentId)?.model ?? null;
+    } catch (error) {
+      this.#logger.warn(
+        { err: error, agent: agentId, directory },
+        "Failed to read OpenCode agents; falling back to configured model",
+      );
+      return null;
+    }
   }
 
   #finish(

@@ -59,6 +59,8 @@ export interface AgentMessage {
   created: number;
   error: string | null;
   cost: number | null;
+  agent: string | null;
+  model: string | null;
   tokens: {
     input: number;
     output: number;
