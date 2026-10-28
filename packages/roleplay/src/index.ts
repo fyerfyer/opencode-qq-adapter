@@ -22,6 +22,7 @@ import { parseRoleplayOptions, type RoleplayOptions } from "./options.js";
 import { JevEmotionJudge } from "./jev.js";
 import { getPersona, importCard, listPersonas, type PersonaRecord } from "./persona.js";
 import {
+  captionHint,
   chooseSticker,
   extractEmotionTag,
   listEmotions,
@@ -906,10 +907,18 @@ export default definePlugin<RoleplayOptions>({
                 jev !== null &&
                 (options.stickerJudge === "jev" || options.stickerJudge === "hybrid")
               ) {
+                const emotionHints: Record<string, string> = {};
+                for (const name of emotions) {
+                  const hint = captionHint(catalog, name);
+                  if (hint !== null) emotionHints[name] = hint;
+                }
                 const decision = await jev.judge({
                   userText: reply.message.text,
                   replyText: tag.text,
                   emotions,
+                  personaName: active.persona.name,
+                  hintEmotion: tagEmotion,
+                  emotionHints,
                 });
                 context.logger.debug(
                   {

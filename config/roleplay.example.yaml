@@ -69,7 +69,7 @@ plugins:
       # or _global/<emotion>/. Max one sticker per reply.
       sticker_enabled: true
       sticker_delay_ms: 600
-      sticker_cooldown_ms: 30000
+      sticker_cooldown_ms: 10000
       # tag | jev | hybrid | off. `jev` sends the current user message and
       # character reply to a Jev decision endpoint, then thresholds on
       # confidence + sticker_ok. `hybrid` tries a model tag first.
@@ -85,7 +85,7 @@ plugins:
       # Secret is read from the environment, never from YAML.
       jev_api_key_env: TYPESAFE_API_KEY
       jev_min_confidence: 0.45
-      jev_min_sticker_ok: 0.8
+      jev_min_sticker_ok: 0.6
       jev_timeout_ms: 2800
 
       # Long-term memory lives in Markdown documents under

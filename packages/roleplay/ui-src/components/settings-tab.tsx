@@ -156,29 +156,13 @@ export function SettingsTab() {
         latencyMs: number;
         apiKeyEnv: string;
         apiKeySource?: "form" | "env";
+        emotionCount?: number;
       }>("/plugins/roleplay/test/jev", {
         userText: "你好呀，今天过得怎么样？",
         replyText: "还不错，刚刚忙完一点事情。",
-        emotions: [
-          "happy",
-          "shy",
-          "sad",
-          "angry",
-          "surprised",
-          "sleepy",
-          "smug",
-          "thinking",
-          "hungry",
-          "slacking",
-          "tsundere",
-          "love",
-          "greeting",
-          "working",
-          "panic",
-          "excited",
-          "bored",
-          "tired",
-        ],
+        // Omit emotions: the server tests against the persona's installed set,
+        // which is the same payload shape production judgments use.
+        emotions: [],
         ...(jevApiKey.trim().length > 0 ? { apiKey: jevApiKey.trim() } : {}),
         ...(String(options.jev_base_url ?? "").trim().length > 0
           ? { baseUrl: String(options.jev_base_url).trim() }
@@ -197,7 +181,7 @@ export function SettingsTab() {
         decision.apiKeySource === "form"
           ? "当前表单密钥（尚未保存）"
           : `已保存密钥 ${decision.apiKeyEnv}`;
-      const message = `连接正常 · ${decision.latencyMs}ms · ${decision.emotion ?? "none"} ${decision.confidence.toFixed(2)} · ${keySource}`;
+      const message = `连接正常 · ${decision.latencyMs}ms · ${decision.emotion ?? "none"} ${decision.confidence.toFixed(2)} · ${keySource}${typeof decision.emotionCount === "number" ? ` · ${decision.emotionCount} 情绪` : ""}`;
       setJevTest({ ok: true, message });
       toast.success(
         decision.apiKeySource === "form"

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -327,6 +327,103 @@ describe("roleplay admin API", () => {
       apiKeyEnv: "TYPESAFE_API_KEY",
     });
     expect(typeof result.latencyMs).toBe("number");
+  });
+
+  it("falls back to the persona's installed emotions when the request omits them", async () => {
+    process.env.TYPESAFE_API_KEY = "jev-test-key";
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          answers: {
+            emotion: { choice: "happy", confidence: 0.9, probabilities: { happy: 0.9 } },
+            sticker_ok: { noul: 0.85 },
+          },
+          usage: { input_tokens: 10, output_tokens: 0, cost: 0 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { harness, dataDir } = await setup();
+    for (const emotion of ["happy", "shy", "clingy"]) {
+      const dir = join(dataDir, "stickers", "blue-fat-fish", emotion);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${emotion}-01.gif`), "GIF89a");
+    }
+    const result = asObject(
+      await harness.dispatchAdmin("POST", "/test/jev", {
+        body: { userText: "你好", replyText: "贴贴。", emotions: [], persona: "blue-fat-fish" },
+      }),
+    );
+    expect(result).toMatchObject({ emotion: "happy", emotionCount: 3 });
+    const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1]?.body) ?? "{}")) as {
+      questions: { emotion: { criteria: Record<string, string> } };
+    };
+    expect(Object.keys(payload.questions.emotion.criteria).sort()).toEqual([
+      "clingy",
+      "happy",
+      "none",
+      "shy",
+    ]);
+  });
+
+  it("tests unsaved Jev overrides without requiring an env key", async () => {
+    delete process.env.TYPESAFE_API_KEY;
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          answers: {
+            emotion: { choice: "happy", confidence: 0.9, probabilities: { happy: 0.9 } },
+            sticker_ok: { noul: 0.8 },
+          },
+          usage: { input_tokens: 10, output_tokens: 0, cost: 0 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { harness } = await setup();
+    const result = asObject(
+      await harness.dispatchAdmin("POST", "/test/jev", {
+        body: {
+          userText: "你好",
+          replyText: "今天心情很好。",
+          emotions: ["happy"],
+          apiKey: "  form-key  ",
+          baseUrl: "https://origin.modelflare.dev/v1/",
+          endpoint: "/decisions/",
+          model: "jev-1.13.0",
+          timeoutMs: 1200,
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      emotion: "happy",
+      confidence: 0.9,
+      stickerOk: 0.8,
+      apiKeyEnv: "TYPESAFE_API_KEY",
+      apiKeySource: "form",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(call[0]).toBe("https://origin.modelflare.dev/v1/decisions");
+    const headers = call[1].headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer form-key");
+    const payload = JSON.parse(String(call[1].body)) as { model: string };
+    expect(payload.model).toBe("jev-1.13.0");
+  });
+
+  it("explains how to configure Jev when neither the request nor env has a key", async () => {
+    delete process.env.TYPESAFE_API_KEY;
+    const { harness } = await setup();
+    const response = await harness.dispatchAdmin("POST", "/test/jev", {
+      body: { userText: "你好", replyText: "你好。", emotions: ["happy"] },
+    });
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(503);
+    await expect((response as Response).json()).resolves.toMatchObject({
+      error: "jev_not_configured",
+    });
   });
 
   it("rejects path traversal in persona and sticker paths", async () => {

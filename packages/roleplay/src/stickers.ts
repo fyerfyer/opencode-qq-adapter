@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
 const EMOTION_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -8,6 +8,8 @@ const TAG_PATTERN = /\[emotion:\s*([^\]]{1,40})\s*\]/gi;
 export interface StickerCatalog {
   /** emotion -> paths relative to the plugin data directory. */
   emotions: Map<string, string[]>;
+  /** relative sticker path -> human caption, from an optional stickers.json manifest. */
+  captions: Map<string, string>;
 }
 
 export interface EmotionTagResult {
@@ -39,6 +41,10 @@ export function extractEmotionTag(input: string): EmotionTagResult {
  * Scan `dataDir/stickers/<persona>/<emotion>/` and the shared
  * `dataDir/stickers/_global/<emotion>/` fallback. Persona assets win for the
  * same emotion, so one character can override the global set.
+ *
+ * Each root may carry a `stickers.json` manifest (`{ stickers: [{ file,
+ * caption, archived? }] }`); captions feed the sticker judge so its criteria
+ * describe the actual installed assets instead of generic emotion names.
  */
 export async function loadStickerCatalog(
   root: string,
@@ -50,7 +56,54 @@ export async function loadStickerCatalog(
   for (const [emotion, files] of persona) {
     emotions.set(emotion, files);
   }
-  return { emotions };
+  const captions = new Map<string, string>();
+  for (const manifest of await Promise.all([
+    readManifestCaptions(join(root, "_global", "stickers.json")),
+    readManifestCaptions(join(root, personaId, "stickers.json")),
+  ])) {
+    for (const [path, caption] of manifest) captions.set(path, caption);
+  }
+  return { emotions, captions };
+}
+
+/** Join the captions of one emotion's stickers for judge criteria. */
+export function captionHint(
+  catalog: StickerCatalog,
+  emotion: string,
+  maxChars = 120,
+): string | null {
+  const files = catalog.emotions.get(emotion);
+  if (files === undefined) return null;
+  const parts: string[] = [];
+  let used = 0;
+  for (const file of files) {
+    const caption = catalog.captions.get(file)?.trim();
+    if (caption === undefined || caption.length === 0) continue;
+    if (used > 0 && used + caption.length + 1 > maxChars) break;
+    parts.push(caption);
+    used += caption.length + 1;
+  }
+  return parts.length > 0 ? parts.join("、") : null;
+}
+
+async function readManifestCaptions(path: string): Promise<Map<string, string>> {
+  const captions = new Map<string, string>();
+  try {
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as { stickers?: unknown };
+    if (!Array.isArray(parsed.stickers)) return captions;
+    for (const entry of parsed.stickers) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const record = entry as { file?: unknown; caption?: unknown; archived?: unknown };
+      if (record.archived === true) continue;
+      if (typeof record.file !== "string" || typeof record.caption !== "string") continue;
+      const caption = record.caption.trim();
+      if (caption.length > 0) captions.set(record.file.trim(), caption);
+    }
+  } catch {
+    // Manifest is optional; missing or malformed files just mean no captions.
+  }
+  return captions;
 }
 
 export function listEmotions(catalog: StickerCatalog): string[] {

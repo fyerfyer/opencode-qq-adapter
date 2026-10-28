@@ -414,9 +414,24 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
     const timeoutMs = jevTimeoutOverride(body.timeoutMs, deps.options.jevTimeoutMs);
     const userText = typeof body.userText === "string" ? body.userText : "";
     const replyText = typeof body.replyText === "string" ? body.replyText : "";
-    const emotions = Array.isArray(body.emotions)
+    let emotions = Array.isArray(body.emotions)
       ? body.emotions.filter((item): item is string => typeof item === "string")
       : [];
+    if (emotions.length === 0) {
+      const personaId =
+        jevTextOverride(body.persona, "角色 ID", 100) ?? deps.options.defaultPersona;
+      if (personaId !== null && PERSONA_ID.test(personaId)) {
+        const persona = await getPersona(deps.personasDir, personaId).catch(() => null);
+        if (persona !== null) {
+          let catalog = deps.stickerCache.get(persona.id);
+          if (catalog === undefined) {
+            catalog = await loadStickerCatalog(deps.stickerRoot, persona.id);
+            deps.stickerCache.set(persona.id, catalog);
+          }
+          emotions = listEmotions(catalog);
+        }
+      }
+    }
     const judge = new JevEmotionJudge({
       baseUrl,
       endpoint,
@@ -434,6 +449,7 @@ export function registerRoleplayAdmin(admin: PluginAdmin, deps: RoleplayAdminDep
       baseUrl,
       endpoint,
       model,
+      emotionCount: emotions.length,
     };
   });
 

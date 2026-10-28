@@ -15,6 +15,12 @@ export interface JevEmotionJudgeInput {
   replyText: string;
   /** Emotion ids that actually have sticker assets. */
   emotions: string[];
+  /** Persona display name; helps the judge know whose sticker this is. */
+  personaName?: string;
+  /** Emotion the reply model already suggested via [emotion:x], if any. */
+  hintEmotion?: string | null;
+  /** emotion id -> captions of the installed stickers for that emotion. */
+  emotionHints?: Record<string, string>;
 }
 
 export interface JevEmotionJudgeResult {
@@ -40,31 +46,46 @@ export class JevError extends Error {
 }
 
 const EMOTION_DESCRIPTIONS: Record<string, string> = {
-  happy: "开心、高兴、兴奋、被夸、庆祝",
-  shy: "害羞、脸红、被夸得不好意思、撒娇",
+  happy: "开心、高兴、被夸、点头赞同、尾巴乱摇",
+  celebrate: "庆祝、撒花、干杯、生日、唱歌跳舞、表演",
+  shy: "害羞、脸红、被夸得不好意思、被摸头",
+  clingy: "撒娇、贴贴、蹭人、求关注、亲昵",
   sad: "难过、委屈、被骂、失落、需要安慰",
-  angry: "生气、不满、替对方打抱不平",
-  surprised: "惊讶、意外、没想到",
-  sleepy: "困、晚安、疲惫",
-  smug: "得意、骄傲、调侃",
-  thinking: "思考、认真、犹豫",
-  hungry: "饿、想吃白饭或 token、馋、等开饭",
-  slacking: "摸鱼、偷懒、摆烂、打游戏、上班摸鱼",
-  tsundere: "傲娇、嘴硬、口是心非、被戳穿后不承认",
-  love: "喜欢、心动、示爱、撒娇、被击中",
-  greeting: "打招呼、问候、来了、点头、摇铃",
-  working: "工作、干活、打字、整理、认真办事",
-  panic: "慌张、害怕、紧张、流汗、过载",
-  excited: "期待、兴奋、庆祝、干杯、冒泡",
-  bored: "无聊、发呆、闲置、摆烂、坐牢",
-  tired: "累、困倦、疲倦、倒地、头晕、过载",
+  angry: "生气、炸毛、不满、替对方打抱不平",
+  awkward: "尴尬、流汗、自嘲、紧张、不好意思",
+  surprised: "惊讶、意外、没想到、疑问",
+  sleepy: "困、晚安、想睡觉",
+  smug: "得意、骄傲、墨镜、满分、准备搞事",
+  thinking: "思考、认真、犹豫、灵光一闪",
+  hungry: "饿、想吃白饭或 token、馋、干饭、看戏吃瓜",
+  rest: "休息、喝茶、喝饮料、歇一会儿、续命",
+  loading: "加载中、思考中、请稍等",
+  slacking: "摸鱼、偷懒、摆烂、打游戏、上班像坐牢",
+  tsundere: "傲娇、嘴硬、口是心非、被戳穿后不承认、吐舌",
+  love: "喜欢、心动、示爱、被击中、爱心",
+  greeting: "打招呼、问候、来了、叫人",
+  working: "工作、干活、打字、整理、修bug、认真办事",
+  cheer: "加油、打气、应援、鼓励对方",
+  money: "钱、红包、刷卡、买单、涨价或便宜梗",
+  panic: "慌张、害怕、吓一跳",
+  excited: "期待、兴奋、想要、冒泡",
+  bored: "无聊、发呆、闲置、吹风扇",
+  tired: "累、疲倦、倒地、头晕、过载",
 };
 
 /** Build Choice criteria for the installed sticker set. */
-export function emotionCriteria(emotions: string[]): Record<string, string> {
+export function emotionCriteria(
+  emotions: string[],
+  hints?: Record<string, string>,
+): Record<string, string> {
   const criteria: Record<string, string> = {};
   for (const emotion of emotions) {
-    criteria[emotion] = EMOTION_DESCRIPTIONS[emotion] ?? emotion;
+    const base = EMOTION_DESCRIPTIONS[emotion] ?? emotion;
+    const hint = hints?.[emotion]?.trim();
+    criteria[emotion] =
+      hint !== undefined && hint.length > 0 && hint !== base
+        ? `${base}（素材：${hint}）`
+        : base;
   }
   criteria.none = "没有明显情绪，或此刻不适合发表情";
   return criteria;
@@ -102,19 +123,30 @@ export class JevEmotionJudge {
       };
     }
 
+    const hintEmotion =
+      input.hintEmotion !== null &&
+      input.hintEmotion !== undefined &&
+      input.emotions.includes(input.hintEmotion)
+        ? input.hintEmotion
+        : null;
+    const persona = input.personaName?.trim();
     const payload = {
       model: this.#model,
       state: {
-        scene: "QQ 角色扮演聊天",
+        scene:
+          persona !== undefined && persona.length > 0
+            ? `QQ 角色扮演聊天，助手正在扮演「${persona.slice(0, 40)}」，将以该角色的人设表情包回复`
+            : "QQ 角色扮演聊天",
         user: input.userText.slice(0, 4000),
         assistant: input.replyText.slice(0, 4000),
+        ...(hintEmotion !== null ? { assistant_emotion_suggestion: hintEmotion } : {}),
       },
       questions: {
         emotion: {
           type: "choice",
           instructions:
-            "Which emotion should the character's sticker express in this exchange? Focus on the emotional tone of the user message and the character reply. Choose none if a sticker would feel unnatural.",
-          criteria: emotionCriteria(input.emotions),
+            "Which emotion should the character's sticker express in this exchange? Focus on the emotional tone of the user message and the character reply. The assistant_emotion_suggestion field, when present, is the reply model's own guess — confirm or override it. Choose none if a sticker would feel unnatural.",
+          criteria: emotionCriteria(input.emotions, input.emotionHints),
         },
         sticker_ok: {
           type: "noul",

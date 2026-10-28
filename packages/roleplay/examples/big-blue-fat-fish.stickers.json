@@ -1,48 +1,572 @@
 {
   "persona": "big-blue-fat-fish",
-  "count": 54,
   "stickers": [
     {
-      "emotion": "happy",
-      "file": "stickers/big-blue-fat-fish/happy/happy-01.gif",
-      "source": "gifs/deepseek娘_点赞_2026-09-28-22-33-02.gif",
-      "caption": "点赞/认可，开心",
-      "bytes": 3027033
+      "emotion": "angry",
+      "file": "stickers/big-blue-fat-fish/angry/angry-01.gif",
+      "source": "gifs/deepseek娘_工作(生气)_2026-09-28-22-34-51.gif",
+      "caption": "被催工作/气鼓鼓",
+      "bytes": 4924980
     },
     {
-      "emotion": "happy",
-      "file": "stickers/big-blue-fat-fish/happy/happy-02.gif",
+      "emotion": "angry",
+      "file": "stickers/big-blue-fat-fish/angry/angry-02.gif",
+      "source": "gifs/deepseek娘_打字(生气)_2026-09-28-22-33-35.gif",
+      "caption": "生气打字",
+      "bytes": 796005
+    },
+    {
+      "emotion": "angry",
+      "file": "stickers/big-blue-fat-fish/angry/angry-03.gif",
+      "source": "gifs/deepseek娘_拍蝇_2026-09-28-22-30-59.gif",
+      "caption": "拍苍蝇/烦（对事不对人）",
+      "bytes": 1648803
+    },
+    {
+      "emotion": "angry",
+      "file": "stickers/big-blue-fat-fish/angry/angry-04.gif",
+      "source": "gifs/deepseek娘_生气_2026-09-28-22-11-00.gif",
+      "caption": "生气/炸毛",
+      "bytes": 5724376
+    },
+    {
+      "emotion": "awkward",
+      "file": "stickers/big-blue-fat-fish/awkward/awkward-01.gif",
+      "source": "gifs/deepseek娘_小丑 1_2026-09-28-22-15-14.gif",
+      "caption": "小丑竟是我自己/自嘲",
+      "bytes": 4820101
+    },
+    {
+      "emotion": "awkward",
+      "file": "stickers/big-blue-fat-fish/awkward/awkward-02.gif",
+      "source": "gifs/deepseek娘_小丑 2_2026-09-28-22-15-22.gif",
+      "caption": "小丑/尴尬自嘲",
+      "bytes": 4444718
+    },
+    {
+      "emotion": "awkward",
+      "file": "stickers/big-blue-fat-fish/awkward/awkward-03.gif",
+      "source": "gifs/deepseek娘_汗_2026-09-28-22-31-05.gif",
+      "caption": "流汗/尴尬",
+      "bytes": 4064641
+    },
+    {
+      "emotion": "awkward",
+      "file": "stickers/big-blue-fat-fish/awkward/awkward-04.gif",
+      "source": "gifs/deepseek娘_紧张 2_2026-09-28-22-24-11.gif",
+      "caption": "紧张/不安",
+      "bytes": 3564728
+    },
+    {
+      "emotion": "bored",
+      "file": "stickers/big-blue-fat-fish/bored/bored-01.gif",
+      "source": "gifs/deepseek娘_PNGTuber 闲置_2026-09-28-22-25-20.gif",
+      "caption": "闲置/发呆",
+      "bytes": 3062427
+    },
+    {
+      "emotion": "bored",
+      "file": "stickers/big-blue-fat-fish/bored/bored-02.gif",
+      "source": "gifs/deepseek娘_TrashTuber 闲置_2026-09-28-22-33-13.gif",
+      "caption": "垃圾桶里闲置/摆烂发呆",
+      "bytes": 2689682
+    },
+    {
+      "emotion": "bored",
+      "file": "stickers/big-blue-fat-fish/bored/bored-03.gif",
+      "source": "gifs/deepseek娘_呆 1_2026-09-28-22-18-22.gif",
+      "caption": "呆/空白",
+      "bytes": 2981773
+    },
+    {
+      "emotion": "bored",
+      "file": "stickers/big-blue-fat-fish/bored/bored-04.gif",
+      "source": "gifs/deepseek娘_垃圾桶_2026-09-28-22-33-05.gif",
+      "caption": "垃圾桶/摆烂",
+      "bytes": 551833
+    },
+    {
+      "emotion": "bored",
+      "file": "stickers/big-blue-fat-fish/bored/bored-05.gif",
+      "source": "gifs/deepseek娘_电风扇 1_2026-09-28-22-18-51.gif",
+      "caption": "吹风扇/发呆乘凉",
+      "bytes": 2573614
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-01.gif",
+      "source": "gifs/deepseek娘_吉他_2026-09-28-22-20-13.gif",
+      "caption": "弹吉他/表演",
+      "bytes": 3869238
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-02.gif",
+      "source": "gifs/deepseek娘_唱歌_2026-09-28-22-27-45.gif",
+      "caption": "唱歌/嗨",
+      "bytes": 3329986
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-03.gif",
+      "source": "gifs/deepseek娘_干杯_2026-09-28-22-15-02.gif",
+      "caption": "干杯/庆祝",
+      "bytes": 3746411
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-04.gif",
       "source": "gifs/deepseek娘_庆祝_2026-09-28-22-14-47.gif",
-      "caption": "庆祝/成功，开心",
+      "caption": "庆祝/撒花",
       "bytes": 3742450
     },
     {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-05.gif",
+      "source": "gifs/deepseek娘_礼物 1_2026-09-28-22-19-35.gif",
+      "caption": "礼物/送礼",
+      "bytes": 5041533
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-06.gif",
+      "source": "gifs/deepseek娘_礼物 2_2026-09-28-22-19-41.gif",
+      "caption": "礼物/收礼",
+      "bytes": 3610980
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-07.gif",
+      "source": "gifs/deepseek娘_舞蹈(散味)_2026-09-28-22-16-38.gif",
+      "caption": "跳舞/散味",
+      "bytes": 4144723
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-08.gif",
+      "source": "gifs/deepseek娘_蛋糕_2026-09-28-22-13-30.gif",
+      "caption": "蛋糕/生日庆祝",
+      "bytes": 4220556
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-09.gif",
+      "source": "gifs/deepseek娘_跳舞 1_2026-09-28-22-16-28.gif",
+      "caption": "跳舞/嗨",
+      "bytes": 6275778
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-10.gif",
+      "source": "gifs/deepseek娘_音乐 1_2026-09-28-22-23-23.gif",
+      "caption": "听音乐/摇摆",
+      "bytes": 4284233
+    },
+    {
+      "emotion": "celebrate",
+      "file": "stickers/big-blue-fat-fish/celebrate/celebrate-11.gif",
+      "source": "gifs/deepseek娘_音乐 3_2026-09-28-22-23-29.gif",
+      "caption": "听音乐/自嗨",
+      "bytes": 1702029
+    },
+    {
+      "emotion": "cheer",
+      "file": "stickers/big-blue-fat-fish/cheer/cheer-01.gif",
+      "source": "gifs/deepseek娘_加油_2026-09-28-22-14-55.gif",
+      "caption": "加油/打气",
+      "bytes": 2619951
+    },
+    {
+      "emotion": "cheer",
+      "file": "stickers/big-blue-fat-fish/cheer/cheer-02.gif",
+      "source": "gifs/deepseek娘_荧光棒 1_2026-09-28-22-21-35.gif",
+      "caption": "挥荧光棒/打call",
+      "bytes": 3030031
+    },
+    {
+      "emotion": "cheer",
+      "file": "stickers/big-blue-fat-fish/cheer/cheer-03.gif",
+      "source": "gifs/deepseek娘_荧光棒 2_2026-09-28-22-21-41.gif",
+      "caption": "挥荧光棒/应援",
+      "bytes": 3039268
+    },
+    {
+      "emotion": "clingy",
+      "file": "stickers/big-blue-fat-fish/clingy/clingy-01.gif",
+      "source": "gifs/deepseek娘_枕头(蹭)_2026-09-28-22-25-03.gif",
+      "caption": "蹭枕头/撒娇",
+      "bytes": 1591774
+    },
+    {
+      "emotion": "clingy",
+      "file": "stickers/big-blue-fat-fish/clingy/clingy-02.gif",
+      "source": "gifs/deepseek娘_枕头(蹭2)_2026-09-28-22-25-10.gif",
+      "caption": "蹭枕头/贴贴",
+      "bytes": 1603876
+    },
+    {
+      "emotion": "clingy",
+      "file": "stickers/big-blue-fat-fish/clingy/clingy-03.gif",
+      "source": "gifs/deepseek娘_碰鼻子_2026-09-28-22-13-02.gif",
+      "caption": "碰鼻子/亲昵",
+      "bytes": 6965743
+    },
+    {
+      "emotion": "clingy",
+      "file": "stickers/big-blue-fat-fish/clingy/clingy-04.gif",
+      "source": "gifs/deepseek娘_被击中(爱心)_2026-09-28-22-19-27.gif",
+      "caption": "被爱心击中/心动",
+      "bytes": 2527855
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-01.gif",
+      "source": "gifs/deepseek娘_冒泡 1_2026-09-28-22-22-26.gif",
+      "caption": "冒泡/兴奋",
+      "bytes": 2948970
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-02.gif",
+      "source": "gifs/deepseek娘_冒泡 2_2026-09-28-22-22-34.gif",
+      "caption": "冒泡/激动",
+      "bytes": 6142751
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-03.gif",
+      "source": "gifs/deepseek娘_期待 1_2026-09-28-22-29-18.gif",
+      "caption": "期待/想要",
+      "bytes": 7874690
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-04.gif",
+      "source": "gifs/deepseek娘_期待 2_2026-09-28-22-29-25.gif",
+      "caption": "期待/搓手",
+      "bytes": 3784517
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-05.gif",
+      "source": "gifs/deepseek娘_期待 3_2026-09-28-22-29-37.gif",
+      "caption": "期待/星星眼",
+      "bytes": 5597150
+    },
+    {
+      "emotion": "excited",
+      "file": "stickers/big-blue-fat-fish/excited/excited-06.gif",
+      "source": "gifs/deepseek娘_魔法_2026-09-28-22-23-03.gif",
+      "caption": "施魔法/看本鲸的",
+      "bytes": 1942746
+    },
+    {
+      "emotion": "greeting",
+      "file": "stickers/big-blue-fat-fish/greeting/greeting-01.gif",
+      "source": "gifs/deepseek娘_到达_2026-09-28-22-11-43.gif",
+      "caption": "到达/我来了",
+      "bytes": 5468700
+    },
+    {
+      "emotion": "greeting",
+      "file": "stickers/big-blue-fat-fish/greeting/greeting-02.gif",
+      "source": "gifs/deepseek娘_打招呼 1_2026-09-28-22-19-55.gif",
+      "caption": "打招呼/来了",
+      "bytes": 7385554
+    },
+    {
+      "emotion": "greeting",
+      "file": "stickers/big-blue-fat-fish/greeting/greeting-03.gif",
+      "source": "gifs/deepseek娘_打招呼 2_2026-09-28-22-20-05.gif",
+      "caption": "打招呼/挥手",
+      "bytes": 6113761
+    },
+    {
+      "emotion": "greeting",
+      "file": "stickers/big-blue-fat-fish/greeting/greeting-04.gif",
+      "source": "gifs/deepseek娘_摇铃_2026-09-28-22-12-17.gif",
+      "caption": "摇铃/叫人",
+      "bytes": 1526221
+    },
+    {
       "emotion": "happy",
-      "file": "stickers/big-blue-fat-fish/happy/happy-03.gif",
+      "file": "stickers/big-blue-fat-fish/happy/happy-01.gif",
       "source": "gifs/deepseek娘_一切都好 1_2026-09-28-22-32-32.gif",
       "caption": "一切都好/安心",
       "bytes": 4517305
     },
     {
-      "emotion": "shy",
-      "file": "stickers/big-blue-fat-fish/shy/shy-01.gif",
-      "source": "gifs/deepseek娘_害羞 1_2026-09-28-22-27-25.gif",
-      "caption": "害羞/脸红",
-      "bytes": 3019204
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-02.gif",
+      "source": "gifs/deepseek娘_一切都好 4_2026-09-28-22-32-41.gif",
+      "caption": "一切都好/微笑",
+      "bytes": 4412828
     },
     {
-      "emotion": "shy",
-      "file": "stickers/big-blue-fat-fish/shy/shy-02.gif",
-      "source": "gifs/deepseek娘_害羞 2_2026-09-28-22-27-30.gif",
-      "caption": "害羞/被夸",
-      "bytes": 3064320
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-03.gif",
+      "source": "gifs/deepseek娘_摆动 1_2026-09-28-22-34-36.gif",
+      "caption": "开心摆动",
+      "bytes": 4126481
     },
     {
-      "emotion": "shy",
-      "file": "stickers/big-blue-fat-fish/shy/shy-03.gif",
-      "source": "gifs/deepseek娘_摸头_2026-09-28-22-24-52.gif",
-      "caption": "被摸头/害羞",
-      "bytes": 1786159
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-04.gif",
+      "source": "gifs/deepseek娘_摇摆 2_2026-09-28-22-34-29.gif",
+      "caption": "开心摇摆",
+      "bytes": 3109491
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-05.gif",
+      "source": "gifs/deepseek娘_点头_2026-09-28-22-20-24.gif",
+      "caption": "点头/赞同",
+      "bytes": 2505968
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-06.gif",
+      "source": "gifs/deepseek娘_点赞_2026-09-28-22-33-02.gif",
+      "caption": "点赞/认可",
+      "bytes": 3027033
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-07.gif",
+      "source": "gifs/deepseek娘_眨眼_2026-09-28-22-34-43.gif",
+      "caption": "眨眼/俏皮",
+      "bytes": 4676337
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-08.gif",
+      "source": "gifs/deepseek娘_笑(指)_2026-09-28-22-21-16.gif",
+      "caption": "被逗乐/笑",
+      "bytes": 2684361
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-09.gif",
+      "source": "gifs/deepseek娘_耶_2026-09-28-22-35-22.gif",
+      "caption": "比耶/开心",
+      "bytes": 2652035
+    },
+    {
+      "emotion": "happy",
+      "file": "stickers/big-blue-fat-fish/happy/happy-10.gif",
+      "source": "gifs/deepseek娘_雨刮器尾巴_2026-09-28-22-31-17.gif",
+      "caption": "尾巴摇成雨刮器/超开心",
+      "bytes": 257046
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-01.gif",
+      "source": "gifs/deepseek娘_到达(拿勺子)_2026-09-28-22-12-13.gif",
+      "caption": "拿着勺子赶来干饭",
+      "bytes": 5708523
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-02.gif",
+      "source": "gifs/deepseek娘_到达(拿筷子)_2026-09-28-22-12-04.gif",
+      "caption": "拿着筷子赶来干饭",
+      "bytes": 5708652
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-03.gif",
+      "source": "gifs/deepseek娘_吃(爆米花)_2026-09-28-22-18-41.gif",
+      "caption": "吃爆米花/看戏",
+      "bytes": 4956987
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-04.gif",
+      "source": "gifs/deepseek娘_吃(西瓜)_2026-09-28-22-18-34.gif",
+      "caption": "吃西瓜/干饭",
+      "bytes": 1039761
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-05.gif",
+      "source": "gifs/deepseek娘_舔(冰淇淋)_2026-09-28-22-21-25.gif",
+      "caption": "舔冰淇淋/解馋",
+      "bytes": 1978654
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-06.gif",
+      "source": "gifs/deepseek娘_舔(棒冰)_2026-09-28-22-21-30.gif",
+      "caption": "舔棒冰/解馋",
+      "bytes": 1969145
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-07.gif",
+      "source": "gifs/deepseek娘_要米_2026-09-28-22-23-49.gif",
+      "caption": "要米饭/饿了",
+      "bytes": 4717496
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-08.gif",
+      "source": "gifs/deepseek娘_馋(刀叉)_2026-09-28-22-18-13.gif",
+      "caption": "馋/等开饭",
+      "bytes": 1891997
+    },
+    {
+      "emotion": "hungry",
+      "file": "stickers/big-blue-fat-fish/hungry/hungry-09.gif",
+      "source": "gifs/deepseek娘_馋(筷子)_2026-09-28-22-18-09.gif",
+      "caption": "馋/干饭准备",
+      "bytes": 1866421
+    },
+    {
+      "emotion": "loading",
+      "file": "stickers/big-blue-fat-fish/loading/loading-01.gif",
+      "source": "gifs/deepseek娘_PNGTuber 加载中_2026-09-28-22-25-29.gif",
+      "caption": "加载中/思考中",
+      "bytes": 3115168
+    },
+    {
+      "emotion": "loading",
+      "file": "stickers/big-blue-fat-fish/loading/loading-02.gif",
+      "source": "gifs/deepseek娘_加载(茶_咖啡杯)_2026-09-28-22-21-54.gif",
+      "caption": "加载中/喝杯茶等等",
+      "bytes": 12136169
+    },
+    {
+      "emotion": "loading",
+      "file": "stickers/big-blue-fat-fish/loading/loading-03.gif",
+      "source": "gifs/deepseek娘_加载(马克杯)_2026-09-28-22-22-08.gif",
+      "caption": "加载中/喝口咖啡",
+      "bytes": 12499878
+    },
+    {
+      "emotion": "love",
+      "file": "stickers/big-blue-fat-fish/love/love-01.gif",
+      "source": "gifs/deepseek娘_情书_2026-09-28-22-22-19.gif",
+      "caption": "情书/害羞表白",
+      "bytes": 3555675
+    },
+    {
+      "emotion": "love",
+      "file": "stickers/big-blue-fat-fish/love/love-02.gif",
+      "source": "gifs/deepseek娘_爱心 1_2026-09-28-22-22-42.gif",
+      "caption": "爱心/喜欢",
+      "bytes": 6234987
+    },
+    {
+      "emotion": "love",
+      "file": "stickers/big-blue-fat-fish/love/love-03.gif",
+      "source": "gifs/deepseek娘_爱心 2_2026-09-28-22-22-51.gif",
+      "caption": "爱心/比心",
+      "bytes": 5994796
+    },
+    {
+      "emotion": "love",
+      "file": "stickers/big-blue-fat-fish/love/love-04.gif",
+      "source": "gifs/deepseek娘_爱心 3_2026-09-28-22-22-59.gif",
+      "caption": "爱心/满满喜欢",
+      "bytes": 5540436
+    },
+    {
+      "emotion": "love",
+      "file": "stickers/big-blue-fat-fish/love/love-05.gif",
+      "source": "gifs/deepseek娘_玫瑰_2026-09-28-22-26-43.gif",
+      "caption": "玫瑰/示爱",
+      "bytes": 4004933
+    },
+    {
+      "emotion": "money",
+      "file": "stickers/big-blue-fat-fish/money/money-01.gif",
+      "source": "gifs/deepseek娘_刷卡_2026-09-28-22-13-35.gif",
+      "caption": "刷卡/买单",
+      "bytes": 2980421
+    },
+    {
+      "emotion": "money",
+      "file": "stickers/big-blue-fat-fish/money/money-02.gif",
+      "source": "gifs/deepseek娘_拿走我的钱_2026-09-28-22-31-23.gif",
+      "caption": "拿走我的钱/买买买",
+      "bytes": 3490130
+    },
+    {
+      "emotion": "money",
+      "file": "stickers/big-blue-fat-fish/money/money-03.gif",
+      "source": "gifs/deepseek娘_红包 1_2026-09-28-22-26-22.gif",
+      "caption": "红包/发红包",
+      "bytes": 2883447
+    },
+    {
+      "emotion": "money",
+      "file": "stickers/big-blue-fat-fish/money/money-04.gif",
+      "source": "gifs/deepseek娘_红包 2_2026-09-28-22-26-30.gif",
+      "caption": "红包/抢红包",
+      "bytes": 5372166
+    },
+    {
+      "emotion": "money",
+      "file": "stickers/big-blue-fat-fish/money/money-05.gif",
+      "source": "gifs/deepseek娘_钱_2026-09-28-22-23-14.gif",
+      "caption": "钱/饭钱",
+      "bytes": 2739452
+    },
+    {
+      "emotion": "panic",
+      "file": "stickers/big-blue-fat-fish/panic/panic-01.gif",
+      "source": "gifs/deepseek娘_害怕 1_2026-09-28-22-26-53.gif",
+      "caption": "害怕/慌",
+      "bytes": 624777
+    },
+    {
+      "emotion": "panic",
+      "file": "stickers/big-blue-fat-fish/panic/panic-02.gif",
+      "source": "gifs/deepseek娘_害怕 2_2026-09-28-22-26-57.gif",
+      "caption": "害怕/瑟瑟发抖",
+      "bytes": 622175
+    },
+    {
+      "emotion": "panic",
+      "file": "stickers/big-blue-fat-fish/panic/panic-03.gif",
+      "source": "gifs/deepseek娘_惊吓_2026-09-28-22-30-55.gif",
+      "caption": "惊吓/吓一跳",
+      "bytes": 3607446
+    },
+    {
+      "emotion": "rest",
+      "file": "stickers/big-blue-fat-fish/rest/rest-01.gif",
+      "source": "gifs/deepseek娘_喝(饮料杯)_2026-09-28-22-17-47.gif",
+      "caption": "喝饮料/休息",
+      "bytes": 1955164
+    },
+    {
+      "emotion": "rest",
+      "file": "stickers/big-blue-fat-fish/rest/rest-02.gif",
+      "source": "gifs/deepseek娘_茶 1_2026-09-28-22-31-37.gif",
+      "caption": "喝茶/休息",
+      "bytes": 4896912
+    },
+    {
+      "emotion": "rest",
+      "file": "stickers/big-blue-fat-fish/rest/rest-03.gif",
+      "source": "gifs/deepseek娘_茶 3_2026-09-28-22-32-13.gif",
+      "caption": "喝茶/歇一会儿",
+      "bytes": 8183282
+    },
+    {
+      "emotion": "rest",
+      "file": "stickers/big-blue-fat-fish/rest/rest-04.gif",
+      "source": "gifs/deepseek娘_饮料(能量饮料1)_2026-09-28-22-17-54.gif",
+      "caption": "能量饮料/续命",
+      "bytes": 1380126
+    },
+    {
+      "emotion": "rest",
+      "file": "stickers/big-blue-fat-fish/rest/rest-05.gif",
+      "source": "gifs/deepseek娘_饮料(能量饮料2)_2026-09-28-22-18-00.gif",
+      "caption": "能量饮料/续命",
+      "bytes": 3819382
     },
     {
       "emotion": "sad",
@@ -61,149 +585,72 @@
     {
       "emotion": "sad",
       "file": "stickers/big-blue-fat-fish/sad/sad-03.gif",
+      "source": "gifs/deepseek娘_得分(0分)_2026-09-28-22-27-09.gif",
+      "caption": "零分/失落",
+      "bytes": 6114540
+    },
+    {
+      "emotion": "sad",
+      "file": "stickers/big-blue-fat-fish/sad/sad-04.gif",
       "source": "gifs/deepseek娘_自我安慰_2026-09-28-22-15-37.gif",
       "caption": "自我安慰/低落",
       "bytes": 5447629
     },
     {
-      "emotion": "angry",
-      "file": "stickers/big-blue-fat-fish/angry/angry-01.gif",
-      "source": "gifs/deepseek娘_生气_2026-09-28-22-11-00.gif",
-      "caption": "生气/炸毛",
-      "bytes": 5724376
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-01.gif",
+      "source": "gifs/deepseek娘_害羞 1_2026-09-28-22-27-25.gif",
+      "caption": "害羞/脸红",
+      "bytes": 3019204
     },
     {
-      "emotion": "angry",
-      "file": "stickers/big-blue-fat-fish/angry/angry-02.gif",
-      "source": "gifs/deepseek娘_打字(生气)_2026-09-28-22-33-35.gif",
-      "caption": "生气打字/不耐烦",
-      "bytes": 796005
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-02.gif",
+      "source": "gifs/deepseek娘_害羞 2_2026-09-28-22-27-30.gif",
+      "caption": "害羞/被夸",
+      "bytes": 3064320
     },
     {
-      "emotion": "angry",
-      "file": "stickers/big-blue-fat-fish/angry/angry-03.gif",
-      "source": "gifs/deepseek娘_工作(生气)_2026-09-28-22-34-51.gif",
-      "caption": "被催工作/生气",
-      "bytes": 4924980
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-03.gif",
+      "source": "gifs/deepseek娘_害羞 3_2026-09-28-22-27-38.gif",
+      "caption": "害羞/捂脸",
+      "bytes": 1969566
     },
     {
-      "emotion": "surprised",
-      "file": "stickers/big-blue-fat-fish/surprised/surprised-01.gif",
-      "source": "gifs/deepseek娘_惊吓_2026-09-28-22-30-55.gif",
-      "caption": "惊吓/意外",
-      "bytes": 3607446
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-04.gif",
+      "source": "gifs/deepseek娘_揉头 1_2026-09-28-22-26-50.gif",
+      "caption": "被揉头/害羞",
+      "bytes": 3006833
     },
     {
-      "emotion": "surprised",
-      "file": "stickers/big-blue-fat-fish/surprised/surprised-02.gif",
-      "source": "gifs/deepseek娘_叹号_2026-09-28-22-18-58.gif",
-      "caption": "震惊/感叹",
-      "bytes": 3709601
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-05.gif",
+      "source": "gifs/deepseek娘_摸头_2026-09-28-22-24-52.gif",
+      "caption": "被摸头/害羞",
+      "bytes": 1786159
     },
     {
-      "emotion": "surprised",
-      "file": "stickers/big-blue-fat-fish/surprised/surprised-03.gif",
-      "source": "gifs/deepseek娘_问号_2026-09-28-22-26-12.gif",
-      "caption": "疑惑/问号",
-      "bytes": 3715821
-    },
-    {
-      "emotion": "sleepy",
-      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-01.gif",
-      "source": "gifs/deepseek娘_睡觉(普通)_2026-09-28-22-28-15.gif",
-      "caption": "睡觉/困",
-      "bytes": 7007973
-    },
-    {
-      "emotion": "sleepy",
-      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-02.gif",
-      "source": "gifs/deepseek娘_睡觉(准备阶段1)_2026-09-28-22-28-25.gif",
-      "caption": "准备睡觉/困",
-      "bytes": 5312556
-    },
-    {
-      "emotion": "sleepy",
-      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-03.gif",
-      "source": "gifs/deepseek娘_工作(小睡)_2026-09-28-22-35-04.gif",
-      "caption": "工作时小睡/摸鱼困",
-      "bytes": 5129857
-    },
-    {
-      "emotion": "smug",
-      "file": "stickers/big-blue-fat-fish/smug/smug-01.gif",
-      "source": "gifs/deepseek娘_墨镜反光_2026-09-28-22-30-22.gif",
-      "caption": "墨镜反光/得意",
-      "bytes": 5168165
-    },
-    {
-      "emotion": "smug",
-      "file": "stickers/big-blue-fat-fish/smug/smug-02.gif",
-      "source": "gifs/deepseek娘_像素墨镜反光_2026-09-28-22-30-37.gif",
-      "caption": "像素墨镜/自信",
-      "bytes": 5248859
-    },
-    {
-      "emotion": "smug",
-      "file": "stickers/big-blue-fat-fish/smug/smug-03.gif",
-      "source": "gifs/deepseek娘_摘掉墨镜_2026-09-28-22-30-45.gif",
-      "caption": "摘墨镜/挑衅",
-      "bytes": 5577262
-    },
-    {
-      "emotion": "thinking",
-      "file": "stickers/big-blue-fat-fish/thinking/thinking-01.gif",
-      "source": "gifs/deepseek娘_思考(认真地)_2026-09-28-22-32-25.gif",
-      "caption": "认真思考",
-      "bytes": 3195718
-    },
-    {
-      "emotion": "thinking",
-      "file": "stickers/big-blue-fat-fish/thinking/thinking-02.gif",
-      "source": "gifs/deepseek娘_思考(自信地)_2026-09-28-22-32-19.gif",
-      "caption": "自信思考",
-      "bytes": 3104555
-    },
-    {
-      "emotion": "thinking",
-      "file": "stickers/big-blue-fat-fish/thinking/thinking-03.gif",
-      "source": "gifs/deepseek娘_书呆子 1_2026-09-28-22-24-04.gif",
-      "caption": "书呆子/钻研",
-      "bytes": 4013105
-    },
-    {
-      "emotion": "hungry",
-      "file": "stickers/big-blue-fat-fish/hungry/hungry-01.gif",
-      "source": "gifs/deepseek娘_要米_2026-09-28-22-23-49.gif",
-      "caption": "要米饭/饿了",
-      "bytes": 4717496
-    },
-    {
-      "emotion": "hungry",
-      "file": "stickers/big-blue-fat-fish/hungry/hungry-02.gif",
-      "source": "gifs/deepseek娘_吃(爆米花)_2026-09-28-22-18-41.gif",
-      "caption": "吃爆米花/看戏",
-      "bytes": 4956987
-    },
-    {
-      "emotion": "hungry",
-      "file": "stickers/big-blue-fat-fish/hungry/hungry-03.gif",
-      "source": "gifs/deepseek娘_馋(刀叉)_2026-09-28-22-18-13.gif",
-      "caption": "馋/等开饭",
-      "bytes": 1891997
+      "emotion": "shy",
+      "file": "stickers/big-blue-fat-fish/shy/shy-06.gif",
+      "source": "gifs/deepseek娘_摸头 2_2026-09-28-22-24-46.gif",
+      "caption": "被摸头/乖",
+      "bytes": 1121339
     },
     {
       "emotion": "slacking",
       "file": "stickers/big-blue-fat-fish/slacking/slacking-01.gif",
-      "source": "gifs/deepseek娘_坐牢 2_2026-09-28-22-20-55.gif",
-      "caption": "坐牢/摸鱼",
-      "bytes": 491453
+      "source": "gifs/deepseek娘_坐牢 1_2026-09-28-22-20-51.gif",
+      "caption": "上班像坐牢/想下班",
+      "bytes": 3217168
     },
     {
       "emotion": "slacking",
       "file": "stickers/big-blue-fat-fish/slacking/slacking-02.gif",
-      "source": "gifs/deepseek娘_带薪拉屎(简单模式)_2026-09-28-22-24-34.gif",
-      "caption": "带薪拉屎/摆烂",
-      "bytes": 4141683
+      "source": "gifs/deepseek娘_坐牢 2_2026-09-28-22-20-55.gif",
+      "caption": "坐牢/摸鱼",
+      "bytes": 491453
     },
     {
       "emotion": "slacking",
@@ -211,6 +658,139 @@
       "source": "gifs/deepseek娘_打游戏_2026-09-28-22-19-14.gif",
       "caption": "打游戏/摸鱼",
       "bytes": 2399010
+    },
+    {
+      "emotion": "sleepy",
+      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-01.gif",
+      "source": "gifs/deepseek娘_催眠_2026-09-28-22-20-38.gif",
+      "caption": "催眠/犯困",
+      "bytes": 6303092
+    },
+    {
+      "emotion": "sleepy",
+      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-02.gif",
+      "source": "gifs/deepseek娘_工作(小睡)_2026-09-28-22-35-04.gif",
+      "caption": "工作时小睡/摸鱼困",
+      "bytes": 5129857
+    },
+    {
+      "emotion": "sleepy",
+      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-03.gif",
+      "source": "gifs/deepseek娘_睡觉(准备阶段1)_2026-09-28-22-28-25.gif",
+      "caption": "准备睡觉/困了",
+      "bytes": 5312556
+    },
+    {
+      "emotion": "sleepy",
+      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-04.gif",
+      "source": "gifs/deepseek娘_睡觉(准备阶段2)_2026-09-28-22-28-34.gif",
+      "caption": "快睡着了",
+      "bytes": 5310806
+    },
+    {
+      "emotion": "sleepy",
+      "file": "stickers/big-blue-fat-fish/sleepy/sleepy-05.gif",
+      "source": "gifs/deepseek娘_睡觉(普通)_2026-09-28-22-28-15.gif",
+      "caption": "睡觉/晚安",
+      "bytes": 7007973
+    },
+    {
+      "emotion": "smug",
+      "file": "stickers/big-blue-fat-fish/smug/smug-01.gif",
+      "source": "gifs/deepseek娘_像素墨镜反光_2026-09-28-22-30-37.gif",
+      "caption": "像素墨镜/自信",
+      "bytes": 5248859
+    },
+    {
+      "emotion": "smug",
+      "file": "stickers/big-blue-fat-fish/smug/smug-02.gif",
+      "source": "gifs/deepseek娘_墨镜反光_2026-09-28-22-30-22.gif",
+      "caption": "墨镜反光/得意",
+      "bytes": 5168165
+    },
+    {
+      "emotion": "smug",
+      "file": "stickers/big-blue-fat-fish/smug/smug-03.gif",
+      "source": "gifs/deepseek娘_墨镜循环_2026-09-28-22-30-30.gif",
+      "caption": "墨镜循环/得意忘形",
+      "bytes": 4212436
+    },
+    {
+      "emotion": "smug",
+      "file": "stickers/big-blue-fat-fish/smug/smug-04.gif",
+      "source": "gifs/deepseek娘_得分(10分)_2026-09-28-22-27-19.gif",
+      "caption": "满分/得意",
+      "bytes": 6126710
+    },
+    {
+      "emotion": "smug",
+      "file": "stickers/big-blue-fat-fish/smug/smug-05.gif",
+      "source": "gifs/deepseek娘_摇可乐_2026-09-28-22-15-26.gif",
+      "caption": "摇可乐/准备搞事",
+      "bytes": 759883
+    },
+    {
+      "emotion": "surprised",
+      "file": "stickers/big-blue-fat-fish/surprised/surprised-01.gif",
+      "source": "gifs/deepseek娘_叹号_2026-09-28-22-18-58.gif",
+      "caption": "震惊/感叹",
+      "bytes": 3709601
+    },
+    {
+      "emotion": "surprised",
+      "file": "stickers/big-blue-fat-fish/surprised/surprised-02.gif",
+      "source": "gifs/deepseek娘_问号_2026-09-28-22-26-12.gif",
+      "caption": "疑惑/问号",
+      "bytes": 3715821
+    },
+    {
+      "emotion": "thinking",
+      "file": "stickers/big-blue-fat-fish/thinking/thinking-01.gif",
+      "source": "gifs/deepseek娘_主意_2026-09-28-22-20-44.gif",
+      "caption": "有主意了/灵光一闪",
+      "bytes": 4192146
+    },
+    {
+      "emotion": "thinking",
+      "file": "stickers/big-blue-fat-fish/thinking/thinking-02.gif",
+      "source": "gifs/deepseek娘_书呆子 1_2026-09-28-22-24-04.gif",
+      "caption": "书呆子/钻研",
+      "bytes": 4013105
+    },
+    {
+      "emotion": "thinking",
+      "file": "stickers/big-blue-fat-fish/thinking/thinking-03.gif",
+      "source": "gifs/deepseek娘_思考(自信地)_2026-09-28-22-32-19.gif",
+      "caption": "自信思考",
+      "bytes": 3104555
+    },
+    {
+      "emotion": "thinking",
+      "file": "stickers/big-blue-fat-fish/thinking/thinking-04.gif",
+      "source": "gifs/deepseek娘_思考(认真地)_2026-09-28-22-32-25.gif",
+      "caption": "认真思考",
+      "bytes": 3195718
+    },
+    {
+      "emotion": "tired",
+      "file": "stickers/big-blue-fat-fish/tired/tired-01.gif",
+      "source": "gifs/deepseek娘_头晕_2026-09-28-22-17-39.gif",
+      "caption": "头晕/过载",
+      "bytes": 4103085
+    },
+    {
+      "emotion": "tired",
+      "file": "stickers/big-blue-fat-fish/tired/tired-02.gif",
+      "source": "gifs/deepseek娘_工作(疲倦)_2026-09-28-22-35-17.gif",
+      "caption": "工作疲倦/累",
+      "bytes": 5122533
+    },
+    {
+      "emotion": "tired",
+      "file": "stickers/big-blue-fat-fish/tired/tired-03.gif",
+      "source": "gifs/deepseek娘_死亡_2026-09-28-22-17-00.gif",
+      "caption": "累到倒地",
+      "bytes": 4244031
     },
     {
       "emotion": "tsundere",
@@ -222,9 +802,9 @@
     {
       "emotion": "tsundere",
       "file": "stickers/big-blue-fat-fish/tsundere/tsundere-02.gif",
-      "source": "gifs/deepseek娘_反向点赞_2026-09-28-22-32-50.gif",
-      "caption": "反向点赞/嘴硬",
-      "bytes": 3045657
+      "source": "gifs/deepseek娘_吐舌 3_2026-09-28-22-12-40.gif",
+      "caption": "吐舌/扮鬼脸",
+      "bytes": 2087161
     },
     {
       "emotion": "tsundere",
@@ -234,151 +814,397 @@
       "bytes": 1998634
     },
     {
-      "emotion": "love",
-      "file": "stickers/big-blue-fat-fish/love/love-01.gif",
-      "source": "gifs/deepseek娘_爱心 1_2026-09-28-22-22-42.gif",
-      "caption": "爱心/喜欢",
-      "bytes": 6234987
-    },
-    {
-      "emotion": "love",
-      "file": "stickers/big-blue-fat-fish/love/love-02.gif",
-      "source": "gifs/deepseek娘_玫瑰_2026-09-28-22-26-43.gif",
-      "caption": "玫瑰/示爱",
-      "bytes": 4004933
-    },
-    {
-      "emotion": "love",
-      "file": "stickers/big-blue-fat-fish/love/love-03.gif",
-      "source": "gifs/deepseek娘_情书_2026-09-28-22-22-19.gif",
-      "caption": "情书/害羞表白",
-      "bytes": 3555675
-    },
-    {
-      "emotion": "greeting",
-      "file": "stickers/big-blue-fat-fish/greeting/greeting-01.gif",
-      "source": "gifs/deepseek娘_打招呼 1_2026-09-28-22-19-55.gif",
-      "caption": "打招呼/来了",
-      "bytes": 7385554
-    },
-    {
-      "emotion": "greeting",
-      "file": "stickers/big-blue-fat-fish/greeting/greeting-02.gif",
-      "source": "gifs/deepseek娘_点头_2026-09-28-22-20-24.gif",
-      "caption": "点头/同意",
-      "bytes": 2505968
-    },
-    {
-      "emotion": "greeting",
-      "file": "stickers/big-blue-fat-fish/greeting/greeting-03.gif",
-      "source": "gifs/deepseek娘_摇铃_2026-09-28-22-12-17.gif",
-      "caption": "摇铃/叫人",
-      "bytes": 1526221
+      "emotion": "tsundere",
+      "file": "stickers/big-blue-fat-fish/tsundere/tsundere-04.gif",
+      "source": "gifs/deepseek娘_敲头_2026-09-28-22-12-52.gif",
+      "caption": "敲头/亲昵地骂笨蛋",
+      "bytes": 1649293
     },
     {
       "emotion": "working",
       "file": "stickers/big-blue-fat-fish/working/working-01.gif",
+      "source": "gifs/deepseek娘_Bug_2026-09-28-22-13-11.gif",
+      "caption": "抓Bug/修bug",
+      "bytes": 6779420
+    },
+    {
+      "emotion": "working",
+      "file": "stickers/big-blue-fat-fish/working/working-02.gif",
       "source": "gifs/deepseek娘_工作(普通)_2026-09-28-22-35-09.gif",
       "caption": "工作/干活",
       "bytes": 1680461
     },
     {
       "emotion": "working",
-      "file": "stickers/big-blue-fat-fish/working/working-02.gif",
+      "file": "stickers/big-blue-fat-fish/working/working-03.gif",
       "source": "gifs/deepseek娘_打字(普通)_2026-09-28-22-33-44.gif",
       "caption": "打字/回复",
       "bytes": 2823556
     },
     {
       "emotion": "working",
-      "file": "stickers/big-blue-fat-fish/working/working-03.gif",
+      "file": "stickers/big-blue-fat-fish/working/working-04.gif",
+      "source": "gifs/deepseek娘_画板_2026-09-28-22-31-12.gif",
+      "caption": "画板/创作",
+      "bytes": 2371407
+    },
+    {
+      "emotion": "working",
+      "file": "stickers/big-blue-fat-fish/working/working-05.gif",
+      "source": "gifs/deepseek娘_记录 1_2026-09-28-22-24-23.gif",
+      "caption": "记录/本鲸记下了",
+      "bytes": 8243401
+    },
+    {
+      "emotion": "working",
+      "file": "stickers/big-blue-fat-fish/working/working-06.gif",
       "source": "gifs/deepseek娘_记录 2_2026-09-28-22-24-27.gif",
       "caption": "记录/整理",
       "bytes": 3044241
     },
     {
-      "emotion": "panic",
-      "file": "stickers/big-blue-fat-fish/panic/panic-01.gif",
-      "source": "gifs/deepseek娘_害怕 1_2026-09-28-22-26-53.gif",
-      "caption": "害怕/慌",
-      "bytes": 624777
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_PNGTuber 说教_2026-09-28-22-25-41.gif",
+      "source": "gifs/deepseek娘_PNGTuber 说教_2026-09-28-22-25-41.gif",
+      "caption": "PNGTuber 说教",
+      "bytes": 1622573,
+      "archived": true,
+      "archive_reason": "说教感强，容易显得居高临下"
     },
     {
-      "emotion": "panic",
-      "file": "stickers/big-blue-fat-fish/panic/panic-02.gif",
-      "source": "gifs/deepseek娘_紧张 2_2026-09-28-22-24-11.gif",
-      "caption": "紧张/不安",
-      "bytes": 3564728
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_PNGTuber 说话_2026-09-28-22-25-34.gif",
+      "source": "gifs/deepseek娘_PNGTuber 说话_2026-09-28-22-25-34.gif",
+      "caption": "PNGTuber 说话",
+      "bytes": 1640684,
+      "archived": true,
+      "archive_reason": "通用说话动作，情绪不明确"
     },
     {
-      "emotion": "panic",
-      "file": "stickers/big-blue-fat-fish/panic/panic-03.gif",
-      "source": "gifs/deepseek娘_汗_2026-09-28-22-31-05.gif",
-      "caption": "流汗/尴尬",
-      "bytes": 4064641
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_Popcat 帧_2026-09-28-22-25-53.gif",
+      "source": "gifs/deepseek娘_Popcat 帧_2026-09-28-22-25-53.gif",
+      "caption": "Popcat 帧",
+      "bytes": 1139297,
+      "archived": true,
+      "archive_reason": "含义不明"
     },
     {
-      "emotion": "excited",
-      "file": "stickers/big-blue-fat-fish/excited/excited-01.gif",
-      "source": "gifs/deepseek娘_期待 2_2026-09-28-22-29-25.gif",
-      "caption": "期待/想要",
-      "bytes": 3784517
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_TrashTuber 说教_2026-09-28-22-33-30.gif",
+      "source": "gifs/deepseek娘_TrashTuber 说教_2026-09-28-22-33-30.gif",
+      "caption": "TrashTuber 说教",
+      "bytes": 1416169,
+      "archived": true,
+      "archive_reason": "说教感强，容易显得居高临下"
     },
     {
-      "emotion": "excited",
-      "file": "stickers/big-blue-fat-fish/excited/excited-02.gif",
-      "source": "gifs/deepseek娘_干杯_2026-09-28-22-15-02.gif",
-      "caption": "干杯/庆祝",
-      "bytes": 3746411
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_TrashTuber 说话_2026-09-28-22-33-26.gif",
+      "source": "gifs/deepseek娘_TrashTuber 说话_2026-09-28-22-33-26.gif",
+      "caption": "TrashTuber 说话",
+      "bytes": 1419817,
+      "archived": true,
+      "archive_reason": "通用说话动作，情绪不明确"
     },
     {
-      "emotion": "excited",
-      "file": "stickers/big-blue-fat-fish/excited/excited-03.gif",
-      "source": "gifs/deepseek娘_冒泡 1_2026-09-28-22-22-26.gif",
-      "caption": "冒泡/兴奋",
-      "bytes": 2948970
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_停止_2026-09-28-22-30-07.gif",
+      "source": "gifs/deepseek娘_停止_2026-09-28-22-30-07.gif",
+      "caption": "停止",
+      "bytes": 4596084,
+      "archived": true,
+      "archive_reason": "拒绝感强，适用场景少"
     },
     {
-      "emotion": "bored",
-      "file": "stickers/big-blue-fat-fish/bored/bored-01.gif",
-      "source": "gifs/deepseek娘_PNGTuber 闲置_2026-09-28-22-25-20.gif",
-      "caption": "闲置/发呆",
-      "bytes": 3062427
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_停止工作_2026-09-28-22-30-15.gif",
+      "source": "gifs/deepseek娘_停止工作_2026-09-28-22-30-15.gif",
+      "caption": "停止工作",
+      "bytes": 5542559,
+      "archived": true,
+      "archive_reason": "拒绝感强，适用场景少"
     },
     {
-      "emotion": "bored",
-      "file": "stickers/big-blue-fat-fish/bored/bored-02.gif",
-      "source": "gifs/deepseek娘_呆 1_2026-09-28-22-18-22.gif",
-      "caption": "呆/空白",
-      "bytes": 2981773
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_六七_2026-09-28-22-28-00.gif",
+      "source": "gifs/deepseek娘_六七_2026-09-28-22-28-00.gif",
+      "caption": "六七",
+      "bytes": 1810947,
+      "archived": true,
+      "archive_reason": "含义不明"
     },
     {
-      "emotion": "bored",
-      "file": "stickers/big-blue-fat-fish/bored/bored-03.gif",
-      "source": "gifs/deepseek娘_垃圾桶_2026-09-28-22-33-05.gif",
-      "caption": "垃圾桶/摆烂",
-      "bytes": 551833
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_刀 1_2026-09-28-22-21-09.gif",
+      "source": "gifs/deepseek娘_刀 1_2026-09-28-22-21-09.gif",
+      "caption": "刀 1",
+      "bytes": 3666413,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
     },
     {
-      "emotion": "tired",
-      "file": "stickers/big-blue-fat-fish/tired/tired-01.gif",
-      "source": "gifs/deepseek娘_工作(疲倦)_2026-09-28-22-35-17.gif",
-      "caption": "工作疲倦/累",
-      "bytes": 5122533
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_刀 2_2026-09-28-22-21-03.gif",
+      "source": "gifs/deepseek娘_刀 2_2026-09-28-22-21-03.gif",
+      "caption": "刀 2",
+      "bytes": 3642498,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
     },
     {
-      "emotion": "tired",
-      "file": "stickers/big-blue-fat-fish/tired/tired-02.gif",
-      "source": "gifs/deepseek娘_死亡_2026-09-28-22-17-00.gif",
-      "caption": "死亡/倒地",
-      "bytes": 4244031
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_切(剪刀)_2026-09-28-22-16-18.gif",
+      "source": "gifs/deepseek娘_切(剪刀)_2026-09-28-22-16-18.gif",
+      "caption": "切(剪刀)",
+      "bytes": 1882625,
+      "archived": true,
+      "archive_reason": "剪刀动作，容易误读"
     },
     {
-      "emotion": "tired",
-      "file": "stickers/big-blue-fat-fish/tired/tired-03.gif",
-      "source": "gifs/deepseek娘_头晕_2026-09-28-22-17-39.gif",
-      "caption": "头晕/过载",
-      "bytes": 4103085
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_反向点赞_2026-09-28-22-32-50.gif",
+      "source": "gifs/deepseek娘_反向点赞_2026-09-28-22-32-50.gif",
+      "caption": "反向点赞",
+      "bytes": 3045657,
+      "archived": true,
+      "archive_reason": "竖倒拇指，被夸等场景发出非常不礼貌"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_反转_2026-09-28-22-26-37.gif",
+      "source": "gifs/deepseek娘_反转_2026-09-28-22-26-37.gif",
+      "caption": "反转",
+      "bytes": 4327881,
+      "archived": true,
+      "archive_reason": "含义不明"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_喷剂_2026-09-28-22-29-52.gif",
+      "source": "gifs/deepseek娘_喷剂_2026-09-28-22-29-52.gif",
+      "caption": "喷剂",
+      "bytes": 4167231,
+      "archived": true,
+      "archive_reason": "攻击动作，不符合人设"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_带薪拉屎(困难模式)_2026-09-28-22-24-41.gif",
+      "source": "gifs/deepseek娘_带薪拉屎(困难模式)_2026-09-28-22-24-41.gif",
+      "caption": "带薪拉屎(困难模式)",
+      "bytes": 6844233,
+      "archived": true,
+      "archive_reason": "用词粗俗，群聊观感差"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_带薪拉屎(简单模式)_2026-09-28-22-24-34.gif",
+      "source": "gifs/deepseek娘_带薪拉屎(简单模式)_2026-09-28-22-24-34.gif",
+      "caption": "带薪拉屎(简单模式)",
+      "bytes": 4141683,
+      "archived": true,
+      "archive_reason": "用词粗俗，群聊观感差"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_打字(恼怒)_2026-09-28-22-33-39.gif",
+      "source": "gifs/deepseek娘_打字(恼怒)_2026-09-28-22-33-39.gif",
+      "caption": "打字(恼怒)",
+      "bytes": 879343,
+      "archived": true,
+      "archive_reason": "与生气类重复且语气更冲"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_扩音器_2026-09-28-22-23-08.gif",
+      "source": "gifs/deepseek娘_扩音器_2026-09-28-22-23-08.gif",
+      "caption": "扩音器",
+      "bytes": 1504667,
+      "archived": true,
+      "archive_reason": "喊话，适用场景少"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_抓拍(手机)_2026-09-28-22-13-51.gif",
+      "source": "gifs/deepseek娘_抓拍(手机)_2026-09-28-22-13-51.gif",
+      "caption": "抓拍(手机)",
+      "bytes": 4977071,
+      "archived": true,
+      "archive_reason": "场景不符"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_抓拍(摄像机)_2026-09-28-22-14-00.gif",
+      "source": "gifs/deepseek娘_抓拍(摄像机)_2026-09-28-22-14-00.gif",
+      "caption": "抓拍(摄像机)",
+      "bytes": 4944749,
+      "archived": true,
+      "archive_reason": "场景不符"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_拖鞋 1_2026-09-28-22-28-59.gif",
+      "source": "gifs/deepseek娘_拖鞋 1_2026-09-28-22-28-59.gif",
+      "caption": "拖鞋 1",
+      "bytes": 1101460,
+      "archived": true,
+      "archive_reason": "拖鞋抽人，攻击性"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_拖鞋 2_2026-09-28-22-29-08.gif",
+      "source": "gifs/deepseek娘_拖鞋 2_2026-09-28-22-29-08.gif",
+      "caption": "拖鞋 2",
+      "bytes": 7221713,
+      "archived": true,
+      "archive_reason": "拖鞋抽人，攻击性"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_指_2026-09-28-22-25-47.gif",
+      "source": "gifs/deepseek娘_指_2026-09-28-22-25-47.gif",
+      "caption": "指",
+      "bytes": 2529982,
+      "archived": true,
+      "archive_reason": "指责感强"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_按_2026-09-28-22-26-06.gif",
+      "source": "gifs/deepseek娘_按_2026-09-28-22-26-06.gif",
+      "caption": "按",
+      "bytes": 4032506,
+      "archived": true,
+      "archive_reason": "动作性素材，情绪不明确"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_按钮_2026-09-28-22-13-18.gif",
+      "source": "gifs/deepseek娘_按钮_2026-09-28-22-13-18.gif",
+      "caption": "按钮",
+      "bytes": 924065,
+      "archived": true,
+      "archive_reason": "动作性素材，情绪不明确"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_按钮 (拍击)_2026-09-28-22-13-22.gif",
+      "source": "gifs/deepseek娘_按钮 (拍击)_2026-09-28-22-13-22.gif",
+      "caption": "按钮 (拍击)",
+      "bytes": 908519,
+      "archived": true,
+      "archive_reason": "动作性素材，情绪不明确"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_摘掉墨镜_2026-09-28-22-30-45.gif",
+      "source": "gifs/deepseek娘_摘掉墨镜_2026-09-28-22-30-45.gif",
+      "caption": "摘掉墨镜",
+      "bytes": 5577262,
+      "archived": true,
+      "archive_reason": "挑衅感太强，容易被读成不礼貌"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_撬棍 1_2026-09-28-22-15-48.gif",
+      "source": "gifs/deepseek娘_撬棍 1_2026-09-28-22-15-48.gif",
+      "caption": "撬棍 1",
+      "bytes": 3758901,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_撬棍 2_2026-09-28-22-15-54.gif",
+      "source": "gifs/deepseek娘_撬棍 2_2026-09-28-22-15-54.gif",
+      "caption": "撬棍 2",
+      "bytes": 4646142,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_枕头(舔)_2026-09-28-22-24-58.gif",
+      "source": "gifs/deepseek娘_枕头(舔)_2026-09-28-22-24-58.gif",
+      "caption": "枕头(舔)",
+      "bytes": 1580295,
+      "archived": true,
+      "archive_reason": "动作奇怪，容易误读"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_枪_2026-09-28-22-20-18.gif",
+      "source": "gifs/deepseek娘_枪_2026-09-28-22-20-18.gif",
+      "caption": "枪",
+      "bytes": 1897716,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_烧 1_2026-09-28-22-19-08.gif",
+      "source": "gifs/deepseek娘_烧 1_2026-09-28-22-19-08.gif",
+      "caption": "烧 1",
+      "bytes": 4652859,
+      "archived": true,
+      "archive_reason": "威胁/暴力，不符合人设"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_胶带_2026-09-28-22-31-30.gif",
+      "source": "gifs/deepseek娘_胶带_2026-09-28-22-31-30.gif",
+      "caption": "胶带",
+      "bytes": 4033812,
+      "archived": true,
+      "archive_reason": "封嘴暗示，容易误读"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_舔舔_2026-09-28-22-21-21.gif",
+      "source": "gifs/deepseek娘_舔舔_2026-09-28-22-21-21.gif",
+      "caption": "舔舔",
+      "bytes": 2980377,
+      "archived": true,
+      "archive_reason": "动作奇怪，容易误读"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_被击中(拖鞋)_2026-09-28-22-19-23.gif",
+      "source": "gifs/deepseek娘_被击中(拖鞋)_2026-09-28-22-19-23.gif",
+      "caption": "被击中(拖鞋)",
+      "bytes": 2549981,
+      "archived": true,
+      "archive_reason": "拖鞋抽人梗，攻击性"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_静音 1_2026-09-28-22-23-35.gif",
+      "source": "gifs/deepseek娘_静音 1_2026-09-28-22-23-35.gif",
+      "caption": "静音 1",
+      "bytes": 3004333,
+      "archived": true,
+      "archive_reason": "让人静音，拒绝感强"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_静音 2_2026-09-28-22-23-42.gif",
+      "source": "gifs/deepseek娘_静音 2_2026-09-28-22-23-42.gif",
+      "caption": "静音 2",
+      "bytes": 5108880,
+      "archived": true,
+      "archive_reason": "让人静音，拒绝感强"
+    },
+    {
+      "emotion": "_archive",
+      "file": "stickers/big-blue-fat-fish/_archive/deepseek娘_驾驶_2026-09-28-22-18-04.gif",
+      "source": "gifs/deepseek娘_驾驶_2026-09-28-22-18-04.gif",
+      "caption": "驾驶",
+      "bytes": 1575353,
+      "archived": true,
+      "archive_reason": "场景不符"
     }
-  ]
+  ],
+  "count": 123,
+  "archived_count": 38
 }

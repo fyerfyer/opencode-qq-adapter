@@ -1,10 +1,11 @@
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { planReplyWithSticker } from "../../packages/roleplay/src/delivery.js";
 import { writeEmotionAssets } from "../../packages/roleplay/src/persona.js";
 import {
+  captionHint,
   chooseSticker,
   extractEmotionTag,
   listEmotions,
@@ -69,11 +70,50 @@ describe("sticker catalog", () => {
   it("avoids the previous file when alternatives exist", () => {
     const catalog = {
       emotions: new Map([["happy", ["a.gif", "b.gif"]]]),
+      captions: new Map<string, string>(),
     };
     const last = new Map<string, string>();
     expect(chooseSticker(catalog, "happy", "chat", last, () => 0)).toBe("a.gif");
     expect(chooseSticker(catalog, "happy", "chat", last, () => 0)).toBe("b.gif");
     expect(chooseSticker(catalog, "missing", "chat", last)).toBeNull();
+  });
+
+  it("reads manifest captions and builds per-emotion hints", async () => {
+    const root = await mkdtemp(join(tmpdir(), "qq-sticker-captions-"));
+    const happyDir = join(root, "blue", "happy");
+    await mkdir(happyDir, { recursive: true });
+    await writeFile(join(happyDir, "happy-01.gif"), "gif");
+    await writeFile(join(happyDir, "happy-02.gif"), "gif");
+    await writeFile(
+      join(root, "blue", "stickers.json"),
+      JSON.stringify({
+        stickers: [
+          {
+            emotion: "happy",
+            file: "stickers/blue/happy/happy-01.gif",
+            caption: "点赞/认可",
+          },
+          {
+            emotion: "happy",
+            file: "stickers/blue/happy/happy-02.gif",
+            caption: "耶/开心",
+          },
+          {
+            emotion: "_archive",
+            file: "stickers/blue/_archive/rude.gif",
+            caption: "倒拇指",
+            archived: true,
+          },
+        ],
+      }),
+    );
+    const catalog = await loadStickerCatalog(root, "blue");
+    expect(catalog.captions.get("stickers/blue/happy/happy-01.gif")).toBe("点赞/认可");
+    expect(catalog.captions.has("stickers/blue/_archive/rude.gif")).toBe(false);
+    expect(captionHint(catalog, "happy")).toBe("点赞/认可、耶/开心");
+    expect(captionHint(catalog, "missing")).toBeNull();
+    const empty = await loadStickerCatalog(root, "nobody");
+    expect(captionHint(empty, "happy")).toBeNull();
   });
 
   it("extracts CCv3 emotion assets into the plugin data directory", async () => {

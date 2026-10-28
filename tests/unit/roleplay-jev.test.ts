@@ -108,12 +108,78 @@ describe("Jev emotion judge", () => {
   });
 
   it("builds criteria only for available emotions", () => {
-    const criteria = emotionCriteria(["happy", "custom"]);
+    const criteria = emotionCriteria(["happy", "tsundere", "custom"]);
     expect(criteria).toMatchObject({
       happy: expect.stringContaining("开心"),
+      tsundere: expect.stringContaining("傲娇"),
       custom: "custom",
       none: expect.any(String),
     });
     expect(criteria.sad).toBeUndefined();
+  });
+
+  it("appends asset captions to criteria and sends persona context", async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) =>
+      jsonResponse({
+        answers: {
+          emotion: { choice: "clingy", confidence: 0.9 },
+          sticker_ok: { noul: 0.9 },
+        },
+      }),
+    );
+    const judge = new JevEmotionJudge({
+      baseUrl: "https://relay.test/v1",
+      apiKey: "secret",
+      model: "jev-1.13",
+      timeoutMs: 1000,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    });
+    await judge.judge({
+      userText: "在干嘛呢",
+      replyText: "蹭过来贴贴。",
+      emotions: ["clingy", "happy"],
+      personaName: "蓝色大肥鱼",
+      hintEmotion: "clingy",
+      emotionHints: { clingy: "蹭枕头/撒娇、碰鼻子/亲昵" },
+    });
+    const call = fetch.mock.calls[0];
+    if (call === undefined) throw new Error("fetch was not called");
+    const body = JSON.parse(String(call[1].body)) as {
+      state: Record<string, string>;
+      questions: { emotion: { criteria: Record<string, string> } };
+    };
+    expect(body.state.scene).toContain("蓝色大肥鱼");
+    expect(body.state.assistant_emotion_suggestion).toBe("clingy");
+    expect(body.questions.emotion.criteria.clingy).toContain("撒娇");
+    expect(body.questions.emotion.criteria.clingy).toContain("蹭枕头/撒娇");
+    expect(body.questions.emotion.criteria.happy).not.toContain("素材");
+  });
+
+  it("drops a suggestion that has no sticker assets", async () => {
+    const fetch = vi.fn(async (_url: string, _init: RequestInit) =>
+      jsonResponse({
+        answers: {
+          emotion: { choice: "happy", confidence: 0.9 },
+          sticker_ok: { noul: 0.9 },
+        },
+      }),
+    );
+    const judge = new JevEmotionJudge({
+      baseUrl: "https://relay.test/v1",
+      apiKey: "secret",
+      model: "jev-1.13",
+      timeoutMs: 1000,
+      fetch: fetch as unknown as typeof globalThis.fetch,
+    });
+    await judge.judge({
+      userText: "hi",
+      replyText: "hello",
+      emotions: ["happy"],
+      hintEmotion: "dance",
+    });
+    const call = fetch.mock.calls[0];
+    if (call === undefined) throw new Error("fetch was not called");
+    const body = JSON.parse(String(call[1].body)) as { state: Record<string, string> };
+    expect(body.state.assistant_emotion_suggestion).toBeUndefined();
   });
 });
