@@ -68,7 +68,8 @@ security:
   # Normally image URLs must be public. Enable only for a local test CDN.
   allow_private_image_urls: false
   rate_limit:
-    prompts_per_minute: 6
+    # Optional global hourly default for users without their own limits.
+    # Set to null to make the default unlimited.
     runs_per_hour: 30
   budgets:
     daily_cost_usd_per_user: 5
@@ -104,15 +105,17 @@ users:
     projects: ["*"]
     # Owner may modify every visible project. For a read-only owner, remove "*".
     write_projects: ["*"]
-  # Optional per-user limits can only tighten the global security limits.
+  # Optional per-user limits. `runs_per_hour` overrides the global hourly
+  # default (it may be higher) and `null` means unlimited. Daily budgets still
+  # apply and can only tighten the global values.
   # "10002":
   #   role: member
   #   projects: ["demo"]
   #   # Omit or use [] to allow Q&A only; writes are denied directly.
   #   write_projects: ["demo"]
   #   limits:
-  #     prompts_per_minute: 3
   #     runs_per_hour: 10
+  #     # runs_per_hour: null
   #     daily_cost_usd: 1.5
   #     daily_tokens: 500000
 

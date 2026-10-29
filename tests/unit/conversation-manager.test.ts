@@ -158,27 +158,6 @@ describe("ConversationManager", () => {
     });
   });
 
-  it("applies the new agent's frontmatter model from setPreferences", async () => {
-    const { config, store, agent, manager } = await setup();
-    config.projects.demo.agent = "qq-code";
-    config.projects.demo.model = "fake/model-b";
-    addTestAgent(agent, "qq-code", "fake/model-a");
-    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
-    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
-    await waitForCompletedRun(manager, "private:20000");
-    const sessionId = store.conversations.get("private:20000")?.sessionId;
-
-    addTestAgent(agent, "review", "fake/model-c");
-    const result = await manager.setPreferences("private:20000", { agent: "review" });
-    expect(result.ok).toBe(true);
-    expect(agent.switchedAgents).toEqual([{ sessionId, agent: "review" }]);
-    expect(agent.switchedModels).toEqual([{ sessionId, model: "fake/model-c" }]);
-    expect(store.conversations.get("private:20000")).toMatchObject({
-      agent: "review",
-      model: null,
-    });
-  });
-
   it("keeps an explicit conversation model when switching agents", async () => {
     const { config, store, agent, manager } = await setup();
     config.projects.demo.agent = "qq-code";
@@ -198,29 +177,6 @@ describe("ConversationManager", () => {
     expect(store.conversations.get("private:20000")).toMatchObject({
       agent: "review",
       model: "fake/model-b",
-    });
-  });
-
-  it("applies admin agent/model preferences to the current session", async () => {
-    const { store, agent, manager } = await setup();
-    await manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
-    await waitFor(() => agent.prompts.length === 1, 3000, "prompt");
-    await waitFor(() => manager.status("private:20000").activeRun === null, 3000, "run completion");
-
-    const result = await manager.setPreferences("private:20000", {
-      model: "fake/model-b",
-      agent: "build",
-    });
-    expect(result.ok).toBe(true);
-    expect(agent.switchedModels).toEqual([
-      { sessionId: store.conversations.get("private:20000")?.sessionId, model: "fake/model-b" },
-    ]);
-    expect(agent.switchedAgents).toEqual([
-      { sessionId: store.conversations.get("private:20000")?.sessionId, agent: "build" },
-    ]);
-    expect(store.conversations.get("private:20000")).toMatchObject({
-      model: "fake/model-b",
-      agent: "build",
     });
   });
 

@@ -1,20 +1,11 @@
-import {
-  AlertTriangle,
-  CheckCircle2,
-  KeyRound,
-  LoaderCircle,
-  PlugZap,
-  RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, LoaderCircle, PlugZap, RefreshCw } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
 import type { ConnectionSaveResult, ConnectionsSnapshot } from "@/api/types";
 import { ErrorState, LoadingState } from "@/components/common/data-state";
 import { StatusDot } from "@/components/common/status-dot";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,27 +13,13 @@ import { Label } from "@/components/ui/label";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { cn, formatDate } from "@/lib/utils";
 
-const PLUGIN_STATUS_LABELS: Record<"disabled" | "loaded" | "failed" | "stopped", string> = {
-  loaded: "已加载",
-  disabled: "已禁用",
-  failed: "加载失败",
-  stopped: "已停止",
-};
-
 export function ConnectionsSettings() {
   const connections = useApiQuery<ConnectionsSnapshot>("/connections", { intervalMs: 15_000 });
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [jevBaseUrl, setJevBaseUrl] = useState("");
-  const [jevEndpoint, setJevEndpoint] = useState("");
-  const [jevModel, setJevModel] = useState("");
   const [napcatBusy, setNapcatBusy] = useState(false);
-  const [jevBusy, setJevBusy] = useState(false);
   const [napcatResult, setNapcatResult] = useState<ConnectionSaveResult | null>(null);
-  const [jevResult, setJevResult] = useState<ConnectionSaveResult | null>(null);
   const urlInitialized = useRef(false);
-  const jevInitialized = useRef(false);
 
   useEffect(() => {
     if (connections.data !== null && !urlInitialized.current) {
@@ -51,18 +28,7 @@ export function ConnectionsSettings() {
     }
   }, [connections.data]);
 
-  useEffect(() => {
-    const jev = connections.data?.jev;
-    if (jev != null && !jevInitialized.current) {
-      setJevBaseUrl(jev.baseUrl ?? "");
-      setJevEndpoint(jev.endpoint ?? "");
-      setJevModel(jev.model ?? "");
-      jevInitialized.current = true;
-    }
-  }, [connections.data]);
-
   const napcat = connections.data?.napcat;
-  const jev = connections.data?.jev ?? null;
   const status = napcat?.status;
   const tone =
     status === undefined || !status.connected
@@ -101,45 +67,6 @@ export function ConnectionsSettings() {
       setNapcatBusy(false);
     }
   };
-
-  const saveJev = async () => {
-    if (connections.data === null || jev === null) return;
-    setJevBusy(true);
-    setJevResult(null);
-    try {
-      const result = await api.put<ConnectionSaveResult>("/connections/jev", {
-        ...(apiKey.trim().length > 0 ? { apiKey: apiKey.trim() } : {}),
-        ...(jevBaseUrl.trim().length > 0 ? { baseUrl: jevBaseUrl.trim() } : {}),
-        ...(jevEndpoint.trim().length > 0 ? { endpoint: jevEndpoint.trim() } : {}),
-        ...(jevModel.trim().length > 0 ? { model: jevModel.trim() } : {}),
-        expectedEnvHash: connections.data.envHash,
-      });
-      setJevResult(result);
-      setApiKey("");
-      if (result.jev !== null) {
-        setJevBaseUrl(result.jev.baseUrl ?? "");
-        setJevEndpoint(result.jev.endpoint ?? "");
-        setJevModel(result.jev.model ?? "");
-      }
-      await connections.refresh(true);
-      if (result.reload?.ok === false) {
-        toast.warning(`Jev 配置已保存，但 Roleplay 重载失败：${result.reload.error ?? "未知错误"}`);
-      } else {
-        toast.success("Jev 配置已保存并重新加载 Roleplay");
-      }
-    } catch (caught) {
-      toast.error(errorMessage(caught));
-    } finally {
-      setJevBusy(false);
-    }
-  };
-
-  const jevDirty =
-    jev !== null &&
-    (apiKey.trim().length > 0 ||
-      jevBaseUrl.trim() !== (jev.baseUrl ?? "") ||
-      jevEndpoint.trim() !== (jev.endpoint ?? "") ||
-      jevModel.trim() !== (jev.model ?? ""));
 
   if (connections.loading && connections.data === null) return <LoadingState rows={4} />;
   if (connections.error !== null && connections.data === null) {
@@ -264,114 +191,6 @@ export function ConnectionsSettings() {
               {napcatBusy ? <LoaderCircle className="animate-spin" /> : <PlugZap />} 保存连接配置
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <KeyRound className="size-4" /> Jev / Roleplay
-          </CardTitle>
-          <CardDescription>
-            API Key 写入 <span className="font-mono">.env</span>；Base URL、Endpoint 和模型写入
-            Roleplay 插件配置。保存后会自动重载 Roleplay。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {jev === null ? (
-            <Alert>
-              <AlertTriangle />
-              <AlertTitle>Roleplay 未配置</AlertTitle>
-              <AlertDescription>
-                当前配置没有 <span className="font-mono">plugins.roleplay</span>，因此没有 Jev
-                配置可管理。
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <Badge variant={jev.pluginStatus === "loaded" ? "default" : "secondary"}>
-                  Roleplay{" "}
-                  {jev.pluginStatus === null ? "未加载" : PLUGIN_STATUS_LABELS[jev.pluginStatus]}
-                </Badge>
-                <Badge variant={jev.apiKeyConfigured ? "outline" : "secondary"}>
-                  {jev.apiKeyConfigured ? "密钥已配置" : "密钥未配置"}
-                </Badge>
-                <span className="text-muted-foreground">
-                  环境变量：<span className="font-mono">{jev.apiKeyEnv}</span>
-                </span>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                <div className="sm:col-span-2 xl:col-span-1">
-                  <Field label="Base URL">
-                    <Input
-                      value={jevBaseUrl}
-                      onChange={(event) => setJevBaseUrl(event.target.value)}
-                      placeholder="https://api.typesafe.ai/v1"
-                      aria-label="Jev Base URL"
-                      spellCheck={false}
-                      className="font-mono text-xs"
-                    />
-                  </Field>
-                </div>
-                <Field label="Endpoint">
-                  <Input
-                    value={jevEndpoint}
-                    onChange={(event) => setJevEndpoint(event.target.value)}
-                    placeholder="decisions"
-                    aria-label="Jev Endpoint"
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                  />
-                </Field>
-                <Field label="模型">
-                  <Input
-                    value={jevModel}
-                    onChange={(event) => setJevModel(event.target.value)}
-                    placeholder="jev-latest"
-                    aria-label="Jev Model"
-                    spellCheck={false}
-                    className="font-mono text-xs"
-                  />
-                </Field>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <div className="flex-1">
-                  <Field label="Jev API Key">
-                    <Input
-                      type="password"
-                      value={apiKey}
-                      onChange={(event) => setApiKey(event.target.value)}
-                      placeholder={
-                        jev.apiKeyConfigured ? "已配置，输入新值以替换" : "输入 Jev API Key"
-                      }
-                      aria-label="Jev API Key"
-                      autoComplete="new-password"
-                    />
-                  </Field>
-                </div>
-                <Button
-                  variant="outline"
-                  disabled={jevBusy || !jevDirty}
-                  onClick={() => void saveJev()}
-                >
-                  {jevBusy ? <LoaderCircle className="animate-spin" /> : <KeyRound />} 保存并重载
-                  Roleplay
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>角色卡、世界书和会话绑定请在</span>
-                <Link className="underline underline-offset-4" to="/plugins/roleplay">
-                  Roleplay 页面
-                </Link>
-                <span>管理。</span>
-              </div>
-            </>
-          )}
-          <ResultAlert result={jevResult} />
         </CardContent>
       </Card>
     </div>

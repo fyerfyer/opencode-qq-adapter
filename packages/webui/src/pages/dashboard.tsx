@@ -149,11 +149,6 @@ export function DashboardPage() {
             <CardTitle>运行状态</CardTitle>
             <CardDescription>当前活跃和最近完成的 run。</CardDescription>
           </div>
-          <Button asChild variant="ghost" size="sm">
-            <Link to="/sessions">
-              会话 <ArrowRight />
-            </Link>
-          </Button>
         </CardHeader>
         <CardContent>
           {runs.length === 0 ? (

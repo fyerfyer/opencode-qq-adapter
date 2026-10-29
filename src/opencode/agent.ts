@@ -19,6 +19,7 @@ import { AgentUnavailableError } from "./errors.js";
 import { OpenCodeEventStream } from "./events.js";
 import {
   isNotFound,
+  type MessageCostPricing,
   mapMessage,
   mapPermissionRequest,
   mapSession,
@@ -28,6 +29,7 @@ import { type Client, OpenCodeService } from "./service.js";
 import { waitForSessionCompletion } from "./wait.js";
 
 type OpenCodeConfig = AppConfig["opencode"];
+const MODEL_COST_CACHE_MS = 60_000;
 
 /**
  * AgentPort implementation for OpenCode V2. Session/API calls live here;
@@ -38,6 +40,7 @@ export class OpenCodeAgent implements AgentPort {
   readonly #service: OpenCodeService;
   readonly #events: OpenCodeEventStream;
   readonly #listeners = new Set<(event: AgentEvent) => void>();
+  #modelCosts: { at: number; byModel: Map<string, MessageCostPricing[]> } | null = null;
 
   constructor(config: OpenCodeConfig, logger: Logger) {
     this.#logger = logger;
@@ -188,7 +191,49 @@ export class OpenCodeAgent implements AgentPort {
       limit,
       order: "desc",
     });
-    return response.data.map(mapMessage);
+    // OpenCode normally reports cost per assistant message. Some providers
+    // report zero even though the model has pricing, so fill the gap from the
+    // model catalog when tokens are available.
+    const needsPricing = response.data.some(
+      (message) =>
+        message.type === "assistant" &&
+        message.tokens !== undefined &&
+        (message.cost === undefined || message.cost === null || message.cost === 0),
+    );
+    const pricing = needsPricing ? await this.#loadModelCosts(client) : null;
+    return response.data.map((message) => {
+      const model = message.type === "assistant" ? message.model : undefined;
+      return mapMessage(
+        message,
+        model === undefined ? undefined : pricing?.get(`${model.providerID}/${model.id}`),
+      );
+    });
+  }
+
+  async #loadModelCosts(client: Client): Promise<Map<string, MessageCostPricing[]>> {
+    const now = Date.now();
+    if (this.#modelCosts !== null && now - this.#modelCosts.at < MODEL_COST_CACHE_MS) {
+      return this.#modelCosts.byModel;
+    }
+    try {
+      const response = await client.model.list();
+      const byModel = new Map<string, MessageCostPricing[]>();
+      for (const model of response.data) {
+        if (model.cost.length > 0) {
+          byModel.set(`${model.providerID}/${model.modelID}`, model.cost);
+        }
+      }
+      this.#modelCosts = { at: now, byModel };
+      return byModel;
+    } catch (error) {
+      this.#logger.debug(
+        { err: error },
+        "Failed to load OpenCode model pricing; cost fallback disabled",
+      );
+      const byModel = new Map<string, MessageCostPricing[]>();
+      this.#modelCosts = { at: now, byModel };
+      return byModel;
+    }
   }
 
   async listModels(directory?: string): Promise<AgentModel[]> {

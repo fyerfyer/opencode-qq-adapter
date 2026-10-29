@@ -112,78 +112,7 @@ async function makeService(): Promise<{
   return { service, configPath, config, reloads, audits };
 }
 
-describe("AdminConnectionService Jev key", () => {
-  it("writes the configured env key and reloads roleplay without exposing the secret", async () => {
-    process.env.JEV_API_KEY = "old-key";
-    const { service, configPath, reloads, audits } = await makeService();
-    const before = await service.snapshot();
-    expect(before.jev).toMatchObject({
-      available: true,
-      apiKeyEnv: "JEV_API_KEY",
-      apiKeyConfigured: true,
-      pluginStatus: "loaded",
-    });
-
-    const result = await service.saveJev({
-      apiKey: "new-jev-secret",
-      expectedEnvHash: before.envHash,
-    });
-    expect(result.jev?.apiKeyConfigured).toBe(true);
-    expect(result.reload).toMatchObject({ ok: true });
-    expect(reloads).toEqual(["roleplay"]);
-    expect(process.env.JEV_API_KEY).toBe("new-jev-secret");
-    expect(await readFile(join(configPath, "..", ".env"), "utf8")).toContain(
-      "JEV_API_KEY=new-jev-secret",
-    );
-    expect(JSON.stringify(result)).not.toContain("new-jev-secret");
-    expect(audits.map((entry) => entry.action)).toContain("admin.connection.jev.updated");
-    expect(audits.find((entry) => entry.action === "admin.connection.jev.updated")?.detail).toEqual(
-      {
-        apiKeyEnv: "JEV_API_KEY",
-      },
-    );
-  });
-
-  it("updates Roleplay Jev endpoint settings without requiring a new API key", async () => {
-    process.env.JEV_API_KEY = "old-key";
-    const { service, configPath, reloads, audits } = await makeService();
-    const before = await service.snapshot();
-
-    const result = await service.saveJev({
-      baseUrl: "https://jev.example/v1",
-      endpoint: "decisions",
-      model: "jev-1.14",
-      expectedEnvHash: before.envHash,
-    });
-
-    expect(result.jev).toMatchObject({
-      baseUrl: "https://jev.example/v1",
-      endpoint: "decisions",
-      model: "jev-1.14",
-      apiKeyConfigured: true,
-    });
-    expect(result.reload).toMatchObject({ ok: true });
-    expect(reloads).toEqual(["roleplay"]);
-    expect(process.env.JEV_API_KEY).toBe("old-key");
-    const yaml = await readFile(configPath, "utf8");
-    expect(yaml).toContain("jev_base_url: https://jev.example/v1");
-    expect(yaml).toContain("jev_endpoint: decisions");
-    expect(yaml).toContain("jev_model: jev-1.14");
-    expect(
-      audits.find((entry) => entry.action === "admin.connection.jev.updated")?.detail,
-    ).toMatchObject({ apiKeyEnv: "JEV_API_KEY" });
-  });
-
-  it("rejects an invalid Jev base URL and an empty update", async () => {
-    process.env.JEV_API_KEY = "old-key";
-    const { service } = await makeService();
-
-    await expect(service.saveJev({ baseUrl: "ftp://jev.example/v1" })).rejects.toMatchObject({
-      code: "invalid_jev_base_url",
-    });
-    await expect(service.saveJev({})).rejects.toMatchObject({ code: "nothing_to_update" });
-  });
-
+describe("AdminConnectionService plugin secrets", () => {
   it("writes a plugin-referenced secret and reloads that plugin", async () => {
     process.env.JEV_API_KEY = "old-key";
     const { service, configPath, reloads, audits } = await makeService();

@@ -11,8 +11,10 @@ const shellRuleSchema = z
 
 export const limitsSchema = z
   .object({
+    /** @deprecated Frequency limiting is hourly only. Accepted for v2 configs. */
     prompts_per_minute: z.number().int().positive().optional(),
-    runs_per_hour: z.number().int().positive().optional(),
+    /** Hourly request cap. `null` disables the cap; omitted inherits the global default. */
+    runs_per_hour: z.number().int().positive().nullable().optional(),
     daily_cost_usd: z.number().nonnegative().optional(),
     daily_tokens: z.number().int().positive().optional(),
   })
@@ -49,8 +51,10 @@ export const projectSchema = z
 
 const rateLimitSchema = z
   .object({
+    /** @deprecated Frequency limiting is hourly only. Accepted for v2 configs. */
     prompts_per_minute: z.number().int().positive().optional(),
-    runs_per_hour: z.number().int().positive().optional(),
+    /** Default hourly request cap for users without their own limit. */
+    runs_per_hour: z.number().int().positive().nullable().optional(),
   })
   .strict()
   .prefault({});

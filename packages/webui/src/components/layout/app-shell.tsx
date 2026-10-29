@@ -7,7 +7,6 @@ import {
   FolderGit2,
   Gauge,
   LogOut,
-  MessagesSquare,
   Moon,
   Puzzle,
   ScrollText,
@@ -55,7 +54,6 @@ const navigation = [
     label: "工作台",
     items: [
       { to: "/", label: "概览", icon: Gauge, end: true },
-      { to: "/sessions", label: "会话", icon: MessagesSquare },
       { to: "/projects", label: "项目", icon: FolderGit2 },
     ],
   },
@@ -77,7 +75,6 @@ const navigation = [
 
 const titles: Record<string, string> = {
   "/": "概览",
-  "/sessions": "会话",
   "/projects": "项目",
   "/access": "成员",
   "/agents": "Agents",
@@ -265,15 +262,6 @@ export function AppShell() {
             <ThemeToggle />
           </div>
         </header>
-        {session?.mustChangePassword === true && (
-          <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-            当前仍在使用初始密码。请前往{" "}
-            <Link to="/settings" className="font-medium underline underline-offset-2">
-              设置 → 安全
-            </Link>{" "}
-            修改密码。
-          </div>
-        )}
         <main className="flex min-w-0 flex-1 flex-col gap-6 p-4 md:p-6 lg:p-8">
           <Outlet />
         </main>

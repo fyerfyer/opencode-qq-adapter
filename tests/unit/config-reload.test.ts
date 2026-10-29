@@ -35,13 +35,13 @@ describe("config hot reload", () => {
     const { current, next } = await configs();
     current.qq.progress_delay_ms = 3000;
     next.qq.progress_delay_ms = 8000;
-    current.security.rate_limit.prompts_per_minute = 3;
+    current.security.rate_limit.runs_per_hour = 3;
     next.security.rate_limit = {};
     const result = applyHotConfig(current, next);
     expect(result.applied).toContain("qq");
     expect(result.applied).toContain("security");
     expect(current.qq.progress_delay_ms).toBe(8000);
-    expect(current.security.rate_limit.prompts_per_minute).toBeUndefined();
+    expect(current.security.rate_limit.runs_per_hour).toBeUndefined();
   });
 
   it("keeps restart-only sections unchanged", async () => {

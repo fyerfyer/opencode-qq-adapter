@@ -1,6 +1,5 @@
-import { FolderGit2, MessagesSquare, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { FolderGit2, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { api, errorMessage } from "@/api/client";
 import type { AccessSnapshot, ProjectRecord } from "@/api/types";
@@ -191,13 +190,6 @@ export function ProjectsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        {!project.hidden && (
-                          <Button asChild variant="ghost" size="icon-sm" title="查看会话">
-                            <Link to={`/sessions?project=${encodeURIComponent(project.id)}`}>
-                              <MessagesSquare />
-                            </Link>
-                          </Button>
-                        )}
                         <Button variant="ghost" size="icon-sm" onClick={() => setDialog(project)}>
                           <Settings2 />
                         </Button>

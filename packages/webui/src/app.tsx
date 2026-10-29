@@ -11,7 +11,6 @@ import { LoginPage } from "@/pages/login";
 import { PluginFramePage } from "@/pages/plugin-frame";
 import { PluginsPage } from "@/pages/plugins";
 import { ProjectsPage } from "@/pages/projects";
-import { SessionsPage } from "@/pages/sessions";
 import { SettingsPage } from "@/pages/settings";
 import { UsagePage } from "@/pages/usage";
 
@@ -47,7 +46,6 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="access" element={<AccessPage />} />
           <Route path="projects" element={<ProjectsPage />} />
-          <Route path="sessions" element={<SessionsPage />} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="prompts" element={<Navigate to="/agents" replace />} />
           <Route path="audit" element={<AuditPage />} />

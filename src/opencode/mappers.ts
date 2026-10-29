@@ -113,23 +113,33 @@ export function mapPermissionRequest(request: {
   };
 }
 
-export function mapMessage(message: {
-  id: string;
-  type: string;
-  time?: { created?: number };
-  text?: string;
-  error?: { type: string; message: string };
-  cost?: number;
-  agent?: string;
-  model?: { id: string; providerID: string };
-  tokens?: {
-    input: number;
-    output: number;
-    reasoning: number;
-    cache: { read: number; write: number };
-  };
-  content?: Array<{ type: string; text?: string }>;
-}): AgentMessage {
+export interface MessageCostPricing {
+  tier?: { type: "context"; size: number };
+  input: number;
+  output: number;
+  cache: { read: number; write: number };
+}
+
+export function mapMessage(
+  message: {
+    id: string;
+    type: string;
+    time?: { created?: number };
+    text?: string;
+    error?: { type: string; message: string };
+    cost?: number;
+    agent?: string;
+    model?: { id: string; providerID: string };
+    tokens?: {
+      input: number;
+      output: number;
+      reasoning: number;
+      cache: { read: number; write: number };
+    };
+    content?: Array<{ type: string; text?: string }>;
+  },
+  costPricing?: MessageCostPricing[],
+): AgentMessage {
   let text = message.text ?? "";
   if (message.type === "assistant") {
     const parts = message.content ?? [];
@@ -144,13 +154,20 @@ export function mapMessage(message: {
         .join("");
     }
   }
+  const reportedCost = message.cost ?? null;
+  const cost =
+    reportedCost === null || reportedCost === 0
+      ? ((message.tokens !== undefined && message.tokens !== null
+          ? computeMessageCost(message.tokens, costPricing)
+          : null) ?? reportedCost)
+      : reportedCost;
   return {
     id: message.id,
     type: message.type,
     text,
     created: message.time?.created ?? 0,
     error: message.error ? `${message.error.type}: ${message.error.message}` : null,
-    cost: message.cost ?? null,
+    cost,
     agent: message.agent ?? null,
     model: message.model ? `${message.model.providerID}/${message.model.id}` : null,
     tokens: message.tokens
@@ -163,4 +180,27 @@ export function mapMessage(message: {
         }
       : null,
   };
+}
+
+function computeMessageCost(
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: { read: number; write: number };
+  },
+  costPricing: MessageCostPricing[] | undefined,
+): number | null {
+  if (costPricing === undefined || costPricing.length === 0) return null;
+  const contextTokens = tokens.input + tokens.cache.read;
+  const pricing = costPricing
+    .filter((entry) => entry.tier === undefined || contextTokens >= entry.tier.size)
+    .sort((left, right) => (right.tier?.size ?? 0) - (left.tier?.size ?? 0))[0];
+  if (pricing === undefined) return null;
+  return (
+    (tokens.input / 1_000_000) * pricing.input +
+    ((tokens.output + tokens.reasoning) / 1_000_000) * pricing.output +
+    (tokens.cache.read / 1_000_000) * pricing.cache.read +
+    (tokens.cache.write / 1_000_000) * pricing.cache.write
+  );
 }

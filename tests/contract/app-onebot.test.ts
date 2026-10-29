@@ -277,7 +277,7 @@ describe("Application + OneBot port contract", () => {
 
   it("rate limits prompts and records the rejection in the audit log", async () => {
     const { app, onebot } = await startApp(new FakeAgent(), (config) => {
-      config.security.rate_limit = { prompts_per_minute: 1 };
+      config.security.rate_limit = { runs_per_hour: 1 };
     });
     onebot.emit(messageEvent(13, "first prompt"));
     await waitFor(

@@ -46,6 +46,7 @@ async function startAdminApp(): Promise<AdminHarness> {
         inbox_dir: join(root, "inbox"),
       },
       workspaces: { root: join(root, "workspaces") },
+      security: { rate_limit: { runs_per_hour: 30 } },
       default_project: "demo",
       users: {
         "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
@@ -141,8 +142,15 @@ async function request(
 
 async function access(harness: AdminHarness): Promise<{
   configHash: string;
-  users: Array<{ qq: string; note?: string; write_projects: string[] }>;
+  users: Array<{
+    qq: string;
+    note?: string;
+    write_projects: string[];
+    hourlyLimit: number | null;
+    hourlyUsage: number;
+  }>;
   projects: Array<{ id: string; hidden: boolean }>;
+  defaults: { hourlyLimit: number | null };
 }> {
   const response = await request(harness, "/admin/api/access");
   expect(response.status).toBe(200);
@@ -280,6 +288,31 @@ describe("Admin HTTP API", () => {
     });
     expect(comment.status).toBe(200);
     expect(await readFile(harness.configPath, "utf8")).toContain("edited from admin API");
+  });
+
+  it("stores and exposes a user-level unlimited hourly quota", async () => {
+    const harness = await startAdminApp();
+    let snapshot = await access(harness);
+    expect(snapshot.defaults.hourlyLimit).toBe(30);
+
+    const update = await request(harness, "/admin/api/users/20000", {
+      method: "PUT",
+      configHash: snapshot.configHash,
+      body: {
+        role: "owner",
+        projects: ["*"],
+        write_projects: ["*"],
+        limits: { runs_per_hour: null },
+      },
+    });
+    expect(update.status).toBe(200);
+
+    const source = await readFile(harness.configPath, "utf8");
+    expect(source).toContain("runs_per_hour: null");
+
+    snapshot = await access(harness);
+    const user = snapshot.users.find((item) => item.qq === "20000");
+    expect(user).toMatchObject({ hourlyLimit: null, hourlyUsage: 0 });
   });
 
   it("edits users and internal projects without sending path keys in the body", async () => {
@@ -617,7 +650,7 @@ describe("Admin HTTP API", () => {
     expect(((await overridden.json()) as { content: string }).content).toBe("changed");
   });
 
-  it("lists models/agents and switches conversation preferences", async () => {
+  it("lists available models for the agents page", async () => {
     const harness = await startAdminApp();
     const models = await request(harness, "/admin/api/models?projectId=demo");
     expect(models.status).toBe(200);
@@ -628,35 +661,9 @@ describe("Admin HTTP API", () => {
       id: "fake/model-a",
       capabilities: { input: ["text", "image"] },
     });
-
-    const agents = await request(harness, "/admin/api/agents?projectId=demo");
-    expect(agents.status).toBe(200);
-    expect(((await agents.json()) as { agents: unknown[] }).agents).toHaveLength(1);
-
-    await harness.app.conversations.submit(makeIncomingMessage({ text: "hello" }), "demo");
-    await waitFor(
-      () => harness.app.conversations.status("private:20000").activeRun === null,
-      3000,
-      "run completion",
-    );
-
-    const patched = await request(harness, "/admin/api/conversations/private%3A20000/preferences", {
-      method: "PATCH",
-      body: { model: "fake/model-b", agent: "build" },
-    });
-    expect(patched.status).toBe(200);
-
-    const conversations = await request(harness, "/admin/api/conversations");
-    const body = (await conversations.json()) as {
-      conversations: Array<{ chatKey: string; model: string; agent: string }>;
-    };
-    expect(body.conversations.find((item) => item.chatKey === "private:20000")).toMatchObject({
-      model: "fake/model-b",
-      agent: "build",
-    });
   });
 
-  it("returns dashboard and session data", async () => {
+  it("returns dashboard data", async () => {
     const harness = await startAdminApp();
     const overview = await request(harness, "/admin/api/overview");
     expect(overview.status).toBe(200);
@@ -666,10 +673,5 @@ describe("Admin HTTP API", () => {
     };
     expect(body.config.projects).toBe(1);
     expect(["ok", "degraded"]).toContain(body.status.status);
-
-    const conversations = await request(harness, "/admin/api/conversations");
-    expect(conversations.status).toBe(200);
-    const data = (await conversations.json()) as { conversations: unknown[] };
-    expect(Array.isArray(data.conversations)).toBe(true);
   });
 });

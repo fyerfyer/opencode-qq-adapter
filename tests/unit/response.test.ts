@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { collectResponse } from "../../src/conversation/response.js";
 import type { ActiveRun } from "../../src/conversation/types.js";
-import { mapMessage } from "../../src/opencode/mappers.js";
+import { type MessageCostPricing, mapMessage } from "../../src/opencode/mappers.js";
 import type { AgentMessage } from "../../src/ports/agent.js";
 import { FakeAgent } from "../helpers/fakes.js";
 
@@ -72,6 +72,75 @@ describe("final response extraction", () => {
       ],
     });
     expect(mapped.text).toBe("Here is the final answer.");
+  });
+
+  it("computes a missing assistant cost from model pricing", () => {
+    const mapped = mapMessage(
+      {
+        id: "msg",
+        type: "assistant",
+        cost: 0,
+        model: { id: "deepseek-v4.1-flash", providerID: "opencode-go" },
+        tokens: {
+          input: 2130,
+          output: 75,
+          reasoning: 96,
+          cache: { read: 145792, write: 0 },
+        },
+      },
+      [{ input: 0.15, output: 0.6, cache: { read: 0.003, write: 0 } }],
+    );
+    expect(mapped.cost).toBeCloseTo(0.000859476, 12);
+  });
+
+  it("does not replace a cost reported by OpenCode", () => {
+    const pricing: MessageCostPricing = {
+      input: 1,
+      output: 2,
+      cache: { read: 3, write: 4 },
+    };
+    const mapped = mapMessage(
+      {
+        id: "msg",
+        type: "assistant",
+        cost: 0.123,
+        tokens: {
+          input: 1000,
+          output: 100,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+      },
+      [pricing],
+    );
+    expect(mapped.cost).toBe(0.123);
+  });
+
+  it("bills reasoning tokens at the output price and selects the matching tier", () => {
+    const pricing: MessageCostPricing[] = [
+      { input: 1, output: 10, cache: { read: 0, write: 0 } },
+      {
+        tier: { type: "context", size: 100_000 },
+        input: 2,
+        output: 20,
+        cache: { read: 0, write: 0 },
+      },
+    ];
+    const mapped = mapMessage(
+      {
+        id: "msg",
+        type: "assistant",
+        cost: null,
+        tokens: {
+          input: 200_000,
+          output: 100_000,
+          reasoning: 100_000,
+          cache: { read: 0, write: 0 },
+        },
+      },
+      pricing,
+    );
+    expect(mapped.cost).toBeCloseTo(4.4, 12);
   });
 
   it("returns only the newest assistant text, not intermediate narration", async () => {

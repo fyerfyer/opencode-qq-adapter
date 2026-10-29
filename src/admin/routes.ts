@@ -165,28 +165,6 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     );
   });
 
-  api.put("/connections/jev", async (context) => {
-    const body = await readJson(
-      context,
-      z.object({
-        apiKey: z.string().max(4096).optional(),
-        baseUrl: z.string().max(2000).optional(),
-        endpoint: z.string().max(200).optional(),
-        model: z.string().max(200).optional(),
-        expectedEnvHash: z.string().nullable().optional(),
-      }),
-    );
-    return context.json(
-      await service.saveJevConnection({
-        ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
-        ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
-        ...(body.endpoint !== undefined ? { endpoint: body.endpoint } : {}),
-        ...(body.model !== undefined ? { model: body.model } : {}),
-        ...(body.expectedEnvHash !== undefined ? { expectedEnvHash: body.expectedEnvHash } : {}),
-      }),
-    );
-  });
-
   api.get("/access", async (context) => context.json(await service.access()));
 
   api.put("/users/:qq", async (context) => {
@@ -212,17 +190,6 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
     const result = await service.deleteProject(id, configHash(context));
     return context.json(result);
   });
-  api.get("/projects/:id/sessions", async (context) => {
-    const id = validateId(context.req.param("id"), "project");
-    return context.json({ sessions: await service.projectSessions(id) });
-  });
-  api.delete("/projects/:id/sessions/:sessionId", async (context) => {
-    const id = validateId(context.req.param("id"), "project");
-    const sessionId = context.req.param("sessionId");
-    await service.deleteProjectSession(id, sessionId);
-    return context.json({ ok: true });
-  });
-
   api.put("/settings/default-project", async (context) => {
     const body = await readJson(context, z.object({ projectId: z.string().min(1).nullable() }));
     const result = await service.setDefaultProject(body.projectId, configHash(context));
@@ -235,51 +202,6 @@ export function createAdminApi(options: AdminRoutesOptions): Hono<AdminEnv> {
   });
 
   api.post("/opencode/reload", async (context) => context.json(await service.reloadOpenCode()));
-
-  api.get("/agents", async (context) => {
-    const projectId = context.req.query("projectId");
-    return context.json({ agents: await service.conversationAgents(projectId) });
-  });
-
-  api.get("/conversations", async (context) =>
-    context.json({ conversations: await service.conversations() }),
-  );
-  api.post("/conversations/:chatKey/unbind", (context) => {
-    service.unbindConversation(decodeURIComponent(context.req.param("chatKey")));
-    return context.json({ ok: true });
-  });
-  api.post("/conversations/:chatKey/stop", async (context) =>
-    context.json(await service.stopConversation(decodeURIComponent(context.req.param("chatKey")))),
-  );
-  api.patch("/conversations/:chatKey/preferences", async (context) => {
-    const chatKey = decodeURIComponent(context.req.param("chatKey"));
-    const body = await readJson(
-      context,
-      z
-        .object({
-          agent: z.string().min(1).max(200).optional(),
-          model: z.string().min(1).max(200).optional(),
-        })
-        .strict()
-        .refine((value) => value.agent !== undefined || value.model !== undefined, {
-          message: "agent 或 model 至少提供一个。",
-        }),
-    );
-    await service.setConversationPreferences(chatKey, {
-      ...(body.agent !== undefined ? { agent: body.agent } : {}),
-      ...(body.model !== undefined ? { model: body.model } : {}),
-    });
-    return context.json({ ok: true });
-  });
-
-  api.post("/conversations/:chatKey/switch", async (context) => {
-    const body = await readJson(context, z.object({ sessionId: z.string().min(1) }));
-    await service.switchConversationSession(
-      decodeURIComponent(context.req.param("chatKey")),
-      body.sessionId,
-    );
-    return context.json({ ok: true });
-  });
 
   api.get("/config", async (context) => context.json(await service.readConfig()));
   api.put("/config", async (context) => {

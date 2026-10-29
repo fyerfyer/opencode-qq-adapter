@@ -4,9 +4,9 @@ import type { AppConfig } from "../config/schema.js";
 import type { AuditEntry } from "../domain/audit.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
-import type { PluginHost, PluginStatus } from "../plugins/host.js";
+import type { PluginHost } from "../plugins/host.js";
 import type { ConfigEditor } from "./config-editor.js";
-import { EnvEditor, type EnvSnapshot } from "./env-editor.js";
+import { EnvEditor } from "./env-editor.js";
 import { AdminError } from "./errors.js";
 
 export interface ConnectionStatus {
@@ -24,22 +24,10 @@ export interface NapCatConnectionSnapshot {
   status: ConnectionStatus;
 }
 
-export interface JevConnectionSnapshot {
-  available: boolean;
-  pluginStatus: PluginStatus["status"] | null;
-  apiKeyEnv: string;
-  apiKeyConfigured: boolean;
-  baseUrl: string | null;
-  endpoint: string | null;
-  model: string | null;
-  judge: string | null;
-}
-
 export interface ConnectionsSnapshot {
   envPath: string | null;
   envHash: string | null;
   napcat: NapCatConnectionSnapshot;
-  jev: JevConnectionSnapshot | null;
 }
 
 export interface ConnectionSaveResult extends ConnectionsSnapshot {
@@ -59,14 +47,6 @@ export interface AdminConnectionServiceOptions {
   logger: { warn: (obj: object, message?: string) => void };
 }
 
-export interface JevConnectionInput {
-  apiKey?: string;
-  baseUrl?: string;
-  endpoint?: string;
-  model?: string;
-  expectedEnvHash?: string | null;
-}
-
 export interface PluginSecretInput {
   key: string;
   value: string;
@@ -84,8 +64,8 @@ export interface PluginSecretResult {
  * Admin-side management for external connection credentials.
  *
  * Secrets live only in the private .env file. Snapshots expose whether a value
- * is configured, never the value itself. NapCat changes are restart-required;
- * Jev key changes force a roleplay reload so the judge is recreated.
+ * is configured, never the value itself. NapCat changes are restart-required.
+ * Plugin-owned settings and secrets stay in the plugin admin UI.
  */
 export class AdminConnectionService {
   readonly #config: AppConfig;
@@ -110,7 +90,6 @@ export class AdminConnectionService {
     const envPath = this.#envPath();
     const env = envPath === null ? null : await new EnvEditor(envPath).read();
     const status = this.#health.onebotStatus();
-    const roleplay = this.#roleplayOptions();
     return {
       envPath,
       envHash: env?.hash ?? null,
@@ -128,19 +107,6 @@ export class AdminConnectionService {
           lastError: status.lastError,
         },
       },
-      jev:
-        roleplay === null
-          ? null
-          : {
-              available: true,
-              pluginStatus: this.#roleplayStatus(),
-              apiKeyEnv: this.#apiKeyEnvName(roleplay),
-              apiKeyConfigured: this.#apiKeyConfigured(roleplay, env),
-              baseUrl: text(roleplay.jev_base_url),
-              endpoint: text(roleplay.jev_endpoint),
-              model: text(roleplay.jev_model),
-              judge: text(roleplay.sticker_judge),
-            },
     };
   }
 
@@ -207,107 +173,6 @@ export class AdminConnectionService {
       restartRequired: ["onebot"],
       warnings,
       reload: null,
-    };
-  }
-
-  async saveJev(input: JevConnectionInput): Promise<ConnectionSaveResult> {
-    const options = this.#roleplayOptions();
-    if (options === null) {
-      throw new AdminError(409, "roleplay_not_configured", "当前没有配置 Roleplay 插件。");
-    }
-    const keyName = this.#apiKeyEnv(options);
-    const apiKey = input.apiKey?.trim();
-    const baseUrl = input.baseUrl === undefined ? undefined : validateJevBaseUrl(input.baseUrl);
-    const endpoint =
-      input.endpoint === undefined ? undefined : validateJevText(input.endpoint, "Endpoint", 200);
-    const model =
-      input.model === undefined ? undefined : validateJevText(input.model, "Model", 200);
-    if (
-      (apiKey === undefined || apiKey.length === 0) &&
-      baseUrl === undefined &&
-      endpoint === undefined &&
-      model === undefined
-    ) {
-      throw new AdminError(400, "nothing_to_update", "没有需要保存的 Jev 配置。");
-    }
-    if (apiKey !== undefined && apiKey.length > 0) {
-      if (apiKey.length > 4096 || /[\r\n\0]/.test(apiKey)) {
-        throw new AdminError(400, "invalid_api_key", "Jev API Key 不合法。");
-      }
-    }
-
-    let envBackup: string | null = null;
-    if (apiKey !== undefined && apiKey.length > 0) {
-      const envPath = this.#envPath();
-      if (envPath === null) {
-        throw new AdminError(
-          409,
-          "env_unavailable",
-          "当前进程没有关联配置文件，无法保存 Jev 密钥。",
-        );
-      }
-      const envResult = await new EnvEditor(envPath).update(
-        { [keyName]: apiKey },
-        input.expectedEnvHash,
-      );
-      envBackup = envResult.backup;
-      process.env[keyName] = apiKey;
-    }
-
-    let configBackup: string | null = null;
-    const warnings: string[] = [];
-    if (baseUrl !== undefined || endpoint !== undefined || model !== undefined) {
-      if (!this.#configEditor.enabled) {
-        throw new AdminError(409, "config_unavailable", "当前进程没有关联配置文件路径。");
-      }
-      const current = await this.#configEditor.read();
-      const saved = await this.#configEditor.mutate((document) => {
-        if (baseUrl !== undefined) {
-          document.setIn(["plugins", "roleplay", "options", "jev_base_url"], baseUrl);
-        }
-        if (endpoint !== undefined) {
-          document.setIn(["plugins", "roleplay", "options", "jev_endpoint"], endpoint);
-        }
-        if (model !== undefined) {
-          document.setIn(["plugins", "roleplay", "options", "jev_model"], model);
-        }
-      }, current.hash);
-      configBackup = saved.backup;
-      warnings.push("已将 Jev Base URL / Endpoint / Model 写入 Roleplay 配置。");
-    }
-
-    let reload: ConnectionSaveResult["reload"] = null;
-    if (this.#plugins !== undefined) {
-      try {
-        const status = await this.#plugins.reloadPlugin("roleplay");
-        reload = {
-          ok: status === "loaded",
-          warnings: status === "loaded" ? [] : [`Roleplay 重载后状态为 ${status}`],
-        };
-        if (status !== "loaded") warnings.push(`Roleplay 当前状态：${status}`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.#logger.warn({ err: error }, "Roleplay reload after Jev update failed");
-        reload = { ok: false, warnings: [message], error: message };
-        warnings.push(`Roleplay 重载失败：${message}`);
-      }
-    }
-
-    const snapshot = await this.snapshot();
-    const detail: Record<string, unknown> = { apiKeyEnv: keyName };
-    if (baseUrl !== undefined) detail.baseUrl = baseUrl;
-    if (endpoint !== undefined) detail.endpoint = endpoint;
-    if (model !== undefined) detail.model = model;
-    this.#record({
-      action: "admin.connection.jev.updated",
-      detail,
-    });
-    return {
-      ...snapshot,
-      backup: envBackup ?? configBackup,
-      restartRequired: [],
-      warnings,
-      reload,
     };
   }
 
@@ -379,39 +244,6 @@ export class AdminConnectionService {
     return defaultEnvPath(this.#configPath);
   }
 
-  #roleplayOptions(): Record<string, unknown> | null {
-    if (!Object.hasOwn(this.#config.plugins, "roleplay")) return null;
-    return this.#config.plugins.roleplay?.options ?? {};
-  }
-
-  #roleplayStatus(): PluginStatus["status"] | null {
-    return (
-      this.#plugins?.status().plugins.find((plugin) => plugin.id === "roleplay")?.status ?? null
-    );
-  }
-
-  #apiKeyEnv(options: Record<string, unknown>): string {
-    const name = this.#apiKeyEnvName(options);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new AdminError(400, "invalid_api_key_env", "Roleplay 的 Jev 密钥环境变量名不合法。");
-    }
-    return name;
-  }
-
-  #apiKeyEnvName(options: Record<string, unknown>): string {
-    const configured = options.jev_api_key_env;
-    return typeof configured === "string" && configured.trim().length > 0
-      ? configured.trim()
-      : "TYPESAFE_API_KEY";
-  }
-
-  #apiKeyConfigured(options: Record<string, unknown>, env: EnvSnapshot | null): boolean {
-    const name = this.#apiKeyEnvName(options);
-    return (
-      (process.env[name]?.trim().length ?? 0) > 0 || (env?.values[name]?.trim().length ?? 0) > 0
-    );
-  }
-
   #record(
     entry: Omit<AuditEntry, "ts" | "actorQq" | "chatKey" | "projectId" | "workspaceId">,
   ): void {
@@ -459,10 +291,6 @@ function validateWsUrl(value: string): string {
   return url;
 }
 
-function text(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
 function containsString(value: unknown, needle: string): boolean {
   if (typeof value === "string") return value.trim() === needle;
   if (Array.isArray(value)) return value.some((item) => containsString(item, needle));
@@ -470,33 +298,4 @@ function containsString(value: unknown, needle: string): boolean {
     return Object.values(value).some((item) => containsString(item, needle));
   }
   return false;
-}
-
-function validateJevBaseUrl(value: string): string {
-  const url = value.trim();
-  if (url.length === 0 || url.length > 2000 || /\s/.test(url)) {
-    throw new AdminError(400, "invalid_jev_base_url", "Jev Base URL 不合法。");
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new AdminError(400, "invalid_jev_base_url", "Jev Base URL 不合法。");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new AdminError(
-      400,
-      "invalid_jev_base_url",
-      "Jev Base URL 必须以 http:// 或 https:// 开头。",
-    );
-  }
-  return url;
-}
-
-function validateJevText(value: string, label: string, maxLength: number): string {
-  const text = value.trim();
-  if (text.length === 0 || text.length > maxLength || /[\r\n\0]/.test(text)) {
-    throw new AdminError(400, "invalid_jev_setting", `${label} 不合法。`);
-  }
-  return text;
 }

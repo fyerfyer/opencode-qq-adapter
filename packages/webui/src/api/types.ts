@@ -126,9 +126,11 @@ export interface UserRecord {
   projects: string[];
   write_projects: string[];
   note?: string;
+  hourlyLimit: number | null;
+  hourlyUsage: number;
   limits?: {
     prompts_per_minute?: number;
-    runs_per_hour?: number;
+    runs_per_hour?: number | null;
     daily_cost_usd?: number;
     daily_tokens?: number;
   };
@@ -150,36 +152,10 @@ export interface ProjectRecord {
 export interface AccessSnapshot {
   users: UserRecord[];
   projects: ProjectRecord[];
+  defaults: { hourlyLimit: number | null };
   configHash: string | null;
   configPath: string | null;
   warnings: string[];
-}
-
-export interface ConversationRecord {
-  chatKey: string;
-  projectId: string;
-  workspaceId: string | null;
-  sessionId: string | null;
-  actorQq: number | null;
-  agent: string | null;
-  model: string | null;
-  createdAt: number;
-  lastActiveAt: number;
-  activeRun: RunRecord | null;
-  pendingApprovals: number;
-  recentRuns: RunRecord[];
-}
-
-export interface AgentSession {
-  id: string;
-  title: string | null;
-  agent: string | null;
-  model: string | null;
-  projectId: string | null;
-  created: number | null;
-  updated: number | null;
-  cost: number;
-  tokens: unknown;
 }
 
 export interface AgentModelCapabilities {
@@ -196,15 +172,6 @@ export interface AgentModelRecord {
   enabled: boolean;
   variants: string[];
   capabilities: AgentModelCapabilities | null;
-}
-
-export interface AgentSummaryRecord {
-  id: string;
-  name: string;
-  description: string | null;
-  mode: "primary" | "subagent" | "all";
-  model: string | null;
-  hidden: boolean;
 }
 
 export interface ConfigSnapshot {
@@ -301,16 +268,6 @@ export interface ConnectionsSnapshot {
     tokenConfigured: boolean;
     status: ConnectionStatus;
   };
-  jev: {
-    available: boolean;
-    pluginStatus: PluginInfo["status"] | null;
-    apiKeyEnv: string;
-    apiKeyConfigured: boolean;
-    baseUrl: string | null;
-    endpoint: string | null;
-    model: string | null;
-    judge: string | null;
-  } | null;
 }
 
 export interface ConnectionSaveResult extends ConnectionsSnapshot {

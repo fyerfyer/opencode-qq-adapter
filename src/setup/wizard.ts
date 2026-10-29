@@ -247,7 +247,7 @@ export function generateConfigObject(options: {
       max_outbound_image_bytes: 20971520,
       max_outbound_file_bytes: 52428800,
       max_queued_prompts: 3,
-      rate_limit: { prompts_per_minute: 6, runs_per_hour: 30 },
+      rate_limit: { runs_per_hour: 30 },
       budgets: {
         daily_cost_usd_per_user: 5,
         daily_tokens_per_user: 2000000,
@@ -268,6 +268,7 @@ export function generateConfigObject(options: {
         role: "owner",
         projects: ["*"],
         write_projects: ["*"],
+        limits: { runs_per_hour: null },
       },
     },
     projects,

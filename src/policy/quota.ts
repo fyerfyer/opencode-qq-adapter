@@ -4,7 +4,6 @@ import type { DailyUsage } from "../domain/audit.js";
 import type { StorePort, UsageDelta } from "../ports/store.js";
 
 export type QuotaDenyReason =
-  | "prompts_per_minute"
   | "runs_per_hour"
   | "daily_cost"
   | "daily_tokens"
@@ -23,7 +22,6 @@ export interface QuotaOptions {
   day?: (now: number) => string;
 }
 
-const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * 60 * 1000;
 const EVENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -33,6 +31,23 @@ export function localDay(timestamp: number): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * Resolve the effective hourly request cap.
+ *
+ * A user-level value overrides the global default. `null` means unlimited;
+ * an omitted value inherits `security.rate_limit.runs_per_hour`.
+ */
+export function hourlyLimit(config: AppConfig, actorQq: number): number | null {
+  const userLimit = config.users[String(actorQq)]?.limits?.runs_per_hour;
+  if (userLimit !== undefined) return userLimit;
+  return config.security.rate_limit.runs_per_hour ?? null;
+}
+
+/** Number of accepted requests in the rolling hour ending at `now`. */
+export function hourlyRequestCount(store: StorePort, actorQq: number, now = Date.now()): number {
+  return store.usage.countEvents(actorQq, "run", now - HOUR_MS);
 }
 
 /**
@@ -58,28 +73,9 @@ export class QuotaService {
   check(actorQq: number, projectId: string): QuotaDecision {
     const now = this.#now();
     const user = this.#config.users[String(actorQq)];
-    const promptsPerMinute = minLimit(
-      this.#config.security.rate_limit.prompts_per_minute,
-      user?.limits?.prompts_per_minute,
-    );
-    const runsPerHour = minLimit(
-      this.#config.security.rate_limit.runs_per_hour,
-      user?.limits?.runs_per_hour,
-    );
-    if (
-      promptsPerMinute !== undefined &&
-      this.#store.usage.countEvents(actorQq, "prompt", now - MINUTE_MS) >= promptsPerMinute
-    ) {
-      return deny(
-        "prompts_per_minute",
-        `请求过于频繁：每分钟最多 ${promptsPerMinute} 条 prompt，请稍后再试。`,
-      );
-    }
-    if (
-      runsPerHour !== undefined &&
-      this.#store.usage.countEvents(actorQq, "run", now - HOUR_MS) >= runsPerHour
-    ) {
-      return deny("runs_per_hour", `请求过于频繁：每小时最多 ${runsPerHour} 次运行，请稍后再试。`);
+    const runsPerHour = hourlyLimit(this.#config, actorQq);
+    if (runsPerHour !== null && hourlyRequestCount(this.#store, actorQq, now) >= runsPerHour) {
+      return deny("runs_per_hour", `请求过于频繁：每小时最多 ${runsPerHour} 次请求，请稍后再试。`);
     }
 
     const day = this.#day(now);
@@ -121,7 +117,6 @@ export class QuotaService {
     const now = this.#now();
     const day = this.#day(now);
     this.#store.usage.recordPrompt(day, actorQq, projectId);
-    this.#store.usage.recordEvent(now, actorQq, projectId, "prompt");
     this.#store.usage.recordEvent(now, actorQq, projectId, "run");
     this.#prune(now);
   }

@@ -32,7 +32,7 @@ OpenCode V2 service
 - 群聊零配置：任何已授权 QQ 在私聊或群里都按同一套权限使用；群内默认每人独立会话，@bot 可全局配置。
 - owner TOTP 2FA、每日预算/限流、owner 告警。
 - SQLite 持久化会话、运行、审批、工作区、用量和审计。
-- 本机 WebUI：登录、状态、成员/项目、会话、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
+- 本机 WebUI：登录、状态、成员/项目、Agents、插件、审计、用量、YAML 编辑，以及 Roleplay 的角色卡/世界书/表情包/记忆/绑定管理。
 - 第三方插件 UI：插件自带静态页面，在 opaque-origin sandbox iframe 中运行，通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 使用受控 API。
 - QQ 侧插件 SDK：命令、prompt/run hooks、事件、独立数据目录、文本/图片/文件发送。
 - 可选 Roleplay 插件：Character Card V2/V3、世界书 lite（递归/整词/调试）、情绪表情包（WebP 缩略图）、Markdown 记忆和分段延迟回复。
@@ -264,14 +264,13 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 管理台提供：
 
 - 概览：OneBot / OpenCode / SQLite / 事件流状态、活跃 run、今日用量、待审批和审计。
-- 成员：QQ、Bot 角色（所有者/管理员/使用者）、可访问项目、可修改项目、可收紧的个人限制。
+- 成员：QQ、Bot 角色（所有者/管理员/使用者）、可访问项目、可修改项目、每小时请求上限（继承全局/不限制/自定义）和每日预算。
 - 项目：项目路径、agent/model、workspace 模式；插件内部项目默认隐藏。
-- 会话：QQ chat ↔ OpenCode session 绑定、中断、解绑、切换和删除项目 session；可直接切换当前会话的 Agent/model，模型列表会标注 vision/tools capability。
 - Agents：管理 OpenCode 全局 `agents/*.md`；单一核心 `qq-code` Agent 可编辑并备份/恢复，每个 Agent 可直接选择默认模型（写入 frontmatter `model:`），模型列表来自 OpenCode，支持搜索、固定顶部和滚动列表；保存后自动调用 OpenCode location reload 热重载。模型变更会同步切换到该 Agent 现有、且没有显式会话模型覆盖的 live session；若当前有任务运行或排队，保存会被拒绝，避免热重载中断正在执行的任务；请等任务结束后再保存。普通 QQ、Roleplay 和后台 utility run 都使用同一个核心 Agent：Roleplay 通过 `projects.roleplay.agent` 指向它，实际模型取自该 Agent frontmatter 的 `model:`。插件不再安装或托管 `qq-rp`/`qq-rp-utility`。角色卡和记忆仍在 Roleplay 页面。
 - 配置：直接编辑 YAML；保存时执行 zod + 路径校验、备份、原子替换和热加载。
-- 审计 / 用量：事件明细和按天 token / cost 汇总。
+- 审计 / 用量：事件明细和按天 token / cost 汇总；OpenCode 返回 `cost: 0` 或缺失时，bridge 会按模型目录价格和 token 用量补算。
 - 插件：查看加载状态、命令、能力、数据来源、admin routes 和失败原因；可通过 WebUI 上传 ZIP 或注册本地目录安装插件，支持启用/禁用、重新加载、更新、回滚和卸载，也可进入插件自己的管理页。
-- 设置：配置 YAML、管理员密码、运行时信息，以及“连接”页管理 NapCat WebSocket URL/Access Token 和 Roleplay 的 Jev API Key、Base URL、Endpoint、模型；密钥只写入 `.env`，Jev 端点写入 Roleplay 配置，页面只显示“已配置/未配置”。Roleplay 页面的“设置 → 表情”里也可以直接填写 Jev Base URL、API Key，并用“测试连接”按钮做一次真实请求。
+- 设置：配置 YAML、管理员密码、运行时信息，以及“连接”页管理 NapCat WebSocket URL/Access Token。插件自己的配置和密钥（包括 Roleplay 的 Jev API Key、Base URL、Endpoint、模型）只在插件页面管理。
 - 第三方插件页面：插件自带 `ui/` 静态资源，由核心在 `sandbox` iframe 中挂载；页面通过 `@opencode-qq/plugin-ui` 的 MessageChannel bridge 调用本插件 admin API，不接触管理员 cookie 和 CSRF。
 - Roleplay：角色卡导入、备注编辑、世界书条目新增/编辑/删除/启停与关键词调试、表情包上传/去重/缩略图/重命名/删除、Markdown 记忆编辑/历史 diff/原文搜索/整理任务、QQ 会话绑定、结构化插件配置。Roleplay 页面本身也已迁移到 iframe。
 - Roleplay 页面只在插件加载成功后出现在侧边栏；插件失败时在“插件”页显示错误和配置入口。
@@ -281,7 +280,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 - 默认 `admin.allow_remote: false`，非 loopback 请求会被拒绝。
 - 管理员密码用 scrypt 哈希存入 SQLite；浏览器只保留 HttpOnly session cookie。
 - 所有写操作要求 CSRF token 和同源 Origin 校验。
-- WebUI 只在“设置 → 连接”页或插件自己的管理页写入受控的 `.env` 键（NapCat URL/Token、Jev API Key）；插件密钥接口只允许写入该插件 options 已引用的环境变量名，不在前端回显密钥。
+- WebUI 只在“设置 → 连接”页写入 NapCat URL/Token，或通过插件自己的管理页写入该插件引用的 `.env` 密钥；插件密钥接口只允许写入该插件 options 已引用的环境变量名，不在前端回显密钥。
 - 如果确实需要局域网访问，请显式开启 `admin.allow_remote`，并放在 TLS 反向代理后。
 
 ### 连接与密钥
@@ -290,7 +289,7 @@ opencode-qq admin reset-password -c ~/.config/opencode-qq/config.yaml
 
 - 查看 NapCat WebSocket 连接状态、Bot QQ、最后连接/事件和错误。
 - 修改 NapCat WebSocket URL 和 Access Token；保存到 `config/.env`，需要重启 bridge 后生效。URL 不要带 token/query，Token 单独填写。
-- 配置 Roleplay 的 Jev API Key、Base URL、Endpoint 和模型；Key 写入 `.env`，其余写入 Roleplay 插件配置，保存后会自动重载 Roleplay 插件。
+- 插件配置和插件密钥（包括 Roleplay 的 Jev）不在核心连接页出现；请到对应插件自己的管理页修改。
 - 密钥字段始终是 write-only，留空表示保持现有值。
 
 NapCat 的进程/容器保活由 Docker `restart: unless-stopped` 和 `deploy/systemd/opencode-qq.service` 的 `Restart=always` 负责；bridge 的 OneBot SDK 也会自动重连。QQ 登录态失效时 HTTP `get_login_info` 会失败，WebUI 会显示“QQ 登录态失效”，这需要你到 NapCat WebUI 重新扫码或快速登录，不能靠自动重启绕过。
@@ -766,10 +765,12 @@ security:
 
 ## 预算、限流与 2FA
 
+频率限制是**用户级的每小时请求配额**。`security.rate_limit.runs_per_hour` 是未单独配置用户的全局默认值；用户自己的 `limits.runs_per_hour` 可以更高，设为 `null` 表示不限制：
+
 ```yaml
 security:
   rate_limit:
-    prompts_per_minute: 6
+    # 未配置用户级配额时使用；设为 null 表示默认不限制。
     runs_per_hour: 30
   budgets:
     daily_cost_usd_per_user: 5
@@ -779,7 +780,22 @@ security:
     enabled: false
     totp_secret: ${QQ_ADMIN_TOTP_SECRET:-}
     window_seconds: 300
+
+users:
+  "10001":
+    role: owner
+    projects: ["*"]
+    write_projects: ["*"]
+    limits:
+      runs_per_hour: null # 不限制每小时请求
+  "10002":
+    role: member
+    projects: ["demo"]
+    limits:
+      runs_per_hour: 60
 ```
+
+每小时配额使用滚动窗口：只统计已接受的请求，超过后拒绝新请求，直到最早的请求滑出 1 小时。每日 cost/token 预算与频率限制独立生效；选择“不限制”不会绕过预算。WebUI 的“成员”页可以直接选择“继承全局 / 不限制 / 自定义”。
 
 启用 2FA 后，owner 需要先私聊发送：
 

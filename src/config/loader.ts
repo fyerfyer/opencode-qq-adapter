@@ -181,6 +181,19 @@ async function resolveAndValidate(
   const warnings: string[] = [];
   const errors: string[] = [];
 
+  if (config.security.rate_limit.prompts_per_minute !== undefined) {
+    warnings.push(
+      "security.rate_limit.prompts_per_minute is deprecated and ignored; use users.<qq>.limits.runs_per_hour for the hourly quota.",
+    );
+  }
+  for (const [qq, user] of Object.entries(config.users)) {
+    if (user.limits?.prompts_per_minute !== undefined) {
+      warnings.push(
+        `users.${qq}.limits.prompts_per_minute is deprecated and ignored; use users.${qq}.limits.runs_per_hour.`,
+      );
+    }
+  }
+
   config.workspaces.root = resolvePath(baseDir, config.workspaces.root);
   config.storage.database_path = resolvePath(baseDir, config.storage.database_path);
   config.storage.inbox_dir = resolvePath(baseDir, config.storage.inbox_dir);

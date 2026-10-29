@@ -328,6 +328,37 @@ projects:
     await expect(loadConfig(badId, { env: {} })).rejects.toMatchObject({ code: "schema" });
   });
 
+  it("warns when the deprecated per-minute frequency limit is configured", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+security:
+  rate_limit:
+    prompts_per_minute: 6
+users:
+  "10001":
+    role: owner
+    limits:
+      prompts_per_minute: 3
+projects:
+  demo:
+    path: ./project
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: false });
+    expect(loaded.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("security.rate_limit.prompts_per_minute"),
+        expect.stringContaining("users.10001.limits.prompts_per_minute"),
+      ]),
+    );
+  });
+
   it("reports a missing local plugin path during path validation", async () => {
     const root = await workspace();
     const path = await writeConfig(

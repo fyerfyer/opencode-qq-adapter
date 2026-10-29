@@ -395,7 +395,6 @@ describe("Plugin admin HTTP API", () => {
         tokenConfigured: boolean;
         status: { connected: boolean; loginOk: boolean | null };
       };
-      jev: unknown;
     };
     expect(beforeBody.envPath).toBe(join(harness.configPath, "..", ".env"));
     expect(beforeBody.napcat).toMatchObject({
@@ -403,7 +402,6 @@ describe("Plugin admin HTTP API", () => {
       tokenConfigured: true,
       status: { connected: true, loginOk: true },
     });
-    expect(beforeBody.jev).toBeNull();
     expect(JSON.stringify(beforeBody)).not.toMatch(/accessToken|token"|secret/i);
 
     const updated = await adminRequest(harness, "/connections/napcat", {
@@ -437,15 +435,5 @@ describe("Plugin admin HTTP API", () => {
     });
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ error: "invalid_napcat_url" });
-  });
-
-  it("requires roleplay before saving a Jev API key", async () => {
-    const harness = await startApp();
-    const response = await adminRequest(harness, "/connections/jev", {
-      method: "PUT",
-      body: { apiKey: "jev-secret" },
-    });
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: "roleplay_not_configured" });
   });
 });

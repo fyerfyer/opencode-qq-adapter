@@ -4,7 +4,6 @@ import type { ConfigReloadResult } from "../config/reload.js";
 import type { AppConfig, ProjectConfig, UserConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
 import type { AuditEntry } from "../domain/audit.js";
-import type { ConversationRecord, RunRecord } from "../domain/conversation.js";
 import type { AuditTrail } from "../observability/audit.js";
 import type { HealthService } from "../observability/health.js";
 import type { PluginHost } from "../plugins/host.js";
@@ -14,7 +13,8 @@ import type {
   PluginUninstallResult,
 } from "../plugins/install/types.js";
 import type { PluginAdminActor, PluginAdminResult } from "../plugins/sdk.js";
-import type { AgentModel, AgentPort, AgentSession, AgentSummary } from "../ports/agent.js";
+import { hourlyLimit, hourlyRequestCount } from "../policy/quota.js";
+import type { AgentModel, AgentPort } from "../ports/agent.js";
 import type { StorePort } from "../ports/store.js";
 import {
   AdminAuth,
@@ -27,7 +27,6 @@ import {
   AdminConnectionService,
   type ConnectionSaveResult,
   type ConnectionsSnapshot,
-  type JevConnectionInput,
 } from "./connections.js";
 import { AdminError } from "./errors.js";
 import {
@@ -72,17 +71,12 @@ export interface AdminServiceOptions {
 }
 
 export interface AccessSnapshot {
-  users: Array<{ qq: string } & UserConfig>;
+  users: Array<{ qq: string; hourlyLimit: number | null; hourlyUsage: number } & UserConfig>;
   projects: Array<{ id: string } & ProjectConfig>;
+  defaults: { hourlyLimit: number | null };
   configHash: string | null;
   configPath: string | null;
   warnings: string[];
-}
-
-export interface ConversationOverview extends ConversationRecord {
-  activeRun: RunRecord | null;
-  pendingApprovals: number;
-  recentRuns: RunRecord[];
 }
 
 export interface OpenCodeReloadResult {
@@ -265,11 +259,21 @@ export class AdminService {
         this.#logger.warn({ err: error }, "Admin access view could not read config");
       }
     }
+    const now = Date.now();
     return {
-      users: Object.entries(this.#config.users).map(([qq, user]) => ({ qq, ...user })),
+      users: Object.entries(this.#config.users).map(([qq, user]) => {
+        const actorQq = Number(qq);
+        return {
+          qq,
+          ...user,
+          hourlyLimit: hourlyLimit(this.#config, actorQq),
+          hourlyUsage: hourlyRequestCount(this.#store, actorQq, now),
+        };
+      }),
       projects: Object.entries(this.#config.projects)
         .filter(([id]) => !isChatProjectId(id))
         .map(([id, project]) => ({ id, ...project })),
+      defaults: { hourlyLimit: this.#config.security.rate_limit.runs_per_hour ?? null },
       configHash: hash,
       configPath: this.#configPath,
       warnings,
@@ -375,40 +379,6 @@ export class AdminService {
     expectedEnvHash?: string | null;
   }): Promise<ConnectionSaveResult> {
     return this.connectionService.saveNapcat(input);
-  }
-
-  saveJevConnection(input: JevConnectionInput): Promise<ConnectionSaveResult> {
-    return this.connectionService.saveJev(input);
-  }
-
-  async conversations(): Promise<ConversationOverview[]> {
-    return this.#store.conversations
-      .list()
-      .filter(
-        (conversation) =>
-          isChatProjectId(conversation.projectId) ||
-          this.#config.projects[conversation.projectId]?.hidden !== true,
-      )
-      .map((conversation) => ({
-        ...conversation,
-        activeRun: this.#store.runs.activeForChat(conversation.chatKey),
-        pendingApprovals: this.#store.approvals.findPendingByChat(conversation.chatKey).length,
-        recentRuns: this.#store.runs.listRecent(conversation.chatKey, 5),
-      }));
-  }
-
-  async projectSessions(projectId: string): Promise<AgentSession[]> {
-    const project = this.#config.projects[projectId];
-    if (project === undefined) throw new AdminError(404, "project_not_found", "项目不存在。");
-    try {
-      return await this.#agent.listSessions(project.path, 50);
-    } catch (error) {
-      throw new AdminError(
-        503,
-        "opencode_unavailable",
-        `无法读取 OpenCode 会话：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
   }
 
   async conversationModels(projectId?: string): Promise<AgentModel[]> {
@@ -573,36 +543,6 @@ export class AdminService {
     }
   }
 
-  async conversationAgents(projectId?: string): Promise<AgentSummary[]> {
-    const directory = this.#projectDirectory(projectId);
-    try {
-      return await this.#agent.listAgents(directory);
-    } catch (error) {
-      throw new AdminError(
-        503,
-        "opencode_unavailable",
-        `无法读取 OpenCode agents：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  async setConversationPreferences(
-    chatKey: string,
-    preferences: { agent?: string; model?: string },
-  ): Promise<void> {
-    if (this.#store.conversations.get(chatKey) === null) {
-      throw new AdminError(404, "conversation_not_found", "会话不存在。");
-    }
-    const result = await this.#conversations.setPreferences(chatKey, preferences);
-    if (!result.ok) {
-      throw new AdminError(409, "conversation_busy", result.reason ?? "切换失败。");
-    }
-    this.record({
-      action: "admin.conversation.preferences",
-      detail: { chatKey, ...preferences },
-    });
-  }
-
   /**
    * OpenCode watches the global agents directory and reloads the location when
    * an agent file changes. Writing while a run is active would therefore
@@ -614,69 +554,6 @@ export class AdminService {
     const project = this.#config.projects[projectId];
     if (project === undefined) throw new AdminError(404, "project_not_found", "项目不存在。");
     return project.path;
-  }
-
-  async switchConversationSession(chatKey: string, sessionId: string): Promise<void> {
-    const conversation = this.#store.conversations.get(chatKey);
-    if (conversation === null) throw new AdminError(404, "conversation_not_found", "会话不存在。");
-    const sessions = await this.projectSessions(conversation.projectId);
-    const session = sessions.find((item) => item.id === sessionId) ?? null;
-    if (session === null) {
-      throw new AdminError(404, "session_not_found", "该 OpenCode 会话不属于当前项目。");
-    }
-    const result = await this.#conversations.switchSession(chatKey, session);
-    if (!result.ok) throw new AdminError(409, "conversation_busy", result.reason ?? "会话正忙。");
-    this.record({
-      action: "admin.conversation.switched",
-      detail: { chatKey, sessionId },
-    });
-  }
-
-  unbindConversation(chatKey: string): void {
-    const result = this.#conversations.resetSession(chatKey);
-    if (!result.ok) throw new AdminError(409, "conversation_busy", result.reason ?? "操作失败。");
-    this.record({ action: "admin.conversation.unbound", detail: { chatKey } });
-  }
-
-  async stopConversation(chatKey: string): Promise<{ stopped: boolean; queuedCleared: number }> {
-    const result = await this.#conversations.stop(chatKey);
-    this.record({ action: "admin.conversation.stopped", detail: { chatKey, ...result } });
-    return result;
-  }
-
-  async deleteProjectSession(projectId: string, sessionId: string): Promise<void> {
-    const sessions = await this.projectSessions(projectId);
-    if (!sessions.some((session) => session.id === sessionId)) {
-      throw new AdminError(404, "session_not_found", "该会话不属于此项目，或已被删除。");
-    }
-    if (this.#store.runs.activeForSession(sessionId) !== null) {
-      throw new AdminError(409, "session_busy", "该会话仍有运行中的 run，请先中断后再删除。");
-    }
-    try {
-      await this.#agent.deleteSession(sessionId);
-    } catch (error) {
-      throw new AdminError(
-        503,
-        "opencode_unavailable",
-        `删除 OpenCode 会话失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    // Do not leave QQ conversations pointing at a deleted session. The run
-    // guard above means there is no active queue entry to conflict with.
-    for (const conversation of this.#store.conversations.list()) {
-      if (conversation.sessionId === sessionId) {
-        this.#store.conversations.setSession(
-          conversation.chatKey,
-          null,
-          conversation.agent,
-          conversation.model,
-        );
-      }
-    }
-    this.record({
-      action: "admin.opencode.session.deleted",
-      detail: { projectId, sessionId },
-    });
   }
 
   async promptsList(): Promise<{ root: string; prompts: PromptSummary[] }> {

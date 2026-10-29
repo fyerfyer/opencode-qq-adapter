@@ -395,61 +395,6 @@ export class ConversationManager {
     return { ok: true };
   }
 
-  /** Apply one or both agent/model preferences from the admin WebUI. */
-  async setPreferences(
-    chatKey: string,
-    preferences: { agent?: string; model?: string },
-  ): Promise<{ ok: boolean; reason?: string }> {
-    const guard = this.#preferenceGuard(chatKey);
-    if (guard !== null) return guard;
-    const conversation = this.#store.conversations.get(chatKey);
-    if (conversation === null) {
-      return { ok: false, reason: "还没有选择项目，请先发送 !use <项目>。" };
-    }
-    let explicitModel = conversation.model;
-    if (preferences.model !== undefined) {
-      if (conversation.sessionId !== null) {
-        try {
-          await this.#agent.switchModel(conversation.sessionId, preferences.model);
-        } catch (error) {
-          return { ok: false, reason: `切换模型失败：${describeError(error)}` };
-        }
-      }
-      explicitModel = preferences.model;
-      this.#store.conversations.setSession(
-        chatKey,
-        conversation.sessionId,
-        conversation.agent,
-        explicitModel,
-      );
-    }
-    if (preferences.agent !== undefined) {
-      if (conversation.sessionId !== null) {
-        try {
-          await this.#agent.switchAgent(conversation.sessionId, preferences.agent);
-        } catch (error) {
-          return { ok: false, reason: `切换 agent 失败：${describeError(error)}` };
-        }
-        if (explicitModel === null) {
-          await this.#applyAgentModelToSession(
-            chatKey,
-            conversation.projectId,
-            conversation.sessionId,
-            preferences.agent,
-          );
-        }
-      }
-      this.#store.conversations.setSession(
-        chatKey,
-        conversation.sessionId,
-        preferences.agent,
-        explicitModel,
-      );
-    }
-    this.#logger.info({ chatKey, ...preferences }, "Conversation preferences changed");
-    return { ok: true };
-  }
-
   async #resolveAgentModel(projectId: string, agentId: string): Promise<string | null> {
     const project = this.#config.projects[projectId];
     if (project === undefined) return null;

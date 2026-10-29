@@ -184,7 +184,7 @@ export function AccessPage() {
                       <ProjectTags projects={user.write_projects} all={visibleProjects} writable />
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {formatLimits(user.limits)}
+                      {formatLimits(user)}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
@@ -224,6 +224,7 @@ export function AccessPage() {
           key={dialog.user?.qq ?? "new-user"}
           user={dialog.user}
           projects={visibleProjects}
+          defaultHourlyLimit={data.defaults.hourlyLimit}
           onClose={() => setDialog(null)}
           onSave={(qq, body) => save(`/users/${dialog.user?.qq ?? qq}`, body)}
         />
@@ -232,14 +233,18 @@ export function AccessPage() {
   );
 }
 
+type HourlyLimitMode = "inherit" | "unlimited" | "custom";
+
 function UserDialog({
   user,
   projects,
+  defaultHourlyLimit,
   onClose,
   onSave,
 }: {
   user?: UserRecord;
   projects: ProjectRecord[];
+  defaultHourlyLimit: number | null;
   onClose: () => void;
   onSave: (qq: string, body: Record<string, unknown>) => void;
 }) {
@@ -252,8 +257,12 @@ function UserDialog({
   const [access, setAccess] = useState<Set<string>>(new Set(initialAccess));
   const [write, setWrite] = useState<Set<string>>(new Set(initialWrite));
   const [note, setNote] = useState(user?.note ?? "");
-  const [promptsPerMinute, setPromptsPerMinute] = useState(
-    user?.limits?.prompts_per_minute?.toString() ?? "",
+  const [hourlyMode, setHourlyMode] = useState<HourlyLimitMode>(
+    user?.limits?.runs_per_hour === undefined
+      ? "inherit"
+      : user.limits.runs_per_hour === null
+        ? "unlimited"
+        : "custom",
   );
   const [runsPerHour, setRunsPerHour] = useState(user?.limits?.runs_per_hour?.toString() ?? "");
   const [dailyCost, setDailyCost] = useState(user?.limits?.daily_cost_usd?.toString() ?? "");
@@ -287,13 +296,22 @@ function UserDialog({
     }
   };
 
+  const parsedHourly = Number(runsPerHour);
+  const hourlyInvalid =
+    hourlyMode === "custom" &&
+    (!Number.isInteger(parsedHourly) || parsedHourly <= 0 || runsPerHour.trim() === "");
+
   const submit = () => {
-    const limits = compactNumbers({
-      prompts_per_minute: promptsPerMinute,
-      runs_per_hour: runsPerHour,
-      daily_cost_usd: dailyCost,
-      daily_tokens: dailyTokens,
-    });
+    const limits: Record<string, number | null> = {};
+    if (hourlyMode === "unlimited") limits.runs_per_hour = null;
+    if (hourlyMode === "custom") limits.runs_per_hour = parsedHourly;
+    Object.assign(
+      limits,
+      compactNumbers({
+        daily_cost_usd: dailyCost,
+        daily_tokens: dailyTokens,
+      }),
+    );
     const accessIds = allProjectIds.filter((id) => access.has(id));
     const writeIds = allProjectIds.filter((id) => write.has(id) && access.has(id));
     onSave(qq, {
@@ -303,7 +321,7 @@ function UserDialog({
       write_projects:
         allProjectIds.length > 0 && writeIds.length === allProjectIds.length ? ["*"] : writeIds,
       ...(note.trim().length > 0 ? { note: note.trim() } : {}),
-      ...(limits !== undefined ? { limits } : {}),
+      ...(Object.keys(limits).length > 0 ? { limits } : {}),
     });
   };
 
@@ -401,22 +419,54 @@ function UserDialog({
           </Field>
 
           <div>
-            <p className="mb-2 text-sm font-medium">个人限制（只能收紧全局值）</p>
-            <div className="grid gap-3 sm:grid-cols-4">
-              <Field label="每分钟 prompts">
-                <Input
-                  inputMode="numeric"
-                  value={promptsPerMinute}
-                  onChange={(event) => setPromptsPerMinute(event.target.value)}
-                />
+            <p className="text-sm font-medium">频率限制</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              用户级配置优先于全局默认；选择“不限制”后只解除每小时请求限制，每日预算仍然生效。
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label="每小时请求上限">
+                <Select
+                  value={hourlyMode}
+                  onValueChange={(value) => setHourlyMode(value as HourlyLimitMode)}
+                >
+                  <SelectTrigger aria-label="每小时请求上限模式">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">继承全局</SelectItem>
+                    <SelectItem value="unlimited">不限制</SelectItem>
+                    <SelectItem value="custom">自定义</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
-              <Field label="每小时 runs">
-                <Input
-                  inputMode="numeric"
-                  value={runsPerHour}
-                  onChange={(event) => setRunsPerHour(event.target.value)}
-                />
-              </Field>
+              {hourlyMode === "custom" && (
+                <Field label="自定义上限（次/小时）">
+                  <Input
+                    aria-label="每小时请求上限"
+                    inputMode="numeric"
+                    value={runsPerHour}
+                    onChange={(event) => setRunsPerHour(event.target.value)}
+                  />
+                </Field>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {hourlyMode === "unlimited"
+                ? "已选择不限制每小时请求。"
+                : hourlyMode === "inherit"
+                  ? `继承全局：${
+                      defaultHourlyLimit === null ? "不限制" : `${defaultHourlyLimit} 次/小时`
+                    }。`
+                  : "超过上限后会拒绝新请求，直到最早的请求滑出 1 小时窗口。"}
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">每日预算（可选）</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              留空表示继承全局预算；每日预算与频率限制独立生效。
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <Field label="每日 cost USD">
                 <Input
                   inputMode="decimal"
@@ -438,7 +488,7 @@ function UserDialog({
           <Button variant="outline" onClick={onClose}>
             取消
           </Button>
-          <Button onClick={submit} disabled={!/^\d{5,12}$/.test(qq)}>
+          <Button onClick={submit} disabled={!/^\d{5,12}$/.test(qq) || hourlyInvalid}>
             保存
           </Button>
         </DialogFooter>
@@ -517,14 +567,13 @@ function expandProjectList(projects: string[], all: string[]): string[] {
   return projects.includes("*") ? [...all] : projects.filter((project) => all.includes(project));
 }
 
-function formatLimits(limits: UserRecord["limits"]): string {
-  if (limits === undefined) return "继承全局";
-  const parts: string[] = [];
-  if (limits.prompts_per_minute !== undefined) parts.push(`${limits.prompts_per_minute}/min`);
-  if (limits.runs_per_hour !== undefined) parts.push(`${limits.runs_per_hour}/h`);
-  if (limits.daily_cost_usd !== undefined) parts.push(`$${limits.daily_cost_usd}/d`);
-  if (limits.daily_tokens !== undefined) parts.push(`${limits.daily_tokens} tok/d`);
-  return parts.length === 0 ? "继承全局" : parts.join(" · ");
+function formatLimits(user: UserRecord): string {
+  const hourly =
+    user.hourlyLimit === null ? "不限制" : `${user.hourlyUsage}/${user.hourlyLimit} 次/小时`;
+  const parts = [hourly];
+  if (user.limits?.daily_cost_usd !== undefined) parts.push(`$${user.limits.daily_cost_usd}/日`);
+  if (user.limits?.daily_tokens !== undefined) parts.push(`${user.limits.daily_tokens} tok/日`);
+  return parts.join(" · ");
 }
 
 function compactNumbers(values: Record<string, string>): Record<string, number> | undefined {
