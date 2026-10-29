@@ -38,6 +38,8 @@ export interface PromptContextInput {
   turnCount: number;
   /** Optional scene label, e.g. a group chat. */
   scene?: string;
+  /** Recent speakers in a group chat, for speaker attribution. */
+  participants?: string[];
   /** Available sticker emotions; omitted when no assets exist. */
   emotions?: string[];
   worldbook: WorldbookEntry[];
@@ -66,6 +68,9 @@ export function buildContextBlock(input: PromptContextInput): string {
       `对话对象：${input.userName}（第 ${input.turnCount} 轮）`,
       ...(input.scene !== undefined && input.scene.trim().length > 0
         ? [`场景：${input.scene.trim()}`]
+        : []),
+      ...(input.participants !== undefined && input.participants.length > 0
+        ? [`最近在场的群友：${input.participants.join("、")}（只回应本轮说话人）`]
         : []),
       ...(input.emotions !== undefined && input.emotions.length > 0
         ? [`可用表情：${input.emotions.join("、")}`]

@@ -804,7 +804,10 @@ export default definePlugin<RoleplayOptions>({
           worldbook,
           {
             currentText: prompt.message.text,
-            recentTexts: recent.map((row) => row.text),
+            // Scan user messages only: the persona's own replies are dense
+            // with prop keywords (尾巴/呆毛/饭盆…), and letting them trigger
+            // entries feeds those props back into every turn.
+            recentTexts: recent.filter((row) => row.role === "user").map((row) => row.text),
           },
           {
             scanDepth: options.worldbookScanDepth,
@@ -839,12 +842,24 @@ export default definePlugin<RoleplayOptions>({
           prompt.message.chat.type === "group"
             ? `群聊 ${prompt.message.chat.groupId ?? ""}`.trim()
             : undefined;
+        const participants =
+          scene === undefined
+            ? []
+            : [
+                ...new Set(
+                  recent
+                    .filter((row) => row.role === "user")
+                    .map((row) => row.speaker)
+                    .filter((name) => name.trim().length > 0),
+                ),
+              ].slice(-8);
         const block = buildContextBlock({
           personaName: active.persona.name,
           userName: prompt.message.senderName,
           now: Date.now(),
           turnCount: transcript.count(scope, active.persona.id, "user") + 1,
           ...(scene !== undefined ? { scene } : {}),
+          ...(participants.length > 0 ? { participants } : {}),
           ...(emotions.length > 0 ? { emotions } : {}),
           worldbook: selected,
           memories,
