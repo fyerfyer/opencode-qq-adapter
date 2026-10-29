@@ -80,11 +80,13 @@
           "name": "外观与道具",
           "priority": 88,
           "id": 2,
-          "comment": "外观",
+          "comment": "外观（cooldown 4：触发后冷却 4 条消息，避免道具描写每轮注入）",
           "selective": false,
           "constant": false,
           "position": "before_char",
-          "extensions": {}
+          "extensions": {
+            "cooldown": 4
+          }
         },
         {
           "keys": [

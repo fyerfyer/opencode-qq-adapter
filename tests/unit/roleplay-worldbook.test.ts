@@ -284,6 +284,153 @@ describe("roleplay worldbook", () => {
       trace.matches.find((match) => match.entry.name === "机箱")?.primary[0]?.source,
     ).toContain("最近");
   });
+  it("supports SillyTavern-style regex keys", () => {
+    const list = [
+      makeEntry({ name: "抱怨", keys: ["/(好累|累死了|不想动)/"], content: "安慰他。" }),
+      makeEntry({ name: "坏正则", keys: ["/(unclosed/"], content: "兜底按子串。" }),
+    ];
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    expect(
+      selectWorldbook(list, { currentText: "今天好累啊", recentTexts: [] }, config).map(
+        (entry) => entry.name,
+      ),
+    ).toEqual(["抱怨"]);
+    expect(
+      selectWorldbook(list, { currentText: "今天好开心", recentTexts: [] }, config),
+    ).toHaveLength(0);
+  });
+
+  it("honors trigger probability", () => {
+    const list = [makeEntry({ name: "随机", keys: ["白饭"], probability: 25 })];
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    const trace = selectWorldbookDetailed(
+      list,
+      { currentText: "白饭", recentTexts: [] },
+      { ...config, random: () => 0.5 },
+    );
+    expect(trace.selected).toHaveLength(0);
+    expect(trace.dropped[0]?.reason).toContain("概率未命中");
+    expect(
+      selectWorldbook(list, { currentText: "白饭", recentTexts: [] }, { ...config, random: () => 0.1 }),
+    ).toHaveLength(1);
+  });
+
+  it("applies sticky, cooldown and delay timed effects per chat", () => {
+    const list = [
+      makeEntry({ name: "天气", keys: ["天气"], sticky: 2, cooldown: 2 }),
+      makeEntry({ name: "迟到", keys: ["迟到"], delay: 3 }),
+    ];
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    const state = new Map();
+
+    // Delay: not enough messages yet.
+    expect(
+      selectWorldbook(list, { currentText: "迟到", recentTexts: [] }, { ...config, messageCount: 1, effectState: state }),
+    ).toHaveLength(0);
+
+    // Activation records the effect state.
+    const first = selectWorldbook(
+      list,
+      { currentText: "今天天气不错", recentTexts: [] },
+      { ...config, messageCount: 3, effectState: state },
+    );
+    expect(first.map((entry) => entry.name)).toContain("天气");
+    expect(state.get("天气")).toMatchObject({ activatedAt: 3, sticky: 2, cooldown: 2 });
+
+    // Sticky: active without any keyword.
+    for (const count of [4, 5]) {
+      const stickyTrace = selectWorldbookDetailed(
+        list,
+        { currentText: "完全无关的话题", recentTexts: [] },
+        { ...config, messageCount: count, effectState: state },
+      );
+      expect(stickyTrace.selected.map((entry) => entry.name)).toContain("天气");
+      expect(stickyTrace.matches.find((match) => match.entry.name === "天气")?.sticky).toBe(true);
+    }
+
+    // Cooldown: keyword present but blocked.
+    for (const count of [6, 7]) {
+      expect(
+        selectWorldbook(
+          list,
+          { currentText: "天气真好", recentTexts: [] },
+          { ...config, messageCount: count, effectState: state },
+        ).map((entry) => entry.name),
+      ).not.toContain("天气");
+    }
+
+    // Cooldown over: activates again.
+    expect(
+      selectWorldbook(
+        list,
+        { currentText: "天气真好", recentTexts: [] },
+        { ...config, messageCount: 8, effectState: state },
+      ).map((entry) => entry.name),
+    ).toContain("天气");
+  });
+
+  it("supports SillyTavern selective logic variants", () => {
+    const base = {
+      keys: ["白饭"],
+      secondaryKeys: ["饿", "吃"],
+      selective: true,
+    };
+    const config = { scanDepth: 2, maxEntries: 4, maxChars: 2000 };
+    const text = { currentText: "我想吃白饭", recentTexts: [] };
+    expect(
+      selectWorldbook(
+        [makeEntry({ ...base, name: "and_all", selectiveLogic: "and_all" })],
+        { currentText: "白饭配饿", recentTexts: [] },
+        config,
+      ),
+    ).toHaveLength(0);
+    expect(
+      selectWorldbook(
+        [makeEntry({ ...base, name: "not_any", selectiveLogic: "not_any" })],
+        text,
+        config,
+      ),
+    ).toHaveLength(0);
+    expect(
+      selectWorldbook(
+        [makeEntry({ ...base, name: "not_all", selectiveLogic: "not_all" })],
+        { currentText: "白饭又饿又吃", recentTexts: [] },
+        config,
+      ),
+    ).toHaveLength(0);
+    expect(
+      selectWorldbook(
+        [makeEntry({ ...base, name: "not_all passes", selectiveLogic: "not_all" })],
+        text,
+        config,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("normalizes SillyTavern timed effects and selective logic from extensions", () => {
+    const list = normalizeWorldbook({
+      data: {
+        character_book: {
+          entries: [
+            {
+              name: "天气",
+              keys: ["天气"],
+              content: "天气不错。",
+              probability: 50,
+              extensions: { sticky: 3, cooldown: 2, delay: 2, selective_logic: 3 },
+            },
+          ],
+        },
+      },
+    });
+    expect(list[0]).toMatchObject({
+      probability: 50,
+      sticky: 3,
+      cooldown: 2,
+      delay: 2,
+      selectiveLogic: "not_all",
+    });
+  });
 });
 
 function makeEntry(overrides: Partial<WorldbookEntry> = {}): WorldbookEntry {

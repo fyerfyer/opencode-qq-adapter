@@ -40,6 +40,7 @@ import {
   parseStoredWorldbook,
   selectWorldbook,
   selectWorldbookDetailed,
+  type WorldbookEffectState,
   type WorldbookEntry,
 } from "./worldbook.js";
 
@@ -215,6 +216,7 @@ export default definePlugin<RoleplayOptions>({
       options,
     });
     const worldbookCache = new Map<string, WorldbookEntry[]>();
+    const worldbookEffects = new Map<string, Map<string, WorldbookEffectState>>();
     const stickerRoot = join(context.dataDir, "stickers");
     const stickerCache = new Map<string, StickerCatalog>();
     const lastStickers = new Map<string, string>();
@@ -800,6 +802,13 @@ export default definePlugin<RoleplayOptions>({
           active.persona.id,
         );
         const worldbook = await worldbookFor(active.persona);
+        const turnCount = transcript.count(scope, active.persona.id, "user") + 1;
+        const effectKey = `${active.persona.id}:${scope}`;
+        let effectState = worldbookEffects.get(effectKey);
+        if (effectState === undefined) {
+          effectState = new Map<string, WorldbookEffectState>();
+          worldbookEffects.set(effectKey, effectState);
+        }
         const selected = selectWorldbook(
           worldbook,
           {
@@ -815,6 +824,8 @@ export default definePlugin<RoleplayOptions>({
             maxChars: options.worldbookMaxChars,
             recursionSteps: options.worldbookRecursionSteps,
             matchWholeWords: options.worldbookMatchWholeWords,
+            messageCount: turnCount,
+            effectState,
           },
         );
         const excludeCount = Math.max(0, options.memoryExcludeRecent);
@@ -857,7 +868,7 @@ export default definePlugin<RoleplayOptions>({
           personaName: active.persona.name,
           userName: prompt.message.senderName,
           now: Date.now(),
-          turnCount: transcript.count(scope, active.persona.id, "user") + 1,
+          turnCount,
           ...(scene !== undefined ? { scene } : {}),
           ...(participants.length > 0 ? { participants } : {}),
           ...(emotions.length > 0 ? { emotions } : {}),

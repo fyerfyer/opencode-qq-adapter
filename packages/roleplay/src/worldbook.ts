@@ -1,3 +1,5 @@
+export type SelectiveLogic = "and_any" | "not_any" | "and_all" | "not_all";
+
 export interface WorldbookEntry {
   name: string;
   keys: string[];
@@ -6,11 +8,29 @@ export interface WorldbookEntry {
   enabled: boolean;
   constant: boolean;
   selective: boolean;
+  /** SillyTavern selective logic for secondary keys. Defaults to and_any. */
+  selectiveLogic?: SelectiveLogic;
   caseSensitive: boolean;
   matchWholeWords?: boolean;
   priority: number;
   insertionOrder: number;
   position: "before_char" | "after_char";
+  /** Trigger probability 0-100. 100/undefined means always. */
+  probability?: number;
+  /** Stays active for N messages after activation, ignoring keys/probability. */
+  sticky?: number;
+  /** Cannot activate for N messages after the sticky period ends. */
+  cooldown?: number;
+  /** Cannot activate before the chat has at least N messages. */
+  delay?: number;
+}
+
+/** Per-chat timed-effect memory, keyed by entry name. */
+export interface WorldbookEffectState {
+  /** Message count at activation. */
+  activatedAt: number;
+  sticky: number;
+  cooldown: number;
 }
 
 export interface WorldbookOptions {
@@ -22,6 +42,12 @@ export interface WorldbookOptions {
   recursionSteps?: number;
   /** Fallback for entries that do not set match_whole_words themselves. */
   matchWholeWords?: boolean;
+  /** Current message count of the chat; enables delay/sticky/cooldown. */
+  messageCount?: number;
+  /** Mutable per-chat timed-effect state, keyed by entry name. */
+  effectState?: Map<string, WorldbookEffectState>;
+  /** Random source for probability rolls. */
+  random?: () => number;
 }
 
 interface RawEntry {
@@ -32,12 +58,18 @@ interface RawEntry {
   enabled?: unknown;
   constant?: unknown;
   selective?: unknown;
+  selective_logic?: unknown;
+  selectiveLogic?: unknown;
   case_sensitive?: unknown;
   match_whole_words?: unknown;
   matchWholeWords?: unknown;
   priority?: unknown;
   insertion_order?: unknown;
   position?: unknown;
+  probability?: unknown;
+  sticky?: unknown;
+  cooldown?: unknown;
+  delay?: unknown;
   extensions?: unknown;
 }
 
@@ -61,6 +93,8 @@ export interface WorldbookTraceMatch {
   entry: WorldbookEntry;
   round: number;
   constant: boolean;
+  /** Active via sticky timed effect, without a keyword match. */
+  sticky?: boolean;
   primary: WorldbookKeyHit[];
   secondary: WorldbookKeyHit[];
 }
@@ -122,6 +156,29 @@ function matchWholeWords(value: RawEntry): boolean | undefined {
   return undefined;
 }
 
+const SELECTIVE_LOGIC_NAMES: SelectiveLogic[] = ["and_any", "not_any", "and_all", "not_all"];
+
+function selectiveLogic(value: unknown): SelectiveLogic | undefined {
+  if (typeof value === "string" && (SELECTIVE_LOGIC_NAMES as string[]).includes(value)) {
+    return value as SelectiveLogic;
+  }
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return SELECTIVE_LOGIC_NAMES[value];
+  }
+  return undefined;
+}
+
+function optionalPercent(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.min(100, Math.max(0, value));
+}
+
+function optionalCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const count = Math.floor(value);
+  return count > 0 ? count : undefined;
+}
+
 /** Convert a Character Card book into the small subset this plugin understands. */
 export function normalizeWorldbook(card: CardLike): WorldbookEntry[] {
   const raw = card.data?.character_book?.entries;
@@ -132,6 +189,7 @@ export function normalizeWorldbook(card: CardLike): WorldbookEntry[] {
       if (content.length === 0) return null;
       const keys = stringArray(entry.keys);
       const secondaryKeys = stringArray(entry.secondary_keys);
+      const extensions = record(entry.extensions);
       return {
         name:
           typeof entry.name === "string" && entry.name.trim().length > 0
@@ -148,6 +206,15 @@ export function normalizeWorldbook(card: CardLike): WorldbookEntry[] {
         priority: finiteNumber(entry.priority, 0),
         insertionOrder: finiteNumber(entry.insertion_order, 0),
         position: entry.position === "after_char" ? "after_char" : "before_char",
+        selectiveLogic:
+          selectiveLogic(entry.selectiveLogic) ??
+          selectiveLogic(entry.selective_logic) ??
+          selectiveLogic(extensions.selectiveLogic) ??
+          selectiveLogic(extensions.selective_logic),
+        probability: optionalPercent(entry.probability ?? extensions.probability),
+        sticky: optionalCount(entry.sticky ?? extensions.sticky),
+        cooldown: optionalCount(entry.cooldown ?? extensions.cooldown),
+        delay: optionalCount(entry.delay ?? extensions.delay),
       };
     })
     .filter((entry): entry is WorldbookEntry => entry !== null && entry.enabled);
@@ -229,12 +296,28 @@ export function selectWorldbookDetailed(
   const dropped: WorldbookDrop[] = [];
   let usedChars = 0;
   let rounds = 0;
+  const messageCount = Math.max(0, Math.floor(options.messageCount ?? 0));
+  const random = options.random ?? Math.random;
 
   for (let round = 0; round <= recursionSteps; round += 1) {
     rounds = round + 1;
     const candidates: Array<{ index: number; match: WorldbookTraceMatch }> = [];
     for (const [index, entry] of entries.entries()) {
       if (!entry.enabled || selectedIndexes.has(index)) continue;
+      const effect = options.effectState?.get(entry.name);
+      const elapsed = effect === undefined ? null : messageCount - effect.activatedAt;
+      if (effect !== undefined && elapsed !== null && elapsed >= 1 && elapsed <= effect.sticky) {
+        // Sticky: stays active without a keyword match, ignoring probability.
+        candidates.push({
+          index,
+          match: { entry, round, constant: false, sticky: true, primary: [], secondary: [] },
+        });
+        continue;
+      }
+      if (effect !== undefined && elapsed !== null && elapsed <= effect.sticky + effect.cooldown) {
+        continue; // Cooldown: cannot activate at all.
+      }
+      if (entry.delay !== undefined && messageCount < entry.delay) continue;
       const match = matchEntry(
         entry,
         sources,
@@ -243,6 +326,11 @@ export function selectWorldbookDetailed(
       );
       if (match === null) continue;
       if (round > 0 && !hasRecursionHit(match)) continue;
+      const probability = entry.probability ?? 100;
+      if (probability < 100 && random() * 100 >= probability) {
+        dropped.push({ entry, round, reason: `概率未命中（${probability}%）`, match });
+        continue;
+      }
       candidates.push({ index, match });
     }
 
@@ -281,6 +369,17 @@ export function selectWorldbookDetailed(
       usedChars += cost;
       matches.push(match);
       selectedThisRound += 1;
+      if (
+        match.sticky !== true &&
+        options.effectState !== undefined &&
+        ((match.entry.sticky ?? 0) > 0 || (match.entry.cooldown ?? 0) > 0)
+      ) {
+        options.effectState.set(match.entry.name, {
+          activatedAt: messageCount,
+          sticky: match.entry.sticky ?? 0,
+          cooldown: match.entry.cooldown ?? 0,
+        });
+      }
       nextSources.push({
         kind: "recursion",
         label: `递归自「${match.entry.name}」`,
@@ -335,7 +434,21 @@ function matchEntry(
   const secondary = entry.secondaryKeys
     .map((key) => findKeyHit(entry, key, sources, wholeWords))
     .filter((hit): hit is WorldbookKeyHit => hit !== null);
-  if (secondary.length === 0) return null;
+  // SillyTavern selective logic: AND ANY (default), AND ALL, NOT ANY, NOT ALL.
+  switch (entry.selectiveLogic ?? "and_any") {
+    case "and_all":
+      if (secondary.length < entry.secondaryKeys.length) return null;
+      break;
+    case "not_any":
+      if (secondary.length > 0) return null;
+      break;
+    case "not_all":
+      if (secondary.length === entry.secondaryKeys.length) return null;
+      break;
+    default:
+      if (secondary.length === 0) return null;
+      break;
+  }
   return { entry, round, constant: false, primary, secondary };
 }
 
@@ -365,6 +478,10 @@ function matchesKey(
   caseSensitive: boolean,
   wholeWords: boolean,
 ): boolean {
+  // SillyTavern-style regex keys: /pattern/flags. Flags are the regex's own;
+  // caseSensitive and wholeWords only apply to plaintext keys.
+  const regex = parseRegexKey(key);
+  if (regex !== null) return regex.test(haystack);
   const needle = caseSensitive ? key : key.toLowerCase();
   const text = caseSensitive ? haystack : haystack.toLowerCase();
   if (needle.length === 0) return false;
@@ -373,6 +490,23 @@ function matchesKey(
   }
   const escaped = escapeRegExp(needle);
   return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`).test(text);
+}
+
+const REGEX_CACHE = new Map<string, RegExp | null>();
+
+function parseRegexKey(key: string): RegExp | null {
+  const parsed = /^\/(.+)\/([a-z]*)$/.exec(key);
+  if (parsed === null) return null;
+  const cached = REGEX_CACHE.get(key);
+  if (cached !== undefined) return cached;
+  let compiled: RegExp | null = null;
+  try {
+    compiled = new RegExp(parsed[1] ?? "", parsed[2] ?? "");
+  } catch {
+    compiled = null;
+  }
+  if (REGEX_CACHE.size < 500) REGEX_CACHE.set(key, compiled);
+  return compiled;
 }
 
 /**
@@ -432,6 +566,7 @@ export function formatWorldbookTrace(
 
 function formatMatch(match: WorldbookTraceMatch): string {
   if (match.constant) return `${match.entry.name} [常驻]`;
+  if (match.sticky === true) return `${match.entry.name} [黏性生效]`;
   const primary = match.primary
     .map((hit) => `「${hit.key}」← ${hit.source}`)
     .join("、");
