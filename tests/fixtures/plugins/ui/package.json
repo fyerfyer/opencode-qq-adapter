@@ -10,7 +10,7 @@
     "id": "ui-fixture",
     "name": "UI fixture",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Fixture for iframe plugin pages",
     "capabilities": ["admin"],
     "ui": {

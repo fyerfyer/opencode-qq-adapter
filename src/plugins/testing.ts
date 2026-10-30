@@ -18,7 +18,6 @@ import type {
   PluginDisposer,
   PluginEventMap,
   PluginFileInput,
-  PluginGroupMode,
   PluginHooksDefinition,
   PluginImageInput,
   PluginLogger,
@@ -57,7 +56,6 @@ export interface RunCommandOptions {
   message?: Partial<PluginMessage>;
   args?: string[];
   rawArgs?: string;
-  groupMode?: PluginGroupMode | null;
   actorRole?: PluginRole;
 }
 
@@ -216,7 +214,7 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
       id: "test-plugin",
       name: "Test plugin",
       version: "0.0.0",
-      apiVersion: 1,
+      apiVersion: 2,
       capabilities: ["commands", "hooks", "messages", "sessions", "events", "admin"],
     },
     config,
@@ -265,7 +263,6 @@ export async function createPluginHarness<TOptions = Record<string, unknown>>(
         args,
         rawArgs: overrides.rawArgs ?? args.join(" "),
         actor: { qq: message.userId, role: overrides.actorRole ?? "owner" },
-        groupMode: overrides.groupMode ?? null,
         conversation: null,
         logger,
         reply: (text) => messages.reply(message, text),

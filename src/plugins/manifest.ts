@@ -180,6 +180,14 @@ export async function loadPluginModule(
 }
 
 export function parsePackageManifest(value: unknown, source: string): PackageManifest {
+  const declaredApiVersion = isRecord(value) ? value.apiVersion : undefined;
+  if (declaredApiVersion !== undefined && declaredApiVersion !== PLUGIN_API_VERSION) {
+    throw new PluginLoadError(
+      "incompatible",
+      `plugin API version ${String(declaredApiVersion)} is not supported in ${source}; upgrade the plugin manifest to apiVersion ${PLUGIN_API_VERSION}`,
+    );
+  }
+
   const parsed = manifestSchema.safeParse(value);
   if (!parsed.success) {
     const details = parsed.error.issues

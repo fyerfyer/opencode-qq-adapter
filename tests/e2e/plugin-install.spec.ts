@@ -49,7 +49,7 @@ async function makePluginZip(input: PluginPackageInput): Promise<Buffer> {
     id: input.id,
     name: input.name,
     version: input.version,
-    apiVersion: 1,
+    apiVersion: 2,
     ...(input.description === undefined ? {} : { description: input.description }),
     capabilities: input.capabilities ?? [],
     ...(input.iframe === true ? { ui: { root: "ui", entry: "index.html" } } : {}),
@@ -235,7 +235,7 @@ test("malicious ZIP with path traversal is rejected", async ({ page }) => {
     id,
     name,
     version: "0.1.0",
-    apiVersion: 1,
+    apiVersion: 2,
     capabilities: [],
     entry: "./index.js",
   };

@@ -46,7 +46,6 @@ async function startApp(): Promise<Harness> {
         inbox_dir: join(root, "inbox"),
         plugins_dir: join(root, "plugins"),
       },
-      workspaces: { root: join(root, "workspaces") },
       default_project: "demo",
       users: {
         "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
@@ -165,7 +164,7 @@ function pluginZipFile(id: string, version: string): Promise<File> {
           id,
           name: "HTTP fixture",
           version,
-          apiVersion: 1,
+          apiVersion: 2,
           capabilities: ["commands"],
           entry: "./index.js",
         },

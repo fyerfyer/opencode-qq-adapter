@@ -1,0 +1,14 @@
+{
+  "name": "@fixture/commands-only",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "commands-only-fixture",
+    "name": "Commands only fixture",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Checks that command context still respects messages/sessions capabilities",
+    "capabilities": ["commands"],
+    "entry": "./index.ts"
+  }
+}

@@ -6,11 +6,11 @@
     "id": "admin-fixture",
     "name": "Admin fixture",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Plugin admin API fixture",
     "capabilities": ["admin"],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.3.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./index.ts"
   }

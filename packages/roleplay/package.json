@@ -1,6 +1,6 @@
 {
   "name": "@opencode-qq/roleplay",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Character-card roleplay plugin for opencode-qq-adapter",
   "type": "module",
   "license": "MIT",
@@ -23,8 +23,8 @@
   "opencodeQq": {
     "id": "roleplay",
     "name": "Roleplay",
-    "version": "0.4.1",
-    "apiVersion": 1,
+    "version": "0.5.0",
+    "apiVersion": 2,
     "description": "Character Card V2/V3 roleplay with worldbook recursion, Jev-routed emotion stickers, Markdown memory and raw transcript retrieval",
     "capabilities": [
       "commands",
@@ -35,7 +35,7 @@
       "admin"
     ],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.3.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./dist/index.js",
     "ui": {

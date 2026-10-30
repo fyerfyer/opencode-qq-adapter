@@ -14,8 +14,10 @@ import type {
   PluginEventMap,
   PluginHooksDefinition,
   PluginLogger,
+  PluginMessages,
   PluginRole,
   PluginSessionMutationResult,
+  PluginSessions,
 } from "../sdk.js";
 import { PluginDataStorage } from "../storage.js";
 import {
@@ -40,8 +42,13 @@ export interface PluginContextServices {
   reservedCommands: Set<string>;
   sortedInstances: () => PluginInstance[];
   conversationSnapshot: (chatKey: string) => PluginConversation | null;
-  setProject: (chatKey: string, projectId: string, actorQq: number) => PluginSessionMutationResult;
-  resetSession: (chatKey: string, actorQq: number) => PluginSessionMutationResult;
+  setProject: (
+    pluginId: string,
+    chatKey: string,
+    projectId: string,
+    actorQq: number,
+  ) => PluginSessionMutationResult;
+  resetSession: (pluginId: string, chatKey: string, actorQq: number) => PluginSessionMutationResult;
   completeUtility: (
     instance: PluginInstance,
     input: PluginAgentCompletion,
@@ -60,12 +67,17 @@ export function createPluginContext(
     throw new Error("plugin context requested before manifest was loaded");
   }
   const logger = services.pluginLogger(instance);
-  const messages = new PluginMessageService({
-    config: services.config,
-    sender: services.sender,
-    logger,
-    dataDir: instance.dataDir,
-  }).createApi();
+  let messagesApi: PluginMessages | null = null;
+  const messages = (): PluginMessages => {
+    requireCapability(instance, "messages");
+    messagesApi ??= new PluginMessageService({
+      config: services.config,
+      sender: services.sender,
+      logger,
+      dataDir: instance.dataDir,
+    }).createApi();
+    return messagesApi;
+  };
   const storage = new PluginDataStorage(instance.dataDir);
 
   const commands = {
@@ -141,17 +153,21 @@ export function createPluginContext(
     },
   };
 
-  const sessions = {
+  const sessions: PluginSessions = {
     get: (chatKey: string) => services.conversationSnapshot(chatKey),
     setProject: (
       chatKey: string,
       projectId: string,
       actor: { qq: number; role: PluginRole },
-    ): PluginSessionMutationResult => services.setProject(chatKey, projectId, actor.qq),
+    ): PluginSessionMutationResult => {
+      return services.setProject(instance.id, chatKey, projectId, actor.qq);
+    },
     reset: (
       chatKey: string,
       actor: { qq: number; role: PluginRole },
-    ): PluginSessionMutationResult => services.resetSession(chatKey, actor.qq),
+    ): PluginSessionMutationResult => {
+      return services.resetSession(instance.id, chatKey, actor.qq);
+    },
   };
 
   const admin = {
@@ -211,8 +227,13 @@ export function createPluginContext(
     storage,
     commands,
     hooks,
-    messages,
-    sessions,
+    get messages() {
+      return messages();
+    },
+    get sessions() {
+      requireCapability(instance, "sessions");
+      return sessions;
+    },
     events,
     agent: {
       complete: (input: PluginAgentCompletion) => services.completeUtility(instance, input),

@@ -114,7 +114,6 @@ export class WorkspaceManager {
         const lease: WorkspaceLease = {
           id: workspace.id,
           projectId,
-          kind: workspace.kind,
           path: workspace.path,
           branch: workspace.branch,
           ownerChatKey: chatKey,
@@ -246,7 +245,6 @@ export class WorkspaceManager {
       leaseExpiresAt: existing?.leaseExpiresAt ?? null,
       createdAt: existing?.createdAt ?? now,
       lastUsedAt: now,
-      metadata: null,
     };
     this.#store.workspaces.ensure(record);
     return record;

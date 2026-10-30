@@ -48,7 +48,7 @@ async function makeHost(
     sender,
     conversations: { getConversation: () => null },
     reservedCommands: ["ping", "help"],
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
   });
   await host.start();
   disposers.push(async () => {

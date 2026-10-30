@@ -39,7 +39,6 @@ import { createPluginContext } from "./context.js";
 import {
   CHAT_TYPES,
   describeError,
-  groupIdFromChatKey,
   isPromptPatch,
   isRecord,
   parseOptions,
@@ -75,6 +74,8 @@ const HOOK_TIMEOUT_MS = 2_000;
 const REPLY_HOOK_TIMEOUT_MS = 4_000;
 const EVENT_TIMEOUT_MS = 2_000;
 const LIFECYCLE_TIMEOUT_MS = 5_000;
+const MAX_PLUGIN_CONTEXT_CHARS = 12_000;
+const TRUNCATION_MARKER = "…（插件上下文已截断）";
 
 /**
  * Loads trusted, explicitly configured plugins and exposes a narrow runtime API.
@@ -91,11 +92,14 @@ export class PluginHost {
   readonly #sessionActions: PluginSessionActions | undefined;
   readonly #reserved: Set<string>;
   readonly #coreVersion: string;
+  readonly #withMaintenance: <T>(task: () => Promise<T>) => Promise<T>;
   readonly #now: () => number;
   readonly #pluginsDir: string;
   readonly #instances = new Map<string, PluginInstance>();
   readonly #utility: UtilityRunner;
+  readonly #pendingTasks = new Set<Promise<unknown>>();
   #started = false;
+  #maintenance = false;
 
   constructor(options: PluginHostOptions) {
     this.#config = options.config;
@@ -106,6 +110,7 @@ export class PluginHost {
     this.#sessionActions = options.sessionActions;
     this.#reserved = new Set([...options.reservedCommands].map((name) => name.toLowerCase()));
     this.#coreVersion = options.coreVersion;
+    this.#withMaintenance = options.withMaintenance ?? ((task) => task());
     this.#now = options.now ?? Date.now;
     this.#pluginsDir = resolve(this.#config.storage.plugins_dir);
     this.#utility = new UtilityRunner({
@@ -119,6 +124,16 @@ export class PluginHost {
 
   get started(): boolean {
     return this.#started;
+  }
+
+  /** Number of plugin command/admin/afterRun tasks still using plugin state. */
+  pendingTasks(): number {
+    return this.#pendingTasks.size;
+  }
+
+  /** Stop accepting new plugin work while the host is being reconciled. */
+  setMaintenance(active: boolean): void {
+    this.#maintenance = active;
   }
 
   async start(): Promise<void> {
@@ -150,13 +165,15 @@ export class PluginHost {
     }
 
     const order = existing.order;
-    await this.#dispose(existing);
-    const instance = spec.enabled
-      ? await this.#load(pluginId, order, spec)
-      : this.#disabledInstance(pluginId, order, spec);
-    this.#instances.set(pluginId, instance);
-    this.#logger.info({ pluginId, status: instance.status, order }, "Plugin reloaded");
-    return instance.status;
+    return this.#withMaintenance(async () => {
+      await this.#dispose(existing);
+      const instance = spec.enabled
+        ? await this.#load(pluginId, order, spec)
+        : this.#disabledInstance(pluginId, order, spec);
+      this.#instances.set(pluginId, instance);
+      this.#logger.info({ pluginId, status: instance.status, order }, "Plugin reloaded");
+      return instance.status;
+    });
   }
 
   async stop(): Promise<void> {
@@ -233,6 +250,18 @@ export class PluginHost {
     path: string,
     actor: PluginAdminActor,
   ): Promise<PluginAdminResult | null> {
+    if (this.#maintenance) {
+      throw new Error("插件正在重载，请稍后重试。");
+    }
+    return this.#track(this.#dispatchAdmin(pluginId, request, path, actor));
+  }
+
+  async #dispatchAdmin(
+    pluginId: string,
+    request: Request,
+    path: string,
+    actor: PluginAdminActor,
+  ): Promise<PluginAdminResult | null> {
     const instance = this.#instances.get(pluginId);
     if (instance === undefined) throw new Error(`unknown plugin: ${pluginId}`);
     if (instance.status !== "loaded") {
@@ -264,6 +293,16 @@ export class PluginHost {
 
   /** Return true when a plugin handled the command (including permission denial). */
   async dispatchCommand(input: PluginCommandInput): Promise<boolean> {
+    if (this.#maintenance) {
+      await this.#sender
+        .reply(input.message.chat, input.message.id, "插件正在重载，请稍后再试。")
+        .catch(() => undefined);
+      return true;
+    }
+    return this.#track(this.#dispatchCommand(input));
+  }
+
+  async #dispatchCommand(input: PluginCommandInput): Promise<boolean> {
     const found = this.#findCommand(input.name);
     if (found === null) return false;
     const { instance, command } = found;
@@ -272,7 +311,7 @@ export class PluginHost {
     const chat = toPluginChat(input.message.chat);
     const logger = this.#pluginLogger(instance);
 
-    if (!(await this.#authorize(instance, command, input, chat, logger))) {
+    if (!(await this.#authorize(instance, command, input, chat))) {
       return true;
     }
 
@@ -289,12 +328,20 @@ export class PluginHost {
       args: input.args,
       rawArgs: input.rawArgs,
       actor: { qq: actor, role: input.actor },
-      groupMode: input.groupMode,
-      conversation,
+      get conversation() {
+        requireCapability(instance, "sessions");
+        return conversation;
+      },
       logger,
       reply: (text) => messages.reply(toPluginMessage(input.message), text),
-      sendImage: (image) => messages.sendImage(chat, image),
-      sendFile: (file) => messages.sendFile(chat, file),
+      sendImage: (image) => {
+        requireCapability(instance, "messages");
+        return messages.sendImage(chat, image);
+      },
+      sendFile: (file) => {
+        requireCapability(instance, "messages");
+        return messages.sendFile(chat, file);
+      },
     };
 
     try {
@@ -379,7 +426,14 @@ export class PluginHost {
   ): Promise<PluginPromptResult> {
     const hooks = this.#loadedHooks("beforePrompt");
     if (hooks.length === 0) {
-      return { text: message.text, modified: false, plugins: [] };
+      return {
+        text: message.text,
+        modified: false,
+        plugins: [],
+        truncated: false,
+        injectedChars: 0,
+        originalInjectedChars: 0,
+      };
     }
 
     const base: PluginPromptContext = {
@@ -419,12 +473,52 @@ export class PluginHost {
     }
 
     if (prepends.length === 0 && appends.length === 0) {
-      return { text: message.text, modified: false, plugins: [] };
+      return {
+        text: message.text,
+        modified: false,
+        plugins: [],
+        truncated: false,
+        injectedChars: 0,
+        originalInjectedChars: 0,
+      };
     }
-    const text = [...prepends, message.text, ...appends]
+
+    const capped = capPluginContext(prepends.join("\n\n"), appends.join("\n\n"));
+    const text = [capped.prepend, message.text, capped.append]
       .filter((part) => part.trim().length > 0)
       .join("\n\n");
-    return { text, modified: text !== message.text, plugins: [...new Set(plugins)] };
+    if (capped.truncated) {
+      this.#logger.warn(
+        {
+          chatKey: message.chat.chatKey,
+          plugins: [...new Set(plugins)],
+          originalChars: capped.originalChars,
+          injectedChars: capped.injectedChars,
+        },
+        "Plugin prompt context exceeded the budget; truncated",
+      );
+      this.#audit.record({
+        ts: this.#now(),
+        actorQq: message.userId,
+        chatKey: message.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "plugin.context_truncated",
+        detail: {
+          plugins: [...new Set(plugins)],
+          originalChars: capped.originalChars,
+          injectedChars: capped.injectedChars,
+        },
+      });
+    }
+    return {
+      text,
+      modified: text !== message.text,
+      plugins: [...new Set(plugins)],
+      truncated: capped.truncated,
+      injectedChars: capped.injectedChars,
+      originalInjectedChars: capped.originalChars,
+    };
   }
 
   /** Let a plugin shape the final reply into ordered segments. */
@@ -468,6 +562,15 @@ export class PluginHost {
   }
 
   async afterRun(
+    active: ActiveRun,
+    status: RunStatus,
+    usage: RunUsage | null,
+    error: string | null,
+  ): Promise<void> {
+    return this.#track(this.#afterRun(active, status, usage, error));
+  }
+
+  async #afterRun(
     active: ActiveRun,
     status: RunStatus,
     usage: RunUsage | null,
@@ -750,23 +853,28 @@ export class PluginHost {
       reservedCommands: this.#reserved,
       sortedInstances: () => this.#sorted(),
       conversationSnapshot: (chatKey) => this.#conversationSnapshot(chatKey),
-      setProject: (chatKey, projectId, actorQq) => this.#setProject(chatKey, projectId, actorQq),
-      resetSession: (chatKey, actorQq) => this.#resetSession(chatKey, actorQq),
+      setProject: (pluginId, chatKey, projectId, actorQq) =>
+        this.#setProject(pluginId, chatKey, projectId, actorQq),
+      resetSession: (pluginId, chatKey, actorQq) => this.#resetSession(pluginId, chatKey, actorQq),
       completeUtility: (target, input) => this.#utility.complete(target, input),
       pluginLogger: (target) => this.#pluginLogger(target),
     });
   }
 
-  #setProject(chatKey: string, projectId: string, actorQq: number): PluginSessionMutationResult {
+  #setProject(
+    pluginId: string,
+    chatKey: string,
+    projectId: string,
+    actorQq: number,
+  ): PluginSessionMutationResult {
     if (this.#sessionActions === undefined) {
       return { ok: false, reason: "当前 bridge 未提供会话变更能力。" };
     }
-    const groupId = groupIdFromChatKey(chatKey);
     const result = this.#sessionActions.setProject({
+      pluginId,
       chatKey,
       projectId,
       actorQq,
-      ...(groupId !== undefined ? { groupId } : {}),
     });
     this.#audit.record({
       ts: this.#now(),
@@ -775,17 +883,17 @@ export class PluginHost {
       projectId,
       workspaceId: null,
       action: result.ok ? "plugin.session_project" : "plugin.session_project_denied",
-      detail: { projectId, ...(result.reason ? { reason: result.reason } : {}) },
+      detail: { pluginId, projectId, ...(result.reason ? { reason: result.reason } : {}) },
     });
     return result;
   }
 
-  #resetSession(chatKey: string, actorQq: number): PluginSessionMutationResult {
+  #resetSession(pluginId: string, chatKey: string, actorQq: number): PluginSessionMutationResult {
     if (this.#sessionActions === undefined) {
       return { ok: false, reason: "当前 bridge 未提供会话变更能力。" };
     }
     const conversation = this.#conversations.getConversation(chatKey);
-    const result = this.#sessionActions.reset({ chatKey, actorQq });
+    const result = this.#sessionActions.reset({ pluginId, chatKey, actorQq });
     this.#audit.record({
       ts: this.#now(),
       actorQq,
@@ -793,7 +901,7 @@ export class PluginHost {
       projectId: conversation?.projectId ?? null,
       workspaceId: conversation?.workspaceId ?? null,
       action: result.ok ? "plugin.session_reset" : "plugin.session_reset_denied",
-      detail: { ...(result.reason ? { reason: result.reason } : {}) },
+      detail: { pluginId, ...(result.reason ? { reason: result.reason } : {}) },
     });
     return result;
   }
@@ -827,7 +935,6 @@ export class PluginHost {
     command: RegisteredCommand,
     input: PluginCommandInput,
     chat: PluginChat,
-    logger: PluginLogger,
   ): Promise<boolean> {
     const definition = command.definition;
     const roles = definition.roles ?? ROLES;
@@ -852,22 +959,6 @@ export class PluginHost {
         )
         .catch(() => undefined);
       this.#auditDenied(instance, definition, input, "chat_type");
-      return false;
-    }
-    if (
-      chat.type === "group" &&
-      input.groupMode === "shared" &&
-      definition.allowGroupShared !== true
-    ) {
-      logger.debug({ command: definition.name }, "Shared-group plugin command denied");
-      await this.#sender
-        .reply(
-          input.message.chat,
-          input.message.id,
-          `命令 !${definition.name} 未授权在 shared 群中使用。`,
-        )
-        .catch(() => undefined);
-      this.#auditDenied(instance, definition, input, "group_shared");
       return false;
     }
     return true;
@@ -906,6 +997,14 @@ export class PluginHost {
     return this.#logger.child({ pluginId: instance.id });
   }
 
+  #track<T>(task: Promise<T>): Promise<T> {
+    const tracked = task.finally(() => {
+      this.#pendingTasks.delete(tracked);
+    });
+    this.#pendingTasks.add(tracked);
+    return tracked;
+  }
+
   #sorted(): PluginInstance[] {
     return [...this.#instances.values()].sort((left, right) => left.order - right.order);
   }
@@ -931,4 +1030,43 @@ export class PluginHost {
       },
     };
   }
+}
+
+function capPluginContext(
+  prepend: string,
+  append: string,
+): {
+  prepend: string;
+  append: string;
+  truncated: boolean;
+  originalChars: number;
+  injectedChars: number;
+} {
+  const separatorChars = (prepend.length > 0 ? 2 : 0) + (append.length > 0 ? 2 : 0);
+  const originalChars = prepend.length + append.length + separatorChars;
+  if (originalChars <= MAX_PLUGIN_CONTEXT_CHARS) {
+    return { prepend, append, truncated: false, originalChars, injectedChars: originalChars };
+  }
+
+  const contentBudget = MAX_PLUGIN_CONTEXT_CHARS - separatorChars;
+  const prependBudget = Math.floor(
+    (contentBudget * prepend.length) / Math.max(1, prepend.length + append.length),
+  );
+  const appendBudget = contentBudget - prependBudget;
+  const cappedPrepend = truncateContext(prepend, prependBudget);
+  const cappedAppend = truncateContext(append, appendBudget);
+  return {
+    prepend: cappedPrepend,
+    append: cappedAppend,
+    truncated: true,
+    originalChars,
+    injectedChars: cappedPrepend.length + cappedAppend.length + separatorChars,
+  };
+}
+
+function truncateContext(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  if (budget <= 0) return "";
+  if (budget <= TRUNCATION_MARKER.length) return TRUNCATION_MARKER.slice(0, budget);
+  return `${text.slice(0, budget - TRUNCATION_MARKER.length).trimEnd()}${TRUNCATION_MARKER}`;
 }

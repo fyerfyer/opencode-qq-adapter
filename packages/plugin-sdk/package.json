@@ -1,6 +1,6 @@
 {
   "name": "@opencode-qq/plugin-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Experimental plugin SDK for opencode-qq-adapter",
   "type": "module",
   "license": "MIT",

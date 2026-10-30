@@ -36,6 +36,7 @@ export class ConversationManager {
   readonly #recoveredRuns: number;
   readonly #idleListeners = new Set<() => void>();
   #maintenance = false;
+  #pendingSubmissions = 0;
 
   constructor(
     config: AppConfig,
@@ -169,9 +170,56 @@ export class ConversationManager {
         accepted: false,
         runId: "",
         queued: false,
-        reason: "正在重载 OpenCode 配置，请稍后重试。",
+        reason: "正在重载配置或插件，请稍后重试。",
       };
     }
+    this.#pendingSubmissions += 1;
+    try {
+      return await this.#submit(inputMessage, projectId, permissions);
+    } finally {
+      this.#pendingSubmissions -= 1;
+    }
+  }
+
+  async #submit(
+    inputMessage: IncomingMessage,
+    projectId: string,
+    permissions: PermissionRuleset,
+  ): Promise<SubmitResult> {
+    const now = Date.now();
+    if (inputMessage.text.length > this.#config.security.max_prompt_chars) {
+      const rejected: RunRecord = {
+        id: ulid(now),
+        chatKey: inputMessage.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        sessionId: null,
+        actorQq: inputMessage.userId,
+        status: "rejected",
+        startedAt: now,
+        finishedAt: now,
+        stopReason: "prompt_too_long",
+        error: null,
+        usageJson: null,
+      };
+      this.#store.runs.create(rejected);
+      this.#audit?.record({
+        ts: now,
+        actorQq: inputMessage.userId,
+        chatKey: inputMessage.chat.chatKey,
+        projectId,
+        workspaceId: null,
+        action: "run.rejected",
+        detail: { runId: rejected.id, reason: "prompt_too_long" },
+      });
+      await this.#sender.reply(
+        inputMessage.chat,
+        inputMessage.id,
+        `消息过长（${inputMessage.text.length} 字），上限为 ${this.#config.security.max_prompt_chars} 字。`,
+      );
+      return { accepted: false, runId: rejected.id, queued: false };
+    }
+
     let message = inputMessage;
     let profile: PluginConversationProfile | null = null;
     if (this.#plugins !== undefined) {
@@ -181,44 +229,15 @@ export class ConversationManager {
       if (injected.modified) {
         message = { ...inputMessage, text: injected.text };
         this.#logger.debug(
-          { chatKey: message.chat.chatKey, plugins: injected.plugins },
+          {
+            chatKey: message.chat.chatKey,
+            plugins: injected.plugins,
+            truncated: injected.truncated,
+            injectedChars: injected.injectedChars,
+          },
           "Plugin prompt context injected",
         );
       }
-    }
-
-    const now = Date.now();
-    if (message.text.length > this.#config.security.max_prompt_chars) {
-      const rejected: RunRecord = {
-        id: ulid(now),
-        chatKey: message.chat.chatKey,
-        projectId,
-        workspaceId: null,
-        sessionId: null,
-        actorQq: message.userId,
-        status: "rejected",
-        startedAt: now,
-        finishedAt: now,
-        stopReason: "prompt_too_long_after_plugin",
-        error: null,
-        usageJson: null,
-      };
-      this.#store.runs.create(rejected);
-      this.#audit?.record({
-        ts: now,
-        actorQq: message.userId,
-        chatKey: message.chat.chatKey,
-        projectId,
-        workspaceId: null,
-        action: "run.rejected",
-        detail: { runId: rejected.id, reason: "prompt_too_long_after_plugin" },
-      });
-      await this.#sender.reply(
-        message.chat,
-        message.id,
-        `插件注入上下文后消息过长（${message.text.length} 字），上限为 ${this.#config.security.max_prompt_chars} 字。`,
-      );
-      return { accepted: false, runId: rejected.id, queued: false };
     }
 
     const run: RunRecord = {
@@ -294,9 +313,6 @@ export class ConversationManager {
   }
 
   setProject(chatKey: string, projectId: string, userId: number): { ok: boolean; reason?: string } {
-    if (this.#maintenance) {
-      return { ok: false, reason: "正在重载 OpenCode 配置，请稍后重试。" };
-    }
     if (this.#queue.active(chatKey) !== null) {
       return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
     }
@@ -324,9 +340,6 @@ export class ConversationManager {
   }
 
   resetSession(chatKey: string): { ok: boolean; reason?: string } {
-    if (this.#maintenance) {
-      return { ok: false, reason: "正在重载 OpenCode 配置，请稍后重试。" };
-    }
     if (this.#queue.active(chatKey) !== null) {
       return { ok: false, reason: "当前有任务运行中，请先发送 !stop。" };
     }
@@ -549,9 +562,9 @@ export class ConversationManager {
   }
 
   /**
-   * Block new work while OpenCode's global configuration is being reloaded.
-   * The gate is only granted when the queue is completely idle, so a reload
-   * can never tear down a running location.
+   * Block new work while configuration or plugins are being reloaded.
+   * The gate is only granted when the queue and in-flight submissions are
+   * completely idle, so a reload can never tear down a running location.
    */
   beginMaintenance(): MaintenanceGate {
     const activeRuns = this.#queue.activeCount();
@@ -559,21 +572,23 @@ export class ConversationManager {
     if (this.#maintenance) {
       return {
         ok: false,
-        reason: "OpenCode 重载已在进行中。",
+        reason: "配置或插件重载已在进行中。",
         activeRuns,
         queuedRuns,
+        pendingSubmissions: this.#pendingSubmissions,
       };
     }
-    if (activeRuns > 0 || queuedRuns > 0) {
+    if (activeRuns > 0 || queuedRuns > 0 || this.#pendingSubmissions > 0) {
       return {
         ok: false,
-        reason: "还有任务正在运行或排队，暂时不能重载 OpenCode。",
+        reason: "还有任务正在运行、排队或准备提交，暂时不能重载配置或插件。",
         activeRuns,
         queuedRuns,
+        pendingSubmissions: this.#pendingSubmissions,
       };
     }
     this.#maintenance = true;
-    return { ok: true, activeRuns: 0, queuedRuns: 0 };
+    return { ok: true, activeRuns: 0, queuedRuns: 0, pendingSubmissions: 0 };
   }
 
   endMaintenance(): void {

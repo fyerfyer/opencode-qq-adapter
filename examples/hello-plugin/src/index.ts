@@ -26,7 +26,6 @@ export default definePlugin<HelloOptions>({
         description: "插件连通性示例",
         usage: "hello [名字]",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const name = command.args.join(" ").trim() || command.message.senderName;
           logger.info({ qq: command.actor.qq }, "hello command invoked");
@@ -41,7 +40,6 @@ export default definePlugin<HelloOptions>({
         description: "原样返回文本",
         usage: "echo <文本>",
         chats: ["private", "group"],
-        allowGroupShared: true,
         handler(command) {
           if (command.rawArgs.length === 0) return "用法：!echo <文本>";
           return command.rawArgs;

@@ -37,11 +37,9 @@ export const projectSchema = z
   .object({
     path: z.string().min(1),
     description: z.string().optional(),
-    workspace: z.enum(["shared", "per_user", "worktree", "none"]).default("shared"),
+    workspace: z.enum(["shared", "none"]).default("shared"),
     agent: z.string().min(1).nullable().default(null),
     model: z.string().min(1).nullable().default(null),
-    setup: z.array(z.string().min(1)).default([]),
-    base_branch: z.string().min(1).nullable().default(null),
     /** Internal projects (for example a plugin workspace) stay out of user UI. */
     hidden: z.boolean().default(false),
     /** Audit/UI label for projects created by a plugin, e.g. `roleplay`. */
@@ -208,8 +206,6 @@ const featuresSchema = z
   .object({
     images: z.boolean().default(true),
     files: z.boolean().default(true),
-    worktrees: z.boolean().default(false),
-    forms: z.boolean().default(false),
     metrics: z.boolean().default(false),
   })
   .strict()
@@ -289,21 +285,10 @@ export const pluginsSchema = z
 
 const workspacesSchema = z
   .object({
-    default_mode: z.enum(["shared", "per_user", "worktree"]).default("shared"),
-    root: z.string().min(1).default("var/workspaces"),
-    idle_ttl_hours: z.number().int().positive().default(72),
-    max_per_project: z.number().int().positive().default(5),
     /** How long a workspace lock survives without a renewal. */
     lock_lease_ms: z.number().int().min(5000).default(120_000),
     /** How often long-running runs renew their workspace lease. */
     renew_interval_ms: z.number().int().min(1000).default(30_000),
-    cleanup: z
-      .object({
-        require_clean: z.boolean().default(true),
-        keep_dirty_days: z.number().int().positive().default(7),
-      })
-      .strict()
-      .prefault({}),
   })
   .strict()
   .prefault({});

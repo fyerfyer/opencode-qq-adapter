@@ -311,7 +311,11 @@ describe("roleplay worldbook", () => {
     expect(trace.selected).toHaveLength(0);
     expect(trace.dropped[0]?.reason).toContain("概率未命中");
     expect(
-      selectWorldbook(list, { currentText: "白饭", recentTexts: [] }, { ...config, random: () => 0.1 }),
+      selectWorldbook(
+        list,
+        { currentText: "白饭", recentTexts: [] },
+        { ...config, random: () => 0.1 },
+      ),
     ).toHaveLength(1);
   });
 
@@ -325,7 +329,11 @@ describe("roleplay worldbook", () => {
 
     // Delay: not enough messages yet.
     expect(
-      selectWorldbook(list, { currentText: "迟到", recentTexts: [] }, { ...config, messageCount: 1, effectState: state }),
+      selectWorldbook(
+        list,
+        { currentText: "迟到", recentTexts: [] },
+        { ...config, messageCount: 1, effectState: state },
+      ),
     ).toHaveLength(0);
 
     // Activation records the effect state.

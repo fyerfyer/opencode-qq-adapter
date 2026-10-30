@@ -143,8 +143,6 @@ describe("Application + OneBot port contract", () => {
         workspace: "shared",
         agent: null,
         model: null,
-        setup: [],
-        base_branch: null,
         hidden: false,
       };
       config.users["20000"] = {

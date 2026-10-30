@@ -6,11 +6,11 @@
     "id": "profile-fixture",
     "name": "Profile fixture",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Conversation profile and reply plan fixture",
     "capabilities": ["commands", "hooks", "sessions"],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.2.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./index.ts"
   }

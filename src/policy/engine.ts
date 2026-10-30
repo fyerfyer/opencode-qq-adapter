@@ -95,7 +95,9 @@ export class PolicyEngine {
         ? { allowed: false, project: null, reason: "project_not_found" }
         : { allowed: true, project: chat.project, reason: null };
     }
-    const project = this.#config.projects[projectId];
+    const project = Object.hasOwn(this.#config.projects, projectId)
+      ? this.#config.projects[projectId]
+      : undefined;
     if (project === undefined) {
       return { allowed: false, project: null, reason: "project_not_found" };
     }
@@ -113,7 +115,9 @@ export class PolicyEngine {
 
   canWriteProject(actor: UserConfig, projectId: string): boolean {
     if (isChatProjectId(projectId)) return false;
-    const project = this.#config.projects[projectId];
+    const project = Object.hasOwn(this.#config.projects, projectId)
+      ? this.#config.projects[projectId]
+      : undefined;
     if (project === undefined || project.hidden) return false;
     if (!matchesAny(actor.projects, projectId)) return false;
     return matchesAny(actor.write_projects, projectId);

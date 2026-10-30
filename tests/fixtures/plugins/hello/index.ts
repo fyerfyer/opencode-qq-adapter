@@ -33,7 +33,6 @@ export default definePlugin<FixtureOptions>({
         name: "fx-hello",
         description: "fixture greeting",
         chats: ["private", "group"],
-        allowGroupShared: true,
         handler() {
           return context.config.greeting;
         },

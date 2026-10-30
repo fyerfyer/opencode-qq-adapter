@@ -77,10 +77,6 @@ export class MessageRouter {
           args: context.args,
           rawArgs: context.rawArgs,
           actor: actorRole,
-          groupMode:
-            context.message.chat.type === "group" && context.message.chat.groupId !== undefined
-              ? "per_user"
-              : null,
         }));
       if (handledByPlugin) return;
       await this.#deps.sender.reply(

@@ -120,7 +120,7 @@ opencode-qq setup
 
 ```bash
 # 从本地 tarball 安装
-npm install -g ./opencode-qq-adapter-0.1.2.tgz
+npm install -g ./opencode-qq-adapter-0.2.0.tgz
 opencode-qq start
 
 # 或在源码目录
@@ -132,7 +132,7 @@ pnpm start
 
 ```bash
 npm_config_audit=false npm_config_fund=false \
-  npx -y -p ./opencode-qq-adapter-0.1.2.tgz opencode-qq start
+  npx -y -p ./opencode-qq-adapter-0.2.0.tgz opencode-qq start
 ```
 
 ### 停止与端口
@@ -344,6 +344,8 @@ QQ_BRIDGE_INTERNAL_TOKEN=change-me-too
 
 `config.yaml` 里的相对路径按配置文件所在目录解析；密钥只放 `.env`，不要写进 YAML。
 
+0.2.0 起删除未实现的配置字段（`projects.*.setup`、`base_branch`、`features.worktrees`、`features.forms`、`workspaces.default_mode/root/idle_ttl_hours/max_per_project/cleanup`）。旧 YAML 仍可启动：loader 会忽略这些字段并给出 warning；`workspace: per_user|worktree` 会映射为 `shared`。
+
 本地 NapCat：
 
 ```bash
@@ -411,7 +413,7 @@ my-plugin.zip
 
 上传包要求：
 
-- `package.json.opencodeQq` 必须存在，并包含合法的 `id`、`version`、`apiVersion`、`entry`。
+- `package.json.opencodeQq` 必须存在，并包含合法的 `id`、`version`、`apiVersion`、`entry`。当前 SDK 为 API v2；v1 插件会在 manifest 校验阶段被明确拒绝。
 - 入口必须是 `.js` / `.mjs` / `.cjs`；上传包应自行 bundle 运行时依赖，WebUI 不执行 `npm install`、构建或安装脚本。
 - 本地目录模式可以使用 TypeScript，依赖由本地 `node_modules` 提供。
 - ZIP 最大 20 MiB；解压后最大 64 MiB、2000 个文件（最多 4000 个归档条目）；拒绝路径穿越、反斜杠、绝对路径、符号链接和特殊文件。
@@ -422,12 +424,14 @@ WebUI 托管的代码位于 `storage.plugins_dir/.managed/<plugin-id>/`，插件
 
 | 能力 | 用途 |
 | --- | --- |
-| `commands` | 注册 `!command`，核心统一做用户/角色/群模式检查 |
+| `commands` | 注册 `!command`，核心统一做用户、角色和会话类型检查；命令返回的文本回复属于此能力 |
 | `hooks` | `beforePrompt`、`afterRun`、`onConfigReload` |
-| `messages` | 发送文本、图片、文件（受数据目录和大小限制） |
-| `sessions` | 只读查看当前会话绑定 |
+| `messages` | `ctx.messages` 与 `command.sendImage/sendFile`；发送图片、文件（受数据目录和大小限制） |
+| `sessions` | `ctx.sessions` 与 `command.conversation`；读取当前会话绑定，并通过受控 `setProject` / `reset` 修改会话；插件只能操作自己 `managed_by` 的 hidden 项目 |
 | `events` | 订阅 `run.finished` / `config.reloaded` |
 | `admin` | 插件管理 API、原生页面或 iframe 页面（`@opencode-qq/plugin-ui`） |
+
+插件注入的 `prepend + append` 上下文有独立的 12,000 字预算；超限时截断并写 warning/audit，不会拒绝用户消息。`beforePrompt` / `afterRun` 默认 2 秒，`formatReply` 默认 4 秒。
 
 最小示例：
 
@@ -504,11 +508,13 @@ zip -r ../my-plugin-0.1.0.zip package.json dist ui
 
 插件加载失败只会标记该插件为 `failed`，不会影响核心和其它插件；发送 `!plugins` 或打开 `/admin` 的「插件」页可以查看错误。
 
+插件重载、安装、回滚和卸载会先等待 QQ run 队列、正在准备的 submit 和插件 `afterRun` / 命令 / admin 任务全部结束；有活动任务时会返回明确错误，避免关闭仍在使用的 SQLite。需要重载时请等待任务结束或先发送 `!stop`。
+
 ## Roleplay（实验）
 
 `packages/roleplay` 提供角色扮演：导入 Character Card V2/V3、按角色目录运行 OpenCode、注入世界书与 Markdown 长期记忆、把回复拆成多条短消息并加打字延迟。
 
-当前 0.4.1 能力：
+当前 0.5.0 能力：
 
 - 私聊 + 群聊；核心群聊是零配置的每人独立会话，每个成员各自绑定角色、各自维护记忆；
 - 长期记忆是一份可读、可手改的 `memory.md`，原文保存在 SQLite 供 FTS5 检索；
@@ -711,7 +717,7 @@ workspaces:
 
 群聊不需要任何配置。只要发送者在 `users` 中，私聊和群聊都按同一套权限执行；同一个人在任意群里的权限相同。
 
-- 群内默认每个成员一个独立 Conversation（`group:<群号>:<QQ>`）。
+- 群内默认每个成员一个独立 Conversation（`group:<群号>:<QQ>`）；插件看到的群聊也始终是 per-user，不再有 shared/readonly 群模式。
 - 非命令消息是否必须 @bot 由全局 `security.require_mention_in_group` 控制。
 - 未在 `users` 中的 QQ 在群里发消息会被静默忽略，只写审计。
 - workspace 仍按项目共享；需要独立目录时请使用独立的 `projects.<id>.path`。

@@ -1,0 +1,14 @@
+{
+  "name": "@fixture/undeclared-capability",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "undeclared-capability-fixture",
+    "name": "Undeclared capability fixture",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Accesses a context API without declaring its capability",
+    "capabilities": ["commands"],
+    "entry": "./index.ts"
+  }
+}

@@ -7,7 +7,6 @@ import {
   definePlugin,
   type PluginChat,
   type PluginCommandContext,
-  type PluginGroupMode,
   type PluginMessage,
   type PluginRunContext,
 } from "@opencode-qq/plugin-sdk";
@@ -65,24 +64,6 @@ function deliveryOptions(options: RoleplayOptions): DeliveryOptions {
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.length > 200 ? `${message.slice(0, 200)}…` : message;
-}
-
-function isSharedGroup(mode: PluginGroupMode | null): boolean {
-  return mode === "shared" || mode === "readonly";
-}
-
-function canManageGroup(command: PluginCommandContext): boolean {
-  if (command.message.chat.type !== "group") return true;
-  if (!isSharedGroup(command.groupMode)) return true;
-  return command.actor.role === "owner" || command.actor.role === "admin";
-}
-
-function canViewAllActors(command: PluginCommandContext): boolean {
-  return (
-    command.message.chat.type === "group" &&
-    isSharedGroup(command.groupMode) &&
-    canManageGroup(command)
-  );
 }
 
 function privateChatFor(message: PluginMessage): PluginChat {
@@ -348,9 +329,6 @@ export default definePlugin<RoleplayOptions>({
       text: string,
     ): Promise<string> => {
       if (command.message.chat.type !== "group") return text;
-      if (isSharedGroup(command.groupMode) && !canManageGroup(command)) {
-        return "shared 群中只有 owner/admin 可以查看记忆。";
-      }
       try {
         await context.messages.send(privateChatFor(command.message), text);
         return "已私聊你。";
@@ -405,7 +383,6 @@ export default definePlugin<RoleplayOptions>({
         description: "列出、查看或使用角色卡",
         usage: "persona [list|info|use] [id]",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "list";
           const chatKey = command.message.chat.chatKey;
@@ -437,7 +414,7 @@ export default definePlugin<RoleplayOptions>({
               personaId: persona.id,
               scope: chatKey,
               actorQq: command.message.userId,
-              allActors: canViewAllActors(command),
+              allActors: false,
             });
             const userChars = view.user.content.trim().length;
             const sceneChars = view.scene?.content.trim().length ?? 0;
@@ -452,9 +429,6 @@ export default definePlugin<RoleplayOptions>({
           }
 
           if (sub === "use") {
-            if (!canManageGroup(command)) {
-              return "shared 群中只有 owner/admin 可以切换角色。";
-            }
             return await activate(command, persona, true);
           }
           return "用法：!persona list | !persona info [id] | !persona use 角色ID";
@@ -513,7 +487,6 @@ export default definePlugin<RoleplayOptions>({
         description: "调试世界书关键词、递归和预算",
         usage: "worldbook check 文本",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const sub = command.args[0]?.toLowerCase();
           const text = command.args.slice(1).join(" ").trim();
@@ -556,7 +529,6 @@ export default definePlugin<RoleplayOptions>({
         description: "查看、开启或关闭角色扮演",
         usage: "rp [on|off|status]",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const sub = command.args[0]?.toLowerCase() ?? "status";
           const chatKey = command.message.chat.chatKey;
@@ -574,9 +546,6 @@ export default definePlugin<RoleplayOptions>({
           }
 
           if (sub === "off") {
-            if (!canManageGroup(command)) {
-              return "shared 群中只有 owner/admin 可以关闭角色扮演。";
-            }
             if (binding === null) return "当前没有绑定角色。";
             bindings.set({ ...binding, enabled: false, updatedAt: Date.now() });
             const restoreTo = binding.previousProjectId ?? options.fallbackProject;
@@ -593,9 +562,6 @@ export default definePlugin<RoleplayOptions>({
           }
 
           if (sub === "on") {
-            if (!canManageGroup(command)) {
-              return "shared 群中只有 owner/admin 可以开启角色扮演。";
-            }
             if (binding === null) {
               if (options.defaultPersona === null) {
                 return "请先发送 !persona use 角色ID 选择角色。";
@@ -621,7 +587,6 @@ export default definePlugin<RoleplayOptions>({
         description: "查看、搜索或整理当前角色的记忆",
         usage: "memory [search 关键词|refresh|history|diff]",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
@@ -649,10 +614,6 @@ export default definePlugin<RoleplayOptions>({
               : "整理完成：没有新的记忆变化。";
           }
 
-          if (command.message.chat.type === "group" && isSharedGroup(command.groupMode) && !canManageGroup(command)) {
-            return "shared 群中只有 owner/admin 可以查看记忆。";
-          }
-
           if (sub === "history") {
             const events = memory.history({
               personaId: active.persona.id,
@@ -675,7 +636,7 @@ export default definePlugin<RoleplayOptions>({
               scope: chatKey,
               actorQq: command.message.userId,
               query,
-              allActors: canViewAllActors(command),
+              allActors: false,
               limit: 5,
             });
             return deliverMemory(
@@ -689,7 +650,7 @@ export default definePlugin<RoleplayOptions>({
             personaId: active.persona.id,
             scope: chatKey,
             actorQq: command.message.userId,
-            allActors: canViewAllActors(command),
+            allActors: false,
           });
           const hasMemory =
             view.user.exists || view.scene?.exists === true || view.allUsers.length > 0;
@@ -715,7 +676,6 @@ export default definePlugin<RoleplayOptions>({
         description: "手动记住一条关于你的信息",
         usage: "remember 内容",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
@@ -742,7 +702,6 @@ export default definePlugin<RoleplayOptions>({
         description: "删除当前角色在当前会话中的记忆",
         usage: "forget section 名称 | forget confirm",
         chats: ["private", "group"],
-        allowGroupShared: true,
         async handler(command) {
           const chatKey = command.message.chat.chatKey;
           const active = await boundPersona(chatKey);
@@ -750,10 +709,6 @@ export default definePlugin<RoleplayOptions>({
           const sub = command.args[0]?.toLowerCase();
           if (sub === undefined) {
             return "用法：!forget section 名称 | !forget confirm（全部，需要确认）";
-          }
-
-          if (!canManageGroup(command)) {
-            return "shared 群中只有 owner/admin 可以删除记忆。";
           }
 
           if (sub === "confirm") {

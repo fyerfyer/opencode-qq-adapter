@@ -4,7 +4,7 @@ Experimental SDK for building QQ-side plugins for [`opencode-qq-adapter`](https:
 
 A plugin is trusted code that runs inside the bridge process. It can register QQ commands, inject prompt context, observe run completion, send text/images/files through the core media pipeline, and persist data in its own directory. Plugins cannot install or select Agents/models/workspaces/permissions, replace the permission engine, or access core SQLite tables. Every QQ run, including background utility runs, uses the core Agent (`opencode.default_agent`, fallback `qq-code`).
 
-The SDK is at API v1. Additive changes are expected; breaking changes require a new `PLUGIN_API_VERSION`.
+The SDK is at API v2. Additive changes are expected; breaking changes require a new `PLUGIN_API_VERSION`. v2 removed the unreachable `groupMode` / `allowGroupShared` surface: QQ group chats always use one independent conversation per member.
 
 ## Package layout
 
@@ -27,10 +27,10 @@ my-plugin/
     "id": "my-plugin",
     "name": "My plugin",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Example plugin",
     "capabilities": ["commands", "messages", "hooks", "admin"],
-    "engines": { "opencodeQq": ">=0.1.0 <0.2.0" },
+    "engines": { "opencodeQq": ">=0.2.0 <0.3.0" },
     "entry": "./src/index.ts",
     "ui": { "root": "ui", "entry": "index.html" }
   },
@@ -114,17 +114,17 @@ Managed code lives under `<storage.plugins_dir>/.managed/<plugin-id>/`; plugin d
 
 | API | Capability | Purpose |
 | --- | --- | --- |
-| `ctx.commands` | `commands` | Register `!command` handlers |
+| `ctx.commands` | `commands` | Register `!command` handlers; text replies and returned strings are part of this capability |
 | `ctx.hooks` | `hooks` | `resolveConversationProfile`, `beforePrompt`, `formatReply`, `afterRun`, `onConfigReload` |
-| `ctx.messages` | `messages` | Send text / image / file |
-| `ctx.sessions` | `sessions` | Read the conversation binding; guarded `setProject` / `reset` |
+| `ctx.messages` / `command.sendImage` / `command.sendFile` | `messages` | Send images and files |
+| `ctx.sessions` / `command.conversation` | `sessions` | Read the conversation binding; guarded `setProject` / `reset` |
 | `ctx.events` | `events` | Subscribe to `run.finished` / `config.reloaded` |
 | `ctx.agent` | `agent` | One-shot OpenCode utility run for background work |
 | `ctx.admin` | `admin` | Plugin-owned JSON/image routes under `/admin/api/plugins/<id>/*` and optional page metadata |
 | `ctx.storage` / `ctx.dataDir` | — | Isolated JSON/text files |
 | `ctx.logger` | — | Plugin-prefixed structured logging |
 
-Capabilities are enforced: calling `ctx.commands.register` without `"commands"` fails the plugin load instead of silently doing nothing.
+Capabilities are enforced. Accessing `ctx.messages`, `ctx.sessions`, `command.conversation`, `command.sendImage` or `command.sendFile` without declaring the matching capability throws instead of silently exposing the API. Text replies from a command handler remain part of `commands`.
 
 ## Admin routes
 
@@ -185,7 +185,6 @@ context.commands.register({
   usage: "note add <text> | note list",
   roles: ["owner", "admin", "member"], // default: all authenticated users
   chats: ["private", "group"],         // default: both
-  allowGroupShared: false,             // shared groups are opt-in
   handler: async (command) => {
     // command.message / args / rawArgs / actor / conversation / reply()
     return "text returned from a handler is sent automatically";
@@ -271,23 +270,26 @@ Rules:
 
 ## Group-aware commands
 
-`command.groupMode` is `per_user`, `shared`, `readonly`, or `null` for private chats. In `shared`/`readonly` groups, commands that affect everyone should check the actor role:
+QQ group chats always use one independent conversation per member (`group:<group-id>:<qq>`). There is no plugin-visible shared/readonly group mode. When a command needs different behavior in groups, inspect the chat type and actor role directly:
 
 ```ts
 handler(command) {
-  if (
-    command.message.chat.type === "group" &&
-    (command.groupMode === "shared" || command.groupMode === "readonly") &&
-    command.actor.role !== "owner" &&
-    command.actor.role !== "admin"
-  ) {
-    return "只有 owner/admin 可以操作。";
+  if (command.message.chat.type === "group" && command.actor.role === "member") {
+    return "群内示例：只影响当前成员自己的会话。";
   }
   return "ok";
 }
 ```
 
-`allowGroupShared: true` is still required for a command to run in a shared group.
+A command that should only work in one chat type can still declare `chats: ["private"]` or `chats: ["group"]`.
+
+## Prompt and hook budgets
+
+- `security.max_prompt_chars` limits only the user's raw text.
+- Plugin-injected `prepend` + `append` context has a separate 12,000-character budget per prompt. Oversized context is truncated, logged and audited; the user message is still accepted.
+- `beforePrompt` / `afterRun` / `onConfigReload` hooks have a 2-second timeout.
+- `formatReply` has a 4-second timeout.
+- A slow plugin is skipped or falls back to the original reply; it must not block the QQ run queue.
 
 ## Media and paths
 

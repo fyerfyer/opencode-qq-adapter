@@ -356,7 +356,7 @@ describe("roleplay admin API", () => {
       }),
     );
     expect(result).toMatchObject({ emotion: "happy", emotionCount: 3 });
-    const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1]?.body) ?? "{}")) as {
+    const payload = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body ?? "{}")) as {
       questions: { emotion: { criteria: Record<string, string> } };
     };
     expect(Object.keys(payload.questions.emotion.criteria).sort()).toEqual([

@@ -88,13 +88,6 @@ export function normalizeReplyText(value: unknown): string | null | undefined {
   return text.length > 0 && text.length <= 8000 ? text : null;
 }
 
-export function groupIdFromChatKey(chatKey: string): number | undefined {
-  const match = /^group:(\d+)/.exec(chatKey);
-  if (match?.[1] === undefined) return undefined;
-  const value = Number(match[1]);
-  return Number.isSafeInteger(value) ? value : undefined;
-}
-
 export function isPromptPatch(value: unknown): value is PluginPromptPatch {
   return isRecord(value);
 }

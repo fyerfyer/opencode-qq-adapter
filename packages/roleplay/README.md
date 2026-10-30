@@ -294,7 +294,7 @@ The core bridge no longer has group configuration. Every authorized QQ gets an i
 
 - `!persona use`, `!rp on/off`, `!forget confirm`, and `!memory` are available to the member in their own conversation.
 - `!memory` / `!memory search` / `!memory history` / `!memory diff` in a group send details to the member's private chat; the group only gets a short acknowledgement.
-- Legacy `shared` / `readonly` branches remain in the plugin code for tests and future use, but the current bridge never selects them.
+- Plugin API v2 has no shared/readonly group mode. Group management commands are scoped to the member's own conversation, so no owner/admin override is needed for normal persona or memory changes.
 
 Example: no group config is needed. Ensure the QQ is in `config.yaml` under `users` and has access to at least one visible project.
 

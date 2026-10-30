@@ -1,0 +1,14 @@
+{
+  "name": "@fixture/slow-after-run",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "slow-after-run-fixture",
+    "name": "Slow afterRun fixture",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Keeps plugin work in flight after a run",
+    "capabilities": ["hooks"],
+    "entry": "./index.ts"
+  }
+}

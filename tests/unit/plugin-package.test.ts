@@ -53,12 +53,12 @@ const baseManifest = {
   id: "demo",
   name: "Demo",
   version: "0.1.0",
-  apiVersion: 1,
+  apiVersion: 2,
   capabilities: ["commands"],
   entry: "./index.js",
 };
 
-const context = { coreVersion: "0.1.1", source: "upload" as const };
+const context = { coreVersion: "0.2.0", source: "upload" as const };
 
 describe("inspectPackage", () => {
   it("returns a normalized manifest and entry", async () => {

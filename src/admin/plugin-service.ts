@@ -282,6 +282,9 @@ export class AdminPluginService {
       result = await host.dispatchAdmin(pluginId, request, path, actor);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (/正在重载/.test(message)) {
+        throw new AdminError(409, "plugin_busy", message);
+      }
       throw new AdminError(
         /unknown plugin|not loaded/.test(message) ? 404 : 500,
         "plugin_admin_failed",

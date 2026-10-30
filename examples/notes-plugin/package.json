@@ -11,14 +11,14 @@
     "id": "notes",
     "name": "Notes",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Per-chat notes stored as JSON inside the plugin data directory",
     "capabilities": [
       "commands",
       "messages"
     ],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.2.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./src/index.ts"
   },

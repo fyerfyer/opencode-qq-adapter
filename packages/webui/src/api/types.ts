@@ -140,11 +140,9 @@ export interface ProjectRecord {
   id: string;
   path: string;
   description?: string;
-  workspace: "shared" | "per_user" | "worktree" | "none";
+  workspace: "shared" | "none";
   agent: string | null;
   model: string | null;
-  setup: string[];
-  base_branch: string | null;
   hidden: boolean;
   managed_by?: string;
 }

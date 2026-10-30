@@ -53,8 +53,6 @@ storage:
   database_path: "var/bot.db"
   inbox_dir: "var/inbox"
   plugins_dir: "plugins"
-workspaces:
-  root: "var/workspaces"
 default_project: "demo"
 users:
   "20000":
@@ -269,7 +267,7 @@ async function makeHarness(
     configPath,
     configEditor: editor,
     host,
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
     logger: silentLogger(),
     ...(options.now === undefined ? {} : { now: options.now }),
   });

@@ -65,7 +65,6 @@ describe("roleplay group support", () => {
     const greeting = await harness.runCommand("persona", {
       args: ["use", "blue-fat-fish"],
       message: groupMessage(10001, chatKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     expect(greeting).toContain("今天只吃一碗白饭");
@@ -74,7 +73,6 @@ describe("roleplay group support", () => {
       args: ["我喜欢白米饭"],
       rawArgs: "我喜欢白米饭",
       message: groupMessage(10001, chatKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     expect(remembered).toContain("已写入手动记忆");
@@ -83,7 +81,6 @@ describe("roleplay group support", () => {
 
     const memory = await harness.runCommand("memory", {
       message: groupMessage(10001, chatKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     expect(memory).toBe("已私聊你。");
@@ -93,74 +90,10 @@ describe("roleplay group support", () => {
     const deleted = await harness.runCommand("forget", {
       args: ["confirm"],
       message: groupMessage(10001, chatKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     expect(deleted).toContain("已删除记忆");
     expect(await exists(path)).toBe(false);
-  });
-
-  it("keeps shared scene and per-user docs, and restricts management to owner/admin", async () => {
-    const { harness, dataDir } = await setup();
-    const sharedKey = "group:922216566";
-    const greeting = await harness.runCommand("persona", {
-      args: ["use", "blue-fat-fish"],
-      message: groupMessage(10009, sharedKey),
-      groupMode: "shared",
-      actorRole: "admin",
-    });
-    expect(greeting).toContain("今天只吃一碗白饭");
-
-    const remembered = await harness.runCommand("remember", {
-      args: ["我是二号群友"],
-      rawArgs: "我是二号群友",
-      message: groupMessage(10002, sharedKey),
-      groupMode: "shared",
-      actorRole: "member",
-    });
-    expect(remembered).toContain("已写入手动记忆");
-    const userPath = join(
-      dataDir,
-      "memory",
-      "blue-fat-fish",
-      "group_922216566",
-      "users",
-      "10002.md",
-    );
-    expect(await readFile(userPath, "utf8")).toContain("我是二号群友");
-
-    const memberMemory = await harness.runCommand("memory", {
-      message: groupMessage(10002, sharedKey),
-      groupMode: "shared",
-      actorRole: "member",
-    });
-    expect(memberMemory).toContain("只有 owner/admin");
-
-    const adminMemory = await harness.runCommand("memory", {
-      message: groupMessage(10009, sharedKey),
-      groupMode: "shared",
-      actorRole: "admin",
-    });
-    expect(adminMemory).toBe("已私聊你。");
-    const dm = harness.sent.filter((entry) => entry.chat.type === "private").at(-1);
-    expect(dm?.text).toContain("群成员记忆");
-    expect(dm?.text).toContain("我是二号群友");
-
-    const memberDelete = await harness.runCommand("forget", {
-      args: ["confirm"],
-      message: groupMessage(10002, sharedKey),
-      groupMode: "shared",
-      actorRole: "member",
-    });
-    expect(memberDelete).toContain("只有 owner/admin");
-    const adminDelete = await harness.runCommand("forget", {
-      args: ["confirm"],
-      message: groupMessage(10009, sharedKey),
-      groupMode: "shared",
-      actorRole: "admin",
-    });
-    expect(adminDelete).toContain("已删除记忆");
-    expect(await exists(userPath)).toBe(false);
   });
 
   it("allows each per_user member to choose their own persona", async () => {
@@ -170,13 +103,11 @@ describe("roleplay group support", () => {
     await harness.runCommand("persona", {
       args: ["use", "blue-fat-fish"],
       message: groupMessage(10001, firstKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     await harness.runCommand("persona", {
       args: ["use", "blue-fat-fish"],
       message: groupMessage(10002, secondKey),
-      groupMode: "per_user",
       actorRole: "member",
     });
     expect(harness.sessionCalls).toContainEqual({

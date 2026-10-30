@@ -22,7 +22,7 @@ import { NapCatOneBotAdapter } from "./onebot/napcat.js";
 import { isMessageEvent, type OneBotEvent } from "./onebot/protocol.js";
 import { toIncomingMessage } from "./onebot/segments.js";
 import { OpenCodeAgent } from "./opencode/agent.js";
-import { PluginHost } from "./plugins/host.js";
+import { PluginHost, type PluginReloadReport } from "./plugins/host.js";
 import { PolicyEngine } from "./policy/engine.js";
 import { QuotaService } from "./policy/quota.js";
 import type { AgentPort } from "./ports/agent.js";
@@ -83,6 +83,7 @@ export class App {
   #unsubscribeOneBot: (() => void) | null = null;
   #started = false;
   #stopped = false;
+  #pluginMaintenanceDepth = 0;
   #lastSeenPrune = 0;
   #pruneTimer: NodeJS.Timeout | null = null;
   #loginProbeTimer: NodeJS.Timeout | null = null;
@@ -114,8 +115,20 @@ export class App {
           getConversation: (chatKey) => conversationsRef?.getConversation(chatKey) ?? null,
         },
         agent: this.agent,
+        withMaintenance: (task) => this.#withPluginMaintenance(task),
         sessionActions: {
-          setProject: ({ chatKey, projectId, actorQq }) => {
+          setProject: ({ pluginId, chatKey, projectId, actorQq }) => {
+            const project = Object.hasOwn(this.config.projects, projectId)
+              ? this.config.projects[projectId]
+              : undefined;
+            if (project === undefined) {
+              return { ok: false, reason: "项目不存在。" };
+            }
+            // Plugins may only enter their own hidden projects. Normal
+            // projects still follow the actor's configured permissions.
+            if (project.hidden && project.managed_by !== pluginId) {
+              return { ok: false, reason: "插件不能切换到其他插件的内部项目。" };
+            }
             const actor = this.policy.actor(actorQq);
             if (actor === null) return { ok: false, reason: "未授权用户。" };
             const allowed = this.policy.canUseProject(actor, projectId, { includeHidden: true });
@@ -127,12 +140,18 @@ export class App {
               }
             );
           },
-          reset: ({ chatKey, actorQq }) => {
+          reset: ({ pluginId, chatKey, actorQq }) => {
             const actor = this.policy.actor(actorQq);
             if (actor === null) return { ok: false, reason: "未授权用户。" };
             const conversation = conversationsRef?.getConversation(chatKey);
             if (conversation === null || conversation === undefined) {
               return { ok: false, reason: "还没有会话。" };
+            }
+            const project = Object.hasOwn(this.config.projects, conversation.projectId)
+              ? this.config.projects[conversation.projectId]
+              : undefined;
+            if (project?.hidden && project.managed_by !== pluginId) {
+              return { ok: false, reason: "插件不能操作其他插件的内部项目会话。" };
             }
             const allowed = this.policy.canUseProject(actor, conversation.projectId, {
               includeHidden: true,
@@ -236,6 +255,7 @@ export class App {
         plugins: this.plugins,
         logger: this.logger,
         reloadConfig: () => this.reloadConfig(),
+        withPluginMaintenance: (task) => this.#withPluginMaintenance(task),
         ...(initialAdminPassword !== undefined && initialAdminPassword.length > 0
           ? { initialPassword: initialAdminPassword }
           : {}),
@@ -310,6 +330,46 @@ export class App {
   }
 
   /**
+   * Reconcile the plugin host while the conversation queue is idle.
+   *
+   * Disposing a plugin can close SQLite handles used by `afterRun`, so a busy
+   * bridge must reject the reload instead of tearing down live plugin state.
+   */
+  async reloadPlugins(): Promise<PluginReloadReport> {
+    return this.#withPluginMaintenance(() => this.plugins.reload());
+  }
+
+  async #withPluginMaintenance<T>(task: () => Promise<T>): Promise<T> {
+    if (this.#pluginMaintenanceDepth > 0) return task();
+    const pendingTasks = this.plugins.pendingTasks();
+    if (pendingTasks > 0) {
+      throw new Error(`还有 ${pendingTasks} 个插件任务正在执行，暂时不能重载插件。`);
+    }
+
+    const gate = this.conversations.beginMaintenance();
+    if (!gate.ok) {
+      throw new Error(gate.reason ?? "还有任务正在运行或排队，暂时不能重载插件。");
+    }
+
+    this.plugins.setMaintenance(true);
+    this.#pluginMaintenanceDepth += 1;
+    try {
+      // Close the small race between the pending-task read and taking the
+      // gate: once the host is marked as reloading, new commands/admin calls
+      // are rejected, and anything that slipped in must drain first.
+      const lateTasks = this.plugins.pendingTasks();
+      if (lateTasks > 0) {
+        throw new Error(`还有 ${lateTasks} 个插件任务正在执行，暂时不能重载插件。`);
+      }
+      return await task();
+    } finally {
+      this.#pluginMaintenanceDepth -= 1;
+      this.plugins.setMaintenance(false);
+      this.conversations.endMaintenance();
+    }
+  }
+
+  /**
    * Re-read the configuration file and apply the hot-reloadable subset.
    * A validation failure never changes the running configuration.
    */
@@ -351,37 +411,51 @@ export class App {
       };
     }
 
-    const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
-    ensureChatWorkspace(this.config.chat.enabled ? this.config.chat.path : null);
-    this.admin.updateSettings();
-    this.logger.level = this.config.logging.level;
-    const warnings = [...loaded.warnings];
-    const pluginReport = await this.plugins.reload();
-    if (pluginReport.failed > 0) {
-      warnings.push(`${pluginReport.failed} 个插件加载失败；发送 !plugins 查看详情`);
+    try {
+      return await this.#withPluginMaintenance(async () => {
+        const { applied, restartRequired } = applyHotConfig(this.config, loaded.config);
+        ensureChatWorkspace(this.config.chat.enabled ? this.config.chat.path : null);
+        this.admin.updateSettings();
+        this.logger.level = this.config.logging.level;
+        const warnings = [...loaded.warnings];
+        const pluginReport = await this.plugins.reload();
+        if (pluginReport.failed > 0) {
+          warnings.push(`${pluginReport.failed} 个插件加载失败；发送 !plugins 查看详情`);
+        }
+        await this.plugins
+          .configReloaded({ applied, restartRequired })
+          .catch((error) => this.logger.warn({ err: error }, "Plugin config reload hooks failed"));
+        this.audit.record({
+          ts: Date.now(),
+          actorQq: null,
+          chatKey: null,
+          projectId: null,
+          workspaceId: null,
+          action: "config.reloaded",
+          detail: { applied, restartRequired, warnings, plugins: pluginReport },
+        });
+        this.logger.info(
+          { applied, restartRequired, warnings, plugins: pluginReport },
+          "Configuration reloaded",
+        );
+        return {
+          ok: true,
+          applied,
+          restartRequired,
+          warnings,
+        };
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error }, "Configuration reload rejected; keeping old config");
+      return {
+        ok: false,
+        applied: [],
+        restartRequired: [],
+        warnings: loaded.warnings,
+        error: message,
+      };
     }
-    await this.plugins
-      .configReloaded({ applied, restartRequired })
-      .catch((error) => this.logger.warn({ err: error }, "Plugin config reload hooks failed"));
-    this.audit.record({
-      ts: Date.now(),
-      actorQq: null,
-      chatKey: null,
-      projectId: null,
-      workspaceId: null,
-      action: "config.reloaded",
-      detail: { applied, restartRequired, warnings, plugins: pluginReport },
-    });
-    this.logger.info(
-      { applied, restartRequired, warnings, plugins: pluginReport },
-      "Configuration reloaded",
-    );
-    return {
-      ok: true,
-      applied,
-      restartRequired,
-      warnings,
-    };
   }
 
   async stop(): Promise<void> {

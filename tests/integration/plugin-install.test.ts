@@ -73,7 +73,6 @@ describe("plugin installer integration", () => {
           inbox_dir: join(root, "inbox"),
           plugins_dir: pluginsDir,
         },
-        workspaces: { root: join(root, "workspaces") },
         default_project: "demo",
         users: {
           "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },

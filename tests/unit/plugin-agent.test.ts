@@ -200,7 +200,7 @@ async function makeHost(
     sender,
     conversations: { getConversation: () => null },
     reservedCommands: ["ping", "help"],
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
     ...(agent !== undefined ? { agent } : {}),
   });
   await host.start();
@@ -220,7 +220,6 @@ function utilityCommand(name = "fx-utility", rawArgs = "hi") {
     args: rawArgs.split(" ").filter(Boolean),
     rawArgs,
     actor: "owner" as const,
-    groupMode: null,
   };
 }
 

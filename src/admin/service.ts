@@ -64,6 +64,8 @@ export interface AdminServiceOptions {
   plugins?: PluginHost;
   logger: Logger;
   reloadConfig: () => Promise<ConfigReloadResult>;
+  /** Hold the bridge idle across plugin config/code mutations. */
+  withPluginMaintenance?: <T>(task: () => Promise<T>) => Promise<T>;
   initialPassword?: string;
   promptRoot?: string;
   /** Test hook for token expiry. */
@@ -108,6 +110,7 @@ export class AdminService {
   readonly #audit: AuditTrail;
   readonly #logger: Logger;
   readonly #reloadConfig: () => Promise<ConfigReloadResult>;
+  readonly #withPluginMaintenance: <T>(task: () => Promise<T>) => Promise<T>;
   readonly #disposeIdle: () => void;
   #pendingOpenCodeReload = false;
   #openCodeReloading = false;
@@ -123,6 +126,7 @@ export class AdminService {
     this.#audit = options.audit;
     this.#logger = options.logger;
     this.#reloadConfig = options.reloadConfig;
+    this.#withPluginMaintenance = options.withPluginMaintenance ?? ((task) => task());
     this.auth = new AdminAuth({
       store: options.store,
       sessionHours: options.config.admin.session_hours,
@@ -685,7 +689,9 @@ export class AdminService {
     enabled: boolean,
     expectedHash?: string,
   ): Promise<ConfigSaveResult & { plugin: AdminPluginStatus }> {
-    return this.pluginService.setEnabled(pluginId, enabled, expectedHash);
+    return this.#pluginMutation(() =>
+      this.pluginService.setEnabled(pluginId, enabled, expectedHash),
+    );
   }
 
   savePluginOptions(
@@ -693,7 +699,9 @@ export class AdminService {
     options: Record<string, unknown>,
     expectedHash?: string,
   ): Promise<PluginOptionsSnapshot & ConfigSaveResult> {
-    return this.pluginService.saveOptions(pluginId, options, expectedHash);
+    return this.#pluginMutation(() =>
+      this.pluginService.saveOptions(pluginId, options, expectedHash),
+    );
   }
 
   pluginUiPage(pluginId: string, pageId?: string): PluginUiPageDescriptor {
@@ -726,7 +734,9 @@ export class AdminService {
     enable: boolean,
     expectedHash?: string,
   ): Promise<PluginActionResult> {
-    return this.pluginService.installUpload(uploadId, enable, expectedHash);
+    return this.#pluginMutation(() =>
+      this.pluginService.installUpload(uploadId, enable, expectedHash),
+    );
   }
 
   previewLocalPlugin(path: string): Promise<PluginPackagePreview> {
@@ -738,15 +748,15 @@ export class AdminService {
     enable: boolean,
     expectedHash?: string,
   ): Promise<PluginActionResult> {
-    return this.pluginService.installLocal(path, enable, expectedHash);
+    return this.#pluginMutation(() => this.pluginService.installLocal(path, enable, expectedHash));
   }
 
   reloadPlugin(pluginId: string): Promise<PluginActionResult> {
-    return this.pluginService.reload(pluginId);
+    return this.#pluginMutation(() => this.pluginService.reload(pluginId));
   }
 
   rollbackPlugin(pluginId: string): Promise<PluginActionResult> {
-    return this.pluginService.rollback(pluginId);
+    return this.#pluginMutation(() => this.pluginService.rollback(pluginId));
   }
 
   uninstallPlugin(
@@ -754,7 +764,22 @@ export class AdminService {
     deleteData: boolean,
     expectedHash?: string,
   ): Promise<PluginUninstallResult> {
-    return this.pluginService.uninstall(pluginId, deleteData, expectedHash);
+    return this.#pluginMutation(() =>
+      this.pluginService.uninstall(pluginId, deleteData, expectedHash),
+    );
+  }
+
+  async #pluginMutation<T>(task: () => Promise<T>): Promise<T> {
+    try {
+      return await this.#withPluginMaintenance(task);
+    } catch (error) {
+      if (error instanceof AdminError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/重载|任务|插件任务|维护/.test(message)) {
+        throw new AdminError(409, "plugin_busy", message);
+      }
+      throw error;
+    }
   }
 
   record(

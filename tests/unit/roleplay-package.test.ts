@@ -74,7 +74,7 @@ describe("roleplay package", () => {
         reset: () => ({ ok: true }),
       },
       reservedCommands: ["ping", "help"],
-      coreVersion: "0.1.1",
+      coreVersion: "0.2.0",
     });
     await plugins.start();
     const manager = new ConversationManager(config, store, agent, sender, logger, {
@@ -97,7 +97,6 @@ describe("roleplay package", () => {
         args: ["use", "blue-fat-fish"],
         rawArgs: "use blue-fat-fish",
         actor: "owner",
-        groupMode: null,
       }),
     ).toBe(true);
     await waitFor(
@@ -118,7 +117,6 @@ describe("roleplay package", () => {
       args: ["search", "白饭"],
       rawArgs: "search 白饭",
       actor: "owner",
-      groupMode: null,
     });
     expect(memory).toBe(true);
     await waitFor(

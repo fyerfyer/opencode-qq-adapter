@@ -1,6 +1,6 @@
-export type WorkspaceKind = "shared" | "per_user" | "worktree" | "ephemeral";
+export type WorkspaceKind = "shared";
 
-export type WorkspaceStatus = "idle" | "locked" | "dirty" | "cleanup_pending" | "removed";
+export type WorkspaceStatus = "idle" | "locked";
 
 export interface WorkspaceRecord {
   id: string;
@@ -14,13 +14,11 @@ export interface WorkspaceRecord {
   leaseExpiresAt: number | null;
   createdAt: number;
   lastUsedAt: number;
-  metadata: Record<string, unknown> | null;
 }
 
 export interface WorkspaceLease {
   id: string;
   projectId: string;
-  kind: WorkspaceKind;
   path: string;
   branch: string | null;
   ownerChatKey: string;

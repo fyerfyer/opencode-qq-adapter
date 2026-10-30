@@ -11,7 +11,7 @@
     "id": "hello",
     "name": "Hello",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Minimal command/hook example for the opencode-qq plugin SDK",
     "capabilities": [
       "commands",
@@ -20,7 +20,7 @@
       "sessions"
     ],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.2.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./src/index.ts"
   },

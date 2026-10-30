@@ -101,7 +101,7 @@ describe("PromptStore ownership", () => {
     const { root, store } = await setup();
     await writeFile(
       join(root, "qq-rp.md"),
-      "---\n# managed by @opencode-qq/roleplay; version: 0.4.1\n---\n\nRP\n",
+      "---\n# managed by @opencode-qq/roleplay; version: 0.5.0\n---\n\nRP\n",
       "utf8",
     );
     await expect(store.setModel("qq-rp.md", "fake/model-a")).rejects.toMatchObject({

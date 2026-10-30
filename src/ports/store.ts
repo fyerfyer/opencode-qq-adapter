@@ -7,7 +7,7 @@ import type {
   RunRecord,
   RunStatus,
 } from "../domain/conversation.js";
-import type { WorkspaceKind, WorkspaceRecord, WorkspaceStatus } from "../domain/workspace.js";
+import type { WorkspaceRecord } from "../domain/workspace.js";
 
 export interface UsageDelta {
   inputTokens: number;
@@ -32,13 +32,12 @@ export interface StorePort {
   workspaces: {
     ensure(record: WorkspaceRecord): void;
     get(id: string): WorkspaceRecord | null;
-    getByProject(projectId: string, kind?: WorkspaceKind): WorkspaceRecord | null;
+    getByProject(projectId: string): WorkspaceRecord | null;
     list(projectId?: string): WorkspaceRecord[];
     /** Atomically lock unless another live run holds the workspace. */
     tryLock(id: string, runId: string, chatKey: string, now: number, expiresAt: number): boolean;
     renew(id: string, runId: string, expiresAt: number): boolean;
     unlock(id: string, runId: string | null, now: number): void;
-    setStatus(id: string, status: WorkspaceStatus, now: number): void;
     /** Release every lock; used once at startup because one bridge owns the DB. */
     recoverLocks(now: number): number;
     releaseExpired(now: number): number;

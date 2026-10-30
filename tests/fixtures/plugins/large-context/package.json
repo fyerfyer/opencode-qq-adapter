@@ -1,0 +1,14 @@
+{
+  "name": "@fixture/large-context",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "large-context-fixture",
+    "name": "Large context fixture",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Injects oversized prompt context",
+    "capabilities": ["hooks"],
+    "entry": "./index.ts"
+  }
+}

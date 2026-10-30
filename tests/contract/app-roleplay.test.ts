@@ -52,8 +52,6 @@ describe("Application + roleplay plugin", () => {
       workspace: "none",
       agent: "qq-code",
       model: "fake/model-b",
-      setup: [],
-      base_branch: null,
       hidden: true,
       managed_by: "roleplay",
     };

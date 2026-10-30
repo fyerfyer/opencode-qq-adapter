@@ -472,7 +472,6 @@ export function makeTestConfig(options: {
       database_path: ":memory:",
       inbox_dir: `${options.projectPath}/.qq-inbox`,
     },
-    workspaces: { root: `${options.projectPath}/.qq-workspaces` },
     chat: {
       enabled: options.chat === true,
       path: `${options.projectPath}/.qq-chat`,

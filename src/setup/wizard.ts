@@ -162,7 +162,6 @@ export function generateConfigObject(options: {
         workspace: "shared",
         agent: null,
         model: null,
-        setup: [],
       },
     ]),
   );
@@ -183,7 +182,6 @@ export function generateConfigObject(options: {
       model: null,
       hidden: true,
       managed_by: "roleplay",
-      setup: [],
     };
     plugins.roleplay = {
       enabled: true,
@@ -274,13 +272,8 @@ export function generateConfigObject(options: {
     projects,
     plugins,
     workspaces: {
-      default_mode: "shared",
-      root: join(options.dataDir, "workspaces"),
-      idle_ttl_hours: 72,
-      max_per_project: 5,
       lock_lease_ms: 120000,
       renew_interval_ms: 30000,
-      cleanup: { require_clean: true, keep_dirty_days: 7 },
     },
     notifications: {
       owner_alerts: {
@@ -303,7 +296,7 @@ export function generateConfigObject(options: {
       store_prompt_content: false,
       redact: ["NAPCAT_ACCESS_TOKEN", "QQ_BRIDGE_INTERNAL_TOKEN", "OPENCODE_SERVER_PASSWORD"],
     },
-    features: { images: true, files: true, worktrees: false, forms: false, metrics: false },
+    features: { images: true, files: true, metrics: false },
     qq: {
       max_message_chars: 1800,
       max_reply_images: 2,
@@ -944,6 +937,17 @@ function stripRemovedV1Keys(
       deleteIfPresent(document, ["projects", id, "policy"]);
       deleteIfPresent(document, ["projects", id, "allowed_users"]);
       deleteIfPresent(document, ["projects", id, "allowed_groups"]);
+      deleteIfPresent(document, ["projects", id, "setup"]);
+      deleteIfPresent(document, ["projects", id, "base_branch"]);
+    }
+  }
+  if (isRecord(config.features)) {
+    deleteIfPresent(document, ["features", "worktrees"]);
+    deleteIfPresent(document, ["features", "forms"]);
+  }
+  if (isRecord(config.workspaces)) {
+    for (const key of ["default_mode", "root", "idle_ttl_hours", "max_per_project", "cleanup"]) {
+      deleteIfPresent(document, ["workspaces", key]);
     }
   }
 }

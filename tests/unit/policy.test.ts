@@ -65,6 +65,15 @@ describe("policy engine", () => {
     expect(policy.canUseProject(actor, "roleplay", { includeHidden: true }).allowed).toBe(true);
   });
 
+  it("does not resolve inherited object properties as projects", () => {
+    const owner = actorFor(10001);
+    expect(policy.canUseProject(owner, "toString")).toMatchObject({
+      allowed: false,
+      reason: "project_not_found",
+    });
+    expect(policy.canWriteProject(owner, "constructor")).toBe(false);
+  });
+
   it("uses write_projects as the writable allowlist", () => {
     const writer = actorFor(10002);
     const reader = actorFor(10003);

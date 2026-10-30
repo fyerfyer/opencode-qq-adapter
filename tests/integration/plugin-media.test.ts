@@ -39,7 +39,6 @@ describe.skipIf(!enabled)("OpenCode plugin media integration", () => {
         default_model: model,
       },
       storage: { database_path: ":memory:", inbox_dir: join(projectPath, ".inbox") },
-      workspaces: { root: join(projectPath, ".workspaces") },
       default_project: "demo",
       users: {
         "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },

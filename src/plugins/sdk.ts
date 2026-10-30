@@ -9,7 +9,7 @@
  * changes require a new `PLUGIN_API_VERSION`.
  */
 
-export const PLUGIN_API_VERSION = 1 as const;
+export const PLUGIN_API_VERSION = 2 as const;
 
 export const PLUGIN_CAPABILITIES = [
   "commands",
@@ -52,7 +52,6 @@ export interface PluginManifest {
 }
 
 export type PluginChatType = "private" | "group";
-export type PluginGroupMode = "per_user" | "shared" | "readonly";
 export type PluginRole = "owner" | "admin" | "member";
 
 export interface PluginChat {
@@ -184,8 +183,6 @@ export interface PluginCommandContext {
   args: string[];
   rawArgs: string;
   actor: PluginActor;
-  /** Group policy for this chat; null for private chats. */
-  groupMode: PluginGroupMode | null;
   conversation: PluginConversation | null;
   logger: PluginLogger;
   reply(text: string): Promise<PluginSendResult>;
@@ -203,8 +200,6 @@ export interface PluginCommandDefinition {
   roles?: PluginRole[];
   /** Allowed chat types. Defaults to both private and group. */
   chats?: PluginChatType[];
-  /** Shared-group commands are opt-in because they affect every member. */
-  allowGroupShared?: boolean;
   handler(context: PluginCommandContext): string | void | Promise<string | void>;
 }
 

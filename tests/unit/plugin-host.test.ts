@@ -50,7 +50,7 @@ async function makeHost(
     sender,
     conversations: { getConversation: () => null },
     reservedCommands: ["ping", "help", "fx-reserved"],
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
   });
   await host.start();
   disposers.push(async () => {
@@ -84,7 +84,6 @@ function command(
     args: options.args ?? [],
     rawArgs: (options.args ?? []).join(" "),
     actor: options.actor ?? ("owner" as const),
-    groupMode: options.group ? ("shared" as const) : null,
   };
 }
 
@@ -160,7 +159,7 @@ describe("PluginHost", () => {
     await waitFor(() => onebot.texts().includes("fixture-hello"), 1000, "valid plugin still works");
   });
 
-  it("enforces roles, chat types and shared-group opt-in", async () => {
+  it("enforces roles and chat types", async () => {
     const { host, onebot } = await makeHost({ "hello-fixture": { path: fixture("hello") } });
 
     await host.dispatchCommand(command("fx-owner", { actor: "member" }));
@@ -179,13 +178,90 @@ describe("PluginHost", () => {
 
     await host.dispatchCommand(command("fx-shared", { group: true }));
     await waitFor(
-      () => onebot.texts().some((text) => text.includes("shared 群")),
+      () => onebot.texts().some((text) => text.includes("shared-command")),
       1000,
-      "shared-group denial",
+      "group command allowed",
     );
 
     await host.dispatchCommand(command("fx-owner", { actor: "owner" }));
     await waitFor(() => onebot.texts().includes("owner-only"), 1000, "owner allowed");
+  });
+
+  it("rejects v1 plugin manifests with a clear compatibility error", async () => {
+    const pluginDir = await mkdtemp(join(tmpdir(), "qq-v1-plugin-"));
+    await writeFile(
+      join(pluginDir, "package.json"),
+      JSON.stringify({
+        name: "@fixture/v1",
+        version: "0.1.0",
+        type: "module",
+        opencodeQq: {
+          id: "v1-plugin",
+          name: "V1 plugin",
+          version: "0.1.0",
+          apiVersion: 1,
+          capabilities: ["commands"],
+          entry: "./index.js",
+        },
+      }),
+    );
+    await writeFile(join(pluginDir, "index.js"), "export default { setup() {} };\n");
+
+    const { host } = await makeHost({ "v1-plugin": { path: pluginDir } });
+    expect(host.status().plugins[0]).toMatchObject({ id: "v1-plugin", status: "failed" });
+    expect(host.status().plugins[0]?.error).toContain("plugin API version 1 is not supported");
+    expect(host.status().plugins[0]?.error).toContain("apiVersion 2");
+  });
+
+  it("fails loading when a plugin touches a capability it did not declare", async () => {
+    for (const capability of ["messages", "sessions"] as const) {
+      const { host } = await makeHost({
+        "undeclared-capability-fixture": {
+          path: fixture("undeclared-capability"),
+          options: { capability },
+        },
+      });
+      expect(host.status().plugins[0]).toMatchObject({
+        id: "undeclared-capability-fixture",
+        status: "failed",
+      });
+      expect(host.status().plugins[0]?.error).toContain(`capability '${capability}'`);
+    }
+  });
+
+  it("keeps command media and conversation reads behind their capabilities", async () => {
+    const { host, onebot } = await makeHost({
+      "commands-only-fixture": { path: fixture("commands-only") },
+    });
+
+    await host.dispatchCommand(command("fx-no-media"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("capability 'messages'")),
+      1000,
+      "media capability denial",
+    );
+
+    await host.dispatchCommand(command("fx-no-conversation"));
+    await waitFor(
+      () => onebot.texts().some((text) => text.includes("capability 'sessions'")),
+      1000,
+      "sessions capability denial",
+    );
+  });
+
+  it("caps plugin-injected prompt context and marks the result as truncated", async () => {
+    const { host } = await makeHost({
+      "large-context-fixture": {
+        path: fixture("large-context"),
+        options: { prependChars: 9_000, appendChars: 9_000 },
+      },
+    });
+    const result = await host.beforePrompt(makeIncomingMessage({ text: "hello" }), "demo");
+    expect(result.truncated).toBe(true);
+    expect(result.originalInjectedChars).toBe(18_004);
+    expect(result.injectedChars).toBeLessThanOrEqual(12_000);
+    expect(result.text).toContain("插件上下文已截断");
+    expect(result.text).toContain("hello");
   });
 
   it("injects prompt context through hooks and persists plugin data", async () => {
@@ -327,7 +403,7 @@ describe("PluginHost", () => {
     id: "reload-plugin",
     name: "Reload fixture",
     version: "0.1.0",
-    apiVersion: 1,
+    apiVersion: 2,
     capabilities: ["commands"],
   },
   setup(context) {

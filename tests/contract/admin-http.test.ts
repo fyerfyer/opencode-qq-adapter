@@ -45,7 +45,6 @@ async function startAdminApp(): Promise<AdminHarness> {
         database_path: join(root, "bridge.db"),
         inbox_dir: join(root, "inbox"),
       },
-      workspaces: { root: join(root, "workspaces") },
       security: { rate_limit: { runs_per_hour: 30 } },
       default_project: "demo",
       users: {

@@ -9,6 +9,67 @@ import { type AppConfig, configSchema, type ProjectConfig } from "./schema.js";
 
 const ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
+const REMOVED_PROJECT_KEYS = ["setup", "base_branch"] as const;
+const REMOVED_FEATURE_KEYS = ["worktrees", "forms"] as const;
+const REMOVED_WORKSPACE_KEYS = [
+  "default_mode",
+  "root",
+  "idle_ttl_hours",
+  "max_per_project",
+  "cleanup",
+] as const;
+
+/**
+ * Soft migration for configuration fields that no longer have an
+ * implementation. Keeping this layer lets existing v2 YAML start with a
+ * warning instead of failing schema validation. Remove it in the next minor
+ * release.
+ */
+function migrateRemovedConfigKeys(raw: unknown): {
+  value: unknown;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  if (!isRecord(raw)) return { value: raw, warnings };
+  const value = structuredClone(raw);
+
+  if (isRecord(value.projects)) {
+    for (const [id, project] of Object.entries(value.projects)) {
+      if (!isRecord(project)) continue;
+      for (const key of REMOVED_PROJECT_KEYS) {
+        if (key in project) {
+          delete project[key];
+          warnings.push(`projects.${id}.${key} 已移除，配置值被忽略。`);
+        }
+      }
+      if (project.workspace === "per_user" || project.workspace === "worktree") {
+        warnings.push(`projects.${id}.workspace '${project.workspace}' 已移除，使用 shared。`);
+        project.workspace = "shared";
+      }
+    }
+  }
+
+  if (isRecord(value.features)) {
+    for (const key of REMOVED_FEATURE_KEYS) {
+      if (key in value.features) {
+        delete value.features[key];
+        warnings.push(`features.${key} 已移除，配置值被忽略。`);
+      }
+    }
+  }
+
+  if (isRecord(value.workspaces)) {
+    for (const key of REMOVED_WORKSPACE_KEYS) {
+      if (key in value.workspaces) {
+        delete value.workspaces[key];
+        warnings.push(`workspaces.${key} 已移除，配置值被忽略。`);
+      }
+    }
+  }
+
+  return { value, warnings };
+}
+
 export class ConfigError extends Error {
   readonly code: "read" | "yaml" | "env" | "schema" | "semantic";
   readonly details: string[];
@@ -82,8 +143,9 @@ export async function parseConfigSource(
     );
   }
   const normalized = normalizeNullSections(expanded);
+  const migrated = migrateRemovedConfigKeys(normalized);
 
-  const parsed = configSchema.safeParse(normalized);
+  const parsed = configSchema.safeParse(migrated.value);
   if (!parsed.success) {
     throw new ConfigError(
       "schema",
@@ -94,7 +156,12 @@ export async function parseConfigSource(
 
   const baseDir = options.baseDir ? resolve(options.baseDir) : dirname(absolutePath);
   const warnings = await resolveAndValidate(parsed.data, baseDir, options.checkPaths ?? false);
-  return { config: parsed.data, path: absolutePath, baseDir, warnings };
+  return {
+    config: parsed.data,
+    path: absolutePath,
+    baseDir,
+    warnings: [...migrated.warnings, ...warnings],
+  };
 }
 
 function expandEnv(
@@ -139,7 +206,6 @@ const NULLABLE_SECTIONS = new Set([
   "projects",
   "plugins",
   "workspaces",
-  "cleanup",
   "notifications",
   "owner_alerts",
   "admin",
@@ -194,7 +260,6 @@ async function resolveAndValidate(
     }
   }
 
-  config.workspaces.root = resolvePath(baseDir, config.workspaces.root);
   config.storage.database_path = resolvePath(baseDir, config.storage.database_path);
   config.storage.inbox_dir = resolvePath(baseDir, config.storage.inbox_dir);
   config.storage.plugins_dir = resolvePath(baseDir, config.storage.plugins_dir);
@@ -298,11 +363,6 @@ async function resolveAndValidate(
   }
 
   for (const [id, project] of Object.entries(config.projects)) {
-    if (project.workspace === "per_user" || project.workspace === "worktree") {
-      warnings.push(
-        `projects.${id}.workspace '${project.workspace}' is not implemented yet; shared mode will be used`,
-      );
-    }
     if (project.hidden && project.workspace !== "none") {
       warnings.push(
         `projects.${id} is hidden but does not use workspace: none; plugin profiles may not work as expected`,
@@ -391,6 +451,10 @@ function isModelRef(value: string): boolean {
   const withoutVariant = value.split("#", 1)[0] ?? value;
   const slash = withoutVariant.indexOf("/");
   return slash > 0 && slash < withoutVariant.length - 1;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 export function projectModels(

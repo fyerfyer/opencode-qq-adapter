@@ -23,8 +23,6 @@ export function materializeChatProject(config: AppConfig): void {
     workspace: "none",
     agent: config.chat.agent ?? config.opencode.default_agent,
     model: config.chat.model ?? config.opencode.default_model,
-    setup: [],
-    base_branch: null,
     hidden: true,
     managed_by: "core",
   };

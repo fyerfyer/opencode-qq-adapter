@@ -130,7 +130,6 @@ projects:
     workspace: shared
     agent: null
     model: null
-    setup: []
   # blog:
   #   path: /home/me/code/blog
   #   description: Personal blog
@@ -168,17 +167,10 @@ plugins: {}
 #     memory_enabled: true
 
 workspaces:
-  default_mode: shared
-  root: var/workspaces
-  idle_ttl_hours: 72
-  max_per_project: 5
   # A run renews its lease while it is active. Leases are released on startup,
   # so a bridge restart never leaves a shared workspace permanently locked.
   lock_lease_ms: 120000
   renew_interval_ms: 30000
-  cleanup:
-    require_clean: true
-    keep_dirty_days: 7
 
 notifications:
   owner_alerts:
@@ -210,8 +202,6 @@ logging:
 features:
   images: true # inbound QQ images + qq_send_image plugin
   files: true
-  worktrees: false
-  forms: false
   metrics: false
 
 qq:

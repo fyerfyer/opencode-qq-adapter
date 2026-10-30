@@ -1,0 +1,14 @@
+{
+  "name": "@fixture/reset-session",
+  "version": "0.1.0",
+  "type": "module",
+  "opencodeQq": {
+    "id": "reset-fixture",
+    "name": "Reset session fixture",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Exercises guarded session reset from a plugin command",
+    "capabilities": ["commands", "sessions"],
+    "entry": "./index.ts"
+  }
+}

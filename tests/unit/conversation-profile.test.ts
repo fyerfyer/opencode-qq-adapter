@@ -64,7 +64,7 @@ async function setup() {
     sender,
     conversations: { getConversation: (chatKey) => store.conversations.get(chatKey) },
     reservedCommands: [],
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
   });
   await plugins.start();
   const manager = new ConversationManager(config, store, agent, sender, logger, {

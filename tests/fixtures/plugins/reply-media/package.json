@@ -6,11 +6,11 @@
     "id": "reply-media-fixture",
     "name": "Reply media fixture",
     "version": "0.1.0",
-    "apiVersion": 1,
+    "apiVersion": 2,
     "description": "Exercises ordered text/image reply plans",
     "capabilities": ["hooks"],
     "engines": {
-      "opencodeQq": ">=0.1.0 <0.2.0"
+      "opencodeQq": ">=0.2.0 <0.3.0"
     },
     "entry": "./index.ts"
   }

@@ -15,7 +15,6 @@ import type {
   PluginDefinition,
   PluginDisposer,
   PluginEventMap,
-  PluginGroupMode,
   PluginHooksDefinition,
   PluginManifest,
   PluginRole,
@@ -31,12 +30,12 @@ export interface PluginConversationSource {
 /** Guarded conversation mutations implemented by the core. */
 export interface PluginSessionActions {
   setProject(input: {
+    pluginId: string;
     chatKey: string;
     projectId: string;
     actorQq: number;
-    groupId?: number;
   }): PluginSessionMutationResult;
-  reset(input: { chatKey: string; actorQq: number }): PluginSessionMutationResult;
+  reset(input: { pluginId: string; chatKey: string; actorQq: number }): PluginSessionMutationResult;
 }
 
 export interface PluginHostOptions {
@@ -52,6 +51,8 @@ export interface PluginHostOptions {
   /** Built-in command names that plugins may not shadow. */
   reservedCommands: Iterable<string>;
   coreVersion: string;
+  /** Run lifecycle-changing work only while the bridge is idle. */
+  withMaintenance?: <T>(task: () => Promise<T>) => Promise<T>;
   now?: () => number;
 }
 
@@ -156,13 +157,16 @@ export interface PluginCommandInput {
   args: string[];
   rawArgs: string;
   actor: PluginRole;
-  groupMode: PluginGroupMode | null;
 }
 
 export interface PluginPromptResult {
   text: string;
   modified: boolean;
   plugins: string[];
+  /** True when plugin-injected context exceeded the per-prompt budget. */
+  truncated: boolean;
+  injectedChars: number;
+  originalInjectedChars: number;
 }
 
 export interface PluginProfileResult {

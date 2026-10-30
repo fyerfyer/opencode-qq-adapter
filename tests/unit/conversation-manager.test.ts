@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ConversationManager } from "../../src/conversation/manager.js";
 import { AuditTrail } from "../../src/observability/audit.js";
 import { buildLogger } from "../../src/observability/logger.js";
+import type { PluginHost } from "../../src/plugins/host.js";
 import { MessageSender } from "../../src/qq/sender.js";
 import { SqliteStore } from "../../src/store/sqlite.js";
 import { WorkspaceManager } from "../../src/workspace/manager.js";
@@ -23,7 +24,7 @@ afterEach(async () => {
   disposers.length = 0;
 });
 
-async function setup(maxQueued = 3) {
+async function setup(maxQueued = 3, plugins?: PluginHost) {
   const projectPath = await mkdtemp(join(tmpdir(), "qq-manager-"));
   const config = makeTestConfig({ projectPath, maxQueued });
   const store = new SqliteStore(":memory:");
@@ -36,6 +37,7 @@ async function setup(maxQueued = 3) {
   const manager = new ConversationManager(config, store, agent, sender, logger, {
     workspaces,
     audit,
+    ...(plugins !== undefined ? { plugins } : {}),
   });
   disposers.push(async () => {
     await manager.shutdown();
@@ -198,6 +200,33 @@ describe("ConversationManager", () => {
     expect(store.runs.listRecent("private:20000", 1)[0]?.stopReason).toBe("user");
   });
 
+  it("accepts prompts when only plugin-injected context exceeds max_prompt_chars", async () => {
+    const pluginHost = {
+      resolveProfile: async () => ({ profile: null, plugins: [] }),
+      beforePrompt: async (message: { text: string }) => ({
+        text: `${"x".repeat(12_000)}\n\n${message.text}`,
+        modified: true,
+        plugins: ["large-fixture"],
+        truncated: false,
+        injectedChars: 12_000,
+        originalInjectedChars: 12_000,
+      }),
+    } as unknown as PluginHost;
+    const { agent, manager } = await setup(3, pluginHost);
+
+    const result = await manager.submit(makeIncomingMessage({ text: "short user text" }), "demo");
+    expect(result.accepted).toBe(true);
+    await waitFor(() => agent.prompts.length === 1, 3000, "prompt with injected context");
+    expect(agent.prompts[0]?.text.length).toBeGreaterThan(12_000);
+  });
+
+  it("still rejects a raw user prompt beyond max_prompt_chars", async () => {
+    const { manager } = await setup();
+    const result = await manager.submit(makeIncomingMessage({ text: "x".repeat(9_000) }), "demo");
+    expect(result.accepted).toBe(false);
+    expect(manager.status("private:20000").recentRuns[0]?.stopReason).toBe("prompt_too_long");
+  });
+
   it("rejects prompts beyond the queue limit", async () => {
     const { agent, onebot, manager } = await setup(1);
     agent.autoComplete = false;
@@ -339,6 +368,43 @@ describe("ConversationManager", () => {
     manager.endMaintenance();
     const accepted = await manager.submit(makeIncomingMessage({ text: "after reload" }), "demo");
     expect(accepted.accepted).toBe(true);
+  });
+
+  it("refuses maintenance while a submission is still resolving plugin hooks", async () => {
+    let entered!: () => void;
+    const hookEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const hookRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pluginHost = {
+      resolveProfile: async () => ({ profile: null, plugins: [] }),
+      beforePrompt: async (message: { text: string }) => {
+        entered();
+        await hookRelease;
+        return {
+          text: message.text,
+          modified: false,
+          plugins: [],
+          truncated: false,
+          injectedChars: 0,
+          originalInjectedChars: 0,
+        };
+      },
+    } as unknown as PluginHost;
+    const { manager } = await setup(3, pluginHost);
+
+    const submitting = manager.submit(makeIncomingMessage({ text: "hello" }), "demo");
+    await hookEntered;
+    const gate = manager.beginMaintenance();
+    expect(gate.ok).toBe(false);
+    expect(gate.pendingSubmissions).toBe(1);
+
+    release();
+    await expect(submitting).resolves.toMatchObject({ accepted: true });
+    await waitForCompletedRun(manager, "private:20000");
   });
 
   it("refuses to start a maintenance gate while a run is active", async () => {

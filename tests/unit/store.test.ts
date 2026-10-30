@@ -125,7 +125,6 @@ describe("SqliteStore M2 repositories", () => {
       leaseExpiresAt: null,
       createdAt: 1,
       lastUsedAt: 1,
-      metadata: null,
     });
 
     expect(store.workspaces.tryLock("shared:demo", "run-1", "private:1", 1000, 5000)).toBe(true);

@@ -35,7 +35,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { useApiQuery } from "@/hooks/use-api-query";
 
 export function ProjectsPage() {
@@ -178,11 +177,6 @@ export function ProjectsPage() {
                       <Badge variant={project.workspace === "shared" ? "secondary" : "outline"}>
                         {project.workspace}
                       </Badge>
-                      {project.workspace !== "shared" && project.workspace !== "none" && (
-                        <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
-                          当前实现会回退到 shared
-                        </p>
-                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       <div>{project.agent ?? "默认 agent"}</div>
@@ -258,8 +252,6 @@ function ProjectDialog({
   );
   const [agent, setAgent] = useState(project?.agent ?? "");
   const [model, setModel] = useState(project?.model ?? "");
-  const [baseBranch, setBaseBranch] = useState(project?.base_branch ?? "");
-  const [setup, setSetup] = useState((project?.setup ?? []).join("\n"));
   const [hidden, setHidden] = useState(project?.hidden ?? false);
 
   return (
@@ -290,8 +282,6 @@ function ProjectDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="shared">shared</SelectItem>
-                <SelectItem value="per_user">per_user（暂未实现）</SelectItem>
-                <SelectItem value="worktree">worktree（暂未实现）</SelectItem>
                 <SelectItem value="none">none（插件内部）</SelectItem>
               </SelectContent>
             </Select>
@@ -308,13 +298,6 @@ function ProjectDialog({
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="可选"
-            />
-          </Field>
-          <Field label="Base branch">
-            <Input
-              value={baseBranch}
-              onChange={(event) => setBaseBranch(event.target.value)}
-              placeholder="可选，例如 main"
             />
           </Field>
           <Field label="默认 agent">
@@ -340,15 +323,6 @@ function ProjectDialog({
             </div>
             <Switch checked={hidden} onCheckedChange={setHidden} />
           </div>
-          <Field label="Setup hooks（每行一条）" className="sm:col-span-2">
-            <Textarea
-              rows={3}
-              value={setup}
-              onChange={(event) => setSetup(event.target.value)}
-              placeholder="pnpm install"
-              className="font-mono text-xs"
-            />
-          </Field>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
@@ -363,12 +337,7 @@ function ProjectDialog({
                 agent: agent.trim() === "" ? null : agent.trim(),
                 model: model.trim() === "" ? null : model.trim(),
                 ...(description.trim() !== "" ? { description: description.trim() } : {}),
-                ...(baseBranch.trim() !== "" ? { base_branch: baseBranch.trim() } : {}),
                 hidden,
-                setup: setup
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean),
               })
             }
           >

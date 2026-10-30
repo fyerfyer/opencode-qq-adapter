@@ -11,7 +11,7 @@ import type {
   RunStatus,
 } from "../domain/conversation.js";
 import type { ApprovalDecision } from "../domain/permission.js";
-import type { WorkspaceKind, WorkspaceRecord, WorkspaceStatus } from "../domain/workspace.js";
+import type { WorkspaceRecord } from "../domain/workspace.js";
 import type { StorePort, UsageDelta } from "../ports/store.js";
 
 interface ConversationRow {
@@ -44,16 +44,17 @@ interface RunRow {
 interface WorkspaceRow {
   id: string;
   project_id: string;
-  kind: WorkspaceKind;
+  /** Legacy databases may contain older kinds; readers normalize to shared. */
+  kind: string;
   path: string;
   branch: string | null;
   owner_chat_key: string | null;
-  status: WorkspaceStatus;
+  /** Legacy databases may contain older statuses; readers normalize to idle. */
+  status: string;
   locked_by_run_id: string | null;
   lease_expires_at: number | null;
   created_at: number;
   last_used_at: number;
-  metadata_json: string | null;
 }
 
 interface ApprovalRow {
@@ -649,7 +650,7 @@ export class SqliteStore implements StorePort {
           record.leaseExpiresAt,
           record.createdAt,
           record.lastUsedAt,
-          record.metadata === null ? null : safeJson(record.metadata),
+          null,
         );
     },
     get: (id: string): WorkspaceRecord | null => {
@@ -658,12 +659,12 @@ export class SqliteStore implements StorePort {
         | undefined;
       return row ? mapWorkspace(row) : null;
     },
-    getByProject: (projectId: string, kind: WorkspaceKind = "shared"): WorkspaceRecord | null => {
+    getByProject: (projectId: string): WorkspaceRecord | null => {
       const row = this.#db
         .prepare(
-          "SELECT * FROM workspaces WHERE project_id = ? AND kind = ? ORDER BY last_used_at DESC LIMIT 1",
+          "SELECT * FROM workspaces WHERE project_id = ? AND kind = 'shared' ORDER BY last_used_at DESC LIMIT 1",
         )
-        .get(projectId, kind) as WorkspaceRow | undefined;
+        .get(projectId) as WorkspaceRow | undefined;
       return row ? mapWorkspace(row) : null;
     },
     list: (projectId?: string): WorkspaceRecord[] => {
@@ -716,11 +717,6 @@ export class SqliteStore implements StorePort {
            WHERE id = ? AND (? IS NULL OR locked_by_run_id = ?)`,
         )
         .run(now, id, runId, runId);
-    },
-    setStatus: (id: string, status: WorkspaceStatus, now: number): void => {
-      this.#db
-        .prepare("UPDATE workspaces SET status = ?, last_used_at = ? WHERE id = ?")
-        .run(status, now, id);
     },
     recoverLocks: (now: number): number => {
       const result = this.#db
@@ -993,17 +989,15 @@ function mapWorkspace(row: WorkspaceRow): WorkspaceRecord {
   return {
     id: row.id,
     projectId: row.project_id,
-    kind: row.kind,
+    kind: "shared",
     path: row.path,
     branch: row.branch,
     ownerChatKey: row.owner_chat_key,
-    status: row.status,
+    status: row.status === "locked" ? "locked" : "idle",
     lockedByRunId: row.locked_by_run_id,
     leaseExpiresAt: row.lease_expires_at,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
-    metadata:
-      row.metadata_json === null ? null : (parseJson(row.metadata_json) as Record<string, unknown>),
   };
 }
 

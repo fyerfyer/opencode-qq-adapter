@@ -69,7 +69,7 @@ async function makeHost(options: { directory?: string } = {}) {
     conversations: { getConversation: () => null },
     sessionActions,
     reservedCommands: ["ping", "help"],
-    coreVersion: "0.1.1",
+    coreVersion: "0.2.0",
   });
   await host.start();
   disposers.push(async () => {
@@ -177,7 +177,6 @@ describe("PluginHost conversation profile", () => {
       args: [],
       rawArgs: "",
       actor: "owner",
-      groupMode: null,
     });
     expect(handled).toBe(true);
     await waitFor(() => onebot.texts().includes("session-ok"), 1000, "session command reply");
@@ -187,8 +186,14 @@ describe("PluginHost conversation profile", () => {
         chatKey: "private:20000",
         projectId: "demo",
         actorQq: 20000,
+        pluginId: "profile-fixture",
       },
-      { action: "reset", chatKey: "private:20000", actorQq: 20000 },
+      {
+        action: "reset",
+        chatKey: "private:20000",
+        actorQq: 20000,
+        pluginId: "profile-fixture",
+      },
     ]);
   });
 });

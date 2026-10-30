@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CHAT_PROJECT_ID } from "../../src/chat/project.js";
 import { ConfigError, loadConfig } from "../../src/config/loader.js";
@@ -43,6 +44,94 @@ default_project: demo
     expect(loaded.config.security.max_queued_prompts).toBe(3);
     expect(loaded.config.opencode.service.mode).toBe("external");
     expect(loaded.warnings.some((warning) => warning.includes("self_id"))).toBe(false);
+  });
+
+  it("parses the checked-in example config without removed fields", async () => {
+    const path = fileURLToPath(new URL("../../config/config.example.yaml", import.meta.url));
+    const loaded = await loadConfig(path, { env: {}, checkPaths: false });
+    expect(loaded.config.projects.demo?.workspace).toBe("shared");
+    expect(loaded.config.features).toEqual({ images: true, files: true, metrics: false });
+    expect(loaded.config.workspaces).toEqual({
+      lock_lease_ms: 120_000,
+      renew_interval_ms: 30_000,
+    });
+    expect(loaded.warnings.some((warning) => warning.includes("已移除"))).toBe(false);
+  });
+
+  it("soft-migrates removed project, feature and workspace fields", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+users: {}
+projects:
+  demo:
+    path: ./project
+    workspace: per_user
+    setup: ["pnpm install"]
+    base_branch: main
+  legacy:
+    path: ./project
+    workspace: worktree
+features:
+  worktrees: true
+  forms: true
+  images: false
+workspaces:
+  default_mode: per_user
+  root: var/workspaces
+  idle_ttl_hours: 12
+  max_per_project: 2
+  cleanup:
+    require_clean: false
+    keep_dirty_days: 1
+`,
+    );
+    const loaded = await loadConfig(path, { env: {}, checkPaths: false });
+    expect(loaded.config.projects.demo).toMatchObject({ workspace: "shared" });
+    expect(loaded.config.projects.demo).not.toHaveProperty("setup");
+    expect(loaded.config.projects.demo).not.toHaveProperty("base_branch");
+    expect(loaded.config.projects.legacy?.workspace).toBe("shared");
+    expect(loaded.config.features).toEqual({ images: false, files: true, metrics: false });
+    expect(loaded.config.workspaces).toEqual({
+      lock_lease_ms: 120_000,
+      renew_interval_ms: 30_000,
+    });
+    expect(loaded.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("projects.demo.setup 已移除"),
+        expect.stringContaining("projects.demo.base_branch 已移除"),
+        expect.stringContaining("projects.demo.workspace 'per_user' 已移除"),
+        expect.stringContaining("projects.legacy.workspace 'worktree' 已移除"),
+        expect.stringContaining("features.worktrees 已移除"),
+        expect.stringContaining("features.forms 已移除"),
+        expect.stringContaining("workspaces.cleanup 已移除"),
+      ]),
+    );
+  });
+
+  it("rejects an unknown project workspace after migration", async () => {
+    const root = await workspace();
+    const path = await writeConfig(
+      root,
+      `
+version: 2
+onebot:
+  url: ws://127.0.0.1:3001
+  access_token: token
+projects:
+  demo:
+    path: ./project
+    workspace: ephemeral
+`,
+    );
+    await expect(loadConfig(path, { env: {}, checkPaths: false })).rejects.toMatchObject({
+      code: "schema",
+    });
   });
 
   it("expands a leading tilde in project paths", async () => {

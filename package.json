@@ -1,6 +1,6 @@
 {
   "name": "opencode-qq-adapter",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Bridge OpenCode to QQ through NapCat / OneBot 11",
   "type": "module",
   "private": false,
@@ -45,7 +45,7 @@
   "scripts": {
     "predev": "pnpm build:memory && pnpm build:sdk && pnpm build:plugin-ui && pnpm build:roleplay && node scripts/ensure-config.mjs",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run lint && npm run typecheck && npm test",
+    "prepublishOnly": "npm run lint && npm run lint:arch && npm run typecheck && npm test",
     "dev": "tsx watch src/main.ts start --config config/config.yaml",
     "setup": "tsx src/main.ts setup --config config/config.yaml",
     "prestart": "pnpm build:memory && pnpm build:sdk && pnpm build:plugin-ui && pnpm build:roleplay && node scripts/ensure-config.mjs",
@@ -76,6 +76,7 @@
     "test:qq:media": "tsx scripts/e2e-qq-media.ts",
     "test:e2e": "pnpm build && playwright test",
     "lint": "biome check .",
+    "lint:arch": "depcruise --config .dependency-cruiser.cjs src packages",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "doctor": "tsx src/main.ts doctor --config config/config.yaml",
@@ -115,6 +116,7 @@
     "@types/yauzl": "^3.4.0",
     "@types/yazl": "^3.3.1",
     "@vitest/coverage-v8": "4.1.12",
+    "dependency-cruiser": "^18.7.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.4",

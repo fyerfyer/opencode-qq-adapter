@@ -66,6 +66,8 @@ export interface MaintenanceGate {
   reason?: string;
   activeRuns: number;
   queuedRuns: number;
+  /** Prompts currently resolving plugin hooks before entering the queue. */
+  pendingSubmissions?: number;
 }
 
 export interface ConversationStatus {

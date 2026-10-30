@@ -112,6 +112,13 @@ describe("setup wizard", () => {
     expect(loaded.config.default_project).toBe("demo");
     expect(loaded.config.storage.database_path.startsWith(result.dataDir)).toBe(true);
     expect(loaded.config.qq.progress_ack).toBe(false);
+    expect(loaded.config.projects.demo).not.toHaveProperty("setup");
+    expect(loaded.config.projects.demo).not.toHaveProperty("base_branch");
+    expect(loaded.config.features).toEqual({ images: true, files: true, metrics: false });
+    expect(loaded.config.workspaces).toEqual({
+      lock_lease_ms: 120_000,
+      renew_interval_ms: 30_000,
+    });
     expect(loaded.config.admin.enabled).toBe(true);
     expect(loaded.config.admin.allow_remote).toBe(false);
     expect(result.adminUrl).toBe("http://127.0.0.1:8787/admin");

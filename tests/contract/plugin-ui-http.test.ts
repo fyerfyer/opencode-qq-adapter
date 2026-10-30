@@ -42,7 +42,6 @@ async function startApp(): Promise<Harness> {
         inbox_dir: join(root, "inbox"),
         plugins_dir: join(root, "plugins"),
       },
-      workspaces: { root: join(root, "workspaces") },
       default_project: "demo",
       users: {
         "20000": { role: "owner", projects: ["*"], write_projects: ["*"] },
