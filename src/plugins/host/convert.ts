@@ -1,4 +1,5 @@
 import type { PluginConfig } from "../../config/schema.js";
+import type { ConversationRecord } from "../../domain/conversation.js";
 import type { IncomingMessage, QuotedMessage } from "../../domain/message.js";
 import type { AgentMessage } from "../../ports/agent.js";
 import type { LoadedPluginModule } from "../manifest.js";
@@ -6,6 +7,7 @@ import type {
   PluginAgentResult,
   PluginChat,
   PluginCommandDefinition,
+  PluginConversation,
   PluginMessage,
   PluginPromptPatch,
   PluginQuotedMessage,
@@ -104,6 +106,19 @@ export function toPluginChat(chat: {
     userId: chat.userId,
     ...(chat.groupId !== undefined ? { groupId: chat.groupId } : {}),
     chatKey: chat.chatKey,
+  };
+}
+
+export function toPluginConversation(
+  conversation: ConversationRecord | null,
+): PluginConversation | null {
+  if (conversation === null) return null;
+  return {
+    projectId: conversation.projectId,
+    workspaceId: conversation.workspaceId,
+    sessionId: conversation.sessionId,
+    agent: conversation.agent,
+    model: conversation.model,
   };
 }
 

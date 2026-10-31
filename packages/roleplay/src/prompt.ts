@@ -1,5 +1,5 @@
+import type { MemorySnippet } from "@opencode-qq/memory";
 import { docForPrompt, sceneForPrompt } from "./memory-document.js";
-import type { MemorySnippet } from "./transcript.js";
 import { formatTimestamp } from "./time.js";
 import type { WorldbookEntry } from "./worldbook.js";
 

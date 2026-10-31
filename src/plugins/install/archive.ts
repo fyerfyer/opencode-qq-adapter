@@ -1,9 +1,10 @@
 import { createWriteStream } from "node:fs";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import yauzl from "yauzl";
+import { isPathInside } from "../../util/path.js";
 import { type ExtractResult, PLUGIN_ARCHIVE_LIMITS, PluginInstallError } from "./types.js";
 
 interface ExtractLimits {
@@ -216,8 +217,7 @@ function assertEntryType(entry: yauzl.Entry): void {
 }
 
 function assertContained(destination: string, target: string, name: string): void {
-  const rel = relative(resolve(destination), target);
-  if (rel.length === 0 || rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
+  if (!isPathInside(destination, target, { allowRoot: false })) {
     throw new PluginInstallError(400, "archive_unsafe", `path escapes archive root: ${name}`);
   }
 }

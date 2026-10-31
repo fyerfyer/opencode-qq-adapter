@@ -1,7 +1,8 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import type { Logger } from "pino";
 import type { AppConfig } from "../../config/schema.js";
+import { isPathInside } from "../../util/path.js";
 import type { PluginConversationProfile } from "../sdk.js";
 
 export interface NormalizePluginProfileInput {
@@ -46,8 +47,7 @@ export async function normalizePluginProfile(
     try {
       const root = await realpath(resolve(project.path));
       const target = await realpath(resolve(directory));
-      const rel = relative(root, target);
-      if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      if (!isPathInside(root, target, { allowRoot: false })) {
         logger.warn(
           { pluginId, projectId, directory: target },
           "Plugin profile directory escapes the project root; ignoring",

@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import type { WorkspaceLease, WorkspaceRecord } from "../domain/workspace.js";
 import type { StorePort } from "../ports/store.js";
+import { isPathInside } from "../util/path.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -218,8 +219,7 @@ export class WorkspaceManager {
     const workspaceReal = await realpath(workspacePath);
     const target = isAbsolute(candidate) ? candidate : join(workspaceReal, candidate);
     const targetReal = await realpath(target);
-    const rel = relative(workspaceReal, targetReal);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    if (!isPathInside(workspaceReal, targetReal, { allowRoot: false })) {
       throw new WorkspaceError("Path is outside the workspace");
     }
     return targetReal;

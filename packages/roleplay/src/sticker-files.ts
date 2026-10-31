@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join, relative, sep } from "node:path";
+import { basename, extname, join } from "node:path";
+import { isPathInside } from "./path.js";
 import { ensureStickerThumbnail } from "./thumbnails.js";
 
 export const STICKER_MAX_BYTES = 20 * 1024 * 1024;
@@ -109,7 +110,9 @@ export async function renameStickerEmotion(input: {
   const root = await realpath(input.root).catch(() => input.root);
   const current = await resolveInside(root, join(root, input.persona, input.emotion));
   const target = join(root, input.persona, input.nextEmotion);
-  if (relative(root, target).startsWith(`..${sep}`)) throw new Error("invalid emotion path");
+  if (!isPathInside(root, target, { allowRoot: false })) {
+    throw new Error("invalid emotion path");
+  }
   const exists = await stat(target).then(
     () => true,
     () => false,
@@ -239,8 +242,7 @@ async function hashesIn(dir: string): Promise<Set<string>> {
 
 async function resolveInside(root: string, target: string): Promise<string> {
   const resolved = await realpath(target).catch(() => target);
-  const rel = relative(root, resolved);
-  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`)) {
+  if (!isPathInside(root, resolved, { allowRoot: false })) {
     throw new Error("sticker path escapes the sticker root");
   }
   return resolved;

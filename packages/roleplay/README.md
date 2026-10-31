@@ -143,14 +143,25 @@ There is no hardcoded "memorable word" regex. The model sees the current Markdow
 
 ## Install
 
-With the setup wizard (recommended):
+With the Roleplay CLI (recommended):
 
 ```bash
-opencode-qq setup --with-roleplay \
-  --roleplay-path /path/to/opencode-qq-adapter/packages/roleplay \
-  --roleplay-personas ~/.local/share/opencode-qq/plugins/roleplay/personas \
-  --yes
+# Create the generic bridge config first when you do not have one yet.
+opencode-qq setup
+
+# Add/update only the Roleplay project and plugin options.
+opencode-qq-roleplay setup \
+  --config ~/.config/opencode-qq/config.yaml \
+  --project roleplay \
+  --personas ~/.local/share/opencode-qq/plugins/roleplay/personas \
+  --fallback-project demo
+
+opencode-qq-roleplay doctor --config ~/.config/opencode-qq/config.yaml
 ```
+
+`opencode-qq-roleplay setup` preserves YAML comments, creates a timestamped
+config backup, writes a hidden `projects.roleplay` and `plugins.roleplay`, and
+adds the persona parent to `security.allowed_roots`.
 
 From the monorepo:
 
@@ -170,7 +181,8 @@ mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
 
 If your config sets `security.allowed_roots`, include the persona root's parent, for example `~/.local/share/opencode-qq`.
 
-Merge this into `config.yaml`; the repository also contains `config/roleplay.example.yaml`:
+Prefer `opencode-qq-roleplay setup` above; the manual merge below and
+`config/roleplay.example.yaml` remain available for reference:
 
 ```yaml
 projects:

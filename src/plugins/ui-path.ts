@@ -1,4 +1,4 @@
-import { extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { extname, isAbsolute } from "node:path";
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -42,11 +42,7 @@ export function normalizeUiRelativePath(value: string, label = "UI path"): strin
   return segments.join("/");
 }
 
-/** True when candidate resolves inside root (or equals root). */
-export function isPathInside(root: string, candidate: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel.length === 0 || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
+export { isPathInside } from "../util/path.js";
 
 export function pluginUiContentType(file: string): string {
   return CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";

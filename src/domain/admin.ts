@@ -26,8 +26,3 @@ export interface AdminSessionInput {
   userAgent: string | null;
   ip: string | null;
 }
-
-export interface AdminAccount {
-  username: string;
-  mustChangePassword: boolean;
-}

@@ -1,0 +1,15 @@
+{
+  "name": "@opencode-qq/example-greeting-kit",
+  "version": "0.1.0",
+  "description": "Example Library / Plugin Kit: pure formatting helpers with no runtime manifest",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "keywords": [
+    "opencode-qq",
+    "plugin-kit",
+    "example"
+  ]
+}

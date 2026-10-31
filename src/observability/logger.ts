@@ -53,5 +53,3 @@ export function buildLogger(
       : {}),
   });
 }
-
-export type AppLogger = Logger;

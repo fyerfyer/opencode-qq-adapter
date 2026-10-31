@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { MemorySnippet } from "../../packages/memory/src/index.js";
 import { normalizeDocument } from "../../packages/roleplay/src/memory-document.js";
 import { buildContextBlock } from "../../packages/roleplay/src/prompt.js";
 import { promptQueryText, transcriptUserText } from "../../packages/roleplay/src/prompt-query.js";
-import type { MemorySnippet } from "../../packages/roleplay/src/transcript.js";
 import { selectWorldbook, type WorldbookEntry } from "../../packages/roleplay/src/worldbook.js";
 import type { PluginMessage } from "../../src/plugins/sdk.js";
 

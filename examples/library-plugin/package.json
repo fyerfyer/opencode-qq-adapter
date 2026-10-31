@@ -1,0 +1,29 @@
+{
+  "name": "@opencode-qq/library-consumer-plugin",
+  "version": "0.1.0",
+  "description": "Example Runtime Plugin that reuses a Library / Plugin Kit",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "opencodeQq": {
+    "id": "library-demo",
+    "name": "Library Demo",
+    "version": "0.1.0",
+    "apiVersion": 2,
+    "description": "Shows a manifest-based runtime plugin importing a shared library",
+    "capabilities": [
+      "commands",
+      "hooks"
+    ],
+    "engines": {
+      "opencodeQq": ">=0.2.0 <0.3.0"
+    },
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opencode-qq/example-greeting-kit": "workspace:*",
+    "@opencode-qq/plugin-sdk": "workspace:*"
+  }
+}

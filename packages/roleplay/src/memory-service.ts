@@ -1,3 +1,8 @@
+import type {
+  MemoryEvent,
+  MemorySnippet,
+  TranscriptStore,
+} from "@opencode-qq/memory";
 import type { PluginAgent, PluginLogger } from "@opencode-qq/plugin-sdk";
 import {
   applyOperations,
@@ -5,15 +10,9 @@ import {
   type MemoryDocRef,
   MemoryDocumentStore,
   parseDocument,
-  type MemoryOperation,
 } from "./memory-document.js";
 import { buildConsolidationPrompt, parseConsolidation } from "./memory-ops.js";
 import type { RoleplayOptions } from "./options.js";
-import type {
-  MemoryEvent,
-  MemorySnippet,
-  TranscriptStore,
-} from "./transcript.js";
 
 const FAILURE_RETRY_MS = 5 * 60_000;
 

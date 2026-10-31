@@ -3,7 +3,7 @@ import {
   buildFtsQuery,
   buildPhraseQuery,
   extractQueryTerms,
-} from "../../packages/roleplay/src/retrieval.js";
+} from "../../packages/memory/src/index.js";
 
 describe("roleplay transcript query helpers", () => {
   it("expands CJK runs into overlapping trigrams", () => {

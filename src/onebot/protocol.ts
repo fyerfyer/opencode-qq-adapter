@@ -59,7 +59,3 @@ export type OneBotEvent =
 export function isMessageEvent(event: OneBotEvent): event is OneBotMessageEvent {
   return event.post_type === "message";
 }
-
-export function isMetaEvent(event: OneBotEvent): event is OneBotMetaEvent {
-  return event.post_type === "meta_event";
-}

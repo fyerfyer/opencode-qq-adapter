@@ -2,10 +2,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TranscriptStore } from "../../packages/memory/src/index.js";
 import { MemoryDocumentStore } from "../../packages/roleplay/src/memory-document.js";
 import { MemoryService } from "../../packages/roleplay/src/memory-service.js";
 import { parseRoleplayOptions } from "../../packages/roleplay/src/options.js";
-import { TranscriptStore } from "../../packages/roleplay/src/transcript.js";
 import type {
   PluginAgent,
   PluginAgentCompletion,

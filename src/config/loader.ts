@@ -1,10 +1,11 @@
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import semver from "semver";
 import { parse as parseYaml } from "yaml";
 import type { ZodError } from "zod";
 import { isChatProjectId, materializeChatProject } from "../chat/project.js";
+import { isPathInside } from "../util/path.js";
 import { type AppConfig, configSchema, type ProjectConfig } from "./schema.js";
 
 const ENV_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
@@ -417,10 +418,7 @@ function resolvePath(baseDir: string, value: string): string {
   return isAbsolute(value) ? resolve(value) : resolve(baseDir, value);
 }
 
-export function isPathInside(root: string, candidate: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
+export { isPathInside } from "../util/path.js";
 
 async function verifyDirectory(path: string): Promise<string | undefined> {
   try {

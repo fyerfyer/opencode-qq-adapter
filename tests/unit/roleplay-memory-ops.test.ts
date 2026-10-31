@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { MemoryMessage } from "../../packages/memory/src/index.js";
 import {
   buildConsolidationPrompt,
   extractJsonObject,
   parseConsolidation,
 } from "../../packages/roleplay/src/memory-ops.js";
-import type { MemoryMessage } from "../../packages/roleplay/src/transcript.js";
 
 const messages: MemoryMessage[] = [
   {

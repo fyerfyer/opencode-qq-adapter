@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
+import { runRoleplayDoctor, runRoleplaySetup } from "../../packages/roleplay/src/setup.js";
 import { ADMIN_USERNAME } from "../../src/admin/auth.js";
 import { hashPassword, verifyPassword } from "../../src/admin/password.js";
 import { loadConfig } from "../../src/config/loader.js";
@@ -266,7 +267,6 @@ describe("setup wizard", () => {
       projects: [{ id: "demo", path: dir }],
       napcat: "skip",
       agent: "default",
-      withRoleplay: false,
       prompt: promptStub({ password: async () => passwords() }),
       skipPlugin: true,
       skipDoctor: true,
@@ -290,7 +290,6 @@ describe("setup wizard", () => {
       projects: [{ id: "demo", path: dir }],
       napcat: "skip",
       agent: "default",
-      withRoleplay: false,
       prompt: promptStub({
         select: (async <T extends string>() => "keep" as T) as Prompt["select"],
       }),
@@ -429,34 +428,23 @@ describe("setup wizard", () => {
     expect(config).toEqual({ url: "http://127.0.0.1:8787", token: "test-token" });
   });
 
-  it("generates a roleplay project, policy, plugin and persona directory", async () => {
-    const dir = await tempDir();
-    const dataDir = join(dir, "data");
+  it("adds a roleplay project, plugin and persona directory through the roleplay CLI setup", async () => {
+    const { configPath, dataDir, result: setup } = await runTempSetup();
     const personasDir = join(dataDir, "plugins", "roleplay", "personas");
-    const configPath = join(dir, "config.yaml");
-    const result = await runSetup({
+    const result = await runRoleplaySetup({
       configPath,
-      dataDir,
-      ownerQq: "12345678",
-      projects: [{ id: "demo", path: dir }],
-      napcat: "skip",
-      agent: "default",
-      yes: true,
-      skipPlugin: true,
-      skipDoctor: true,
-      withRoleplay: true,
-      roleplayPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
-      roleplayPersonas: personasDir,
-      roleplayProject: "roleplay",
-      output: () => undefined,
-    });
-    expect(result.roleplay).toMatchObject({
-      enabled: true,
       projectId: "roleplay",
       personasDir,
+      pluginPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
+      fallbackProject: "demo",
+    });
+    expect(result).toMatchObject({
+      projectId: "roleplay",
+      personasDir,
+      fallbackProject: "demo",
     });
     expect((await stat(personasDir)).isDirectory()).toBe(true);
-    const env = parseEnvFile(await readFile(result.envPath, "utf8"));
+    const env = parseEnvFile(await readFile(setup.envPath, "utf8"));
     const loaded = await loadConfig(configPath, {
       checkPaths: true,
       env: { ...process.env, ...env },
@@ -476,45 +464,54 @@ describe("setup wizard", () => {
     });
     expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("agent");
     expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("model");
-    expect(loaded.config.plugins.roleplay?.options).not.toHaveProperty("install_agent");
     expect(await readFile(configPath, "utf8")).not.toContain("install_agent");
     expect(loaded.config.security.allowed_roots.some((root) => root === dataDir)).toBe(true);
-    expect(formatSetupSummary(result).join("\n")).toContain("Roleplay");
+    const doctor = await runRoleplayDoctor({ configPath });
+    expect(doctor.checks.find((check) => check.id === "project")?.ok).toBe(true);
+    expect(doctor.checks.find((check) => check.id === "personas_path")?.ok).toBe(true);
+  });
+
+  it("keeps an empty allowed_roots list non-restrictive when adding roleplay", async () => {
+    const { configPath, dataDir, result: setup } = await runTempSetup();
+    const doc = parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
+    const security = doc.security as Record<string, unknown>;
+    security.allowed_roots = [];
+    await writeFile(configPath, stringify(doc), "utf8");
+    const personasDir = join(dataDir, "plugins", "roleplay", "personas");
+    await runRoleplaySetup({
+      configPath,
+      personasDir,
+      pluginPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
+    });
+    const env = parseEnvFile(await readFile(setup.envPath, "utf8"));
+    const loaded = await loadConfig(configPath, {
+      checkPaths: true,
+      env: { ...process.env, ...env },
+    });
+    expect(loaded.config.security.allowed_roots).toEqual([]);
   });
 
   it("merges roleplay into an existing config without dropping comments or custom projects", async () => {
     const { dir, configPath, dataDir } = await runTempSetup();
     const customPath = join(dir, "custom-project");
     await mkdir(customPath, { recursive: true });
-    const before = await readFile(configPath, "utf8");
-    const doc = parse(before) as Record<string, unknown>;
+    const doc = parse(await readFile(configPath, "utf8")) as Record<string, unknown>;
     const projects = doc.projects as Record<string, unknown>;
     projects.custom = {
       path: customPath,
-      policy: "standard",
       workspace: "shared",
-      allowed_users: ["12345678"],
+      agent: null,
+      model: null,
     };
     await writeFile(configPath, `${stringify(doc)}# keep-this-comment\n`, "utf8");
 
     const personasDir = join(dataDir, "plugins", "roleplay", "personas");
-    const result = await runSetup({
+    const result = await runRoleplaySetup({
       configPath,
-      dataDir,
-      ownerQq: "12345678",
-      projects: [{ id: "demo", path: dir }],
-      napcat: "skip",
-      agent: "default",
-      yes: true,
-      skipPlugin: true,
-      skipDoctor: true,
-      reconfigure: true,
-      withRoleplay: true,
-      roleplayPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
-      roleplayPersonas: personasDir,
-      output: () => undefined,
+      personasDir,
+      pluginPath: fileURLToPath(new URL("../../packages/roleplay", import.meta.url)),
     });
-    expect(result.roleplay?.enabled).toBe(true);
+    expect(result.changed).toBe(true);
     const merged = await readFile(configPath, "utf8");
     expect(merged).toContain("# keep-this-comment");
     expect(merged).toContain("custom:");
@@ -620,7 +617,6 @@ policies:
       ownerQq: "12345678",
       projects: [{ id: "demo", path: dir }],
       agent: "default",
-      withRoleplay: false,
       prompt: promptStub({
         select: (async <T extends string>(
           _question: string,
@@ -694,7 +690,6 @@ policies:
       napcatUrl: "ws://127.0.0.1:3001",
       napcatToken: "unavailable-token",
       agent: "default",
-      withRoleplay: false,
       prompt: promptStub({
         password: async () => passwords(),
         confirm: async () => {

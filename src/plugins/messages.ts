@@ -1,10 +1,11 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { AppConfig } from "../config/schema.js";
 import type { ChatRef } from "../domain/chat.js";
 import { detectImageType, formatBytes } from "../media/image.js";
 import { isSensitiveFile } from "../media/sensitive.js";
 import type { MessageSender } from "../qq/sender.js";
+import { isPathInside } from "../util/path.js";
 import type {
   PluginChat,
   PluginFileInput,
@@ -44,8 +45,7 @@ export async function resolvePluginFile(dataDir: string, candidate: string): Pro
   } catch {
     throw new PluginMessageError("文件不存在");
   }
-  const rel = relative(root, target);
-  if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+  if (!isPathInside(root, target, { allowRoot: false })) {
     throw new PluginMessageError("文件必须位于插件数据目录内，或使用了 symlink 逃逸");
   }
   return target;

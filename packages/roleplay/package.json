@@ -18,7 +18,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./setup": {
+      "types": "./dist/setup.d.ts",
+      "import": "./dist/setup.js"
     }
+  },
+  "bin": {
+    "opencode-qq-roleplay": "./dist/cli.js"
   },
   "opencodeQq": {
     "id": "roleplay",
@@ -54,7 +61,8 @@
     "@opencode-qq/memory": "workspace:*",
     "@opencode-qq/plugin-sdk": "workspace:*",
     "better-sqlite3": "^12.4.1",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@opencode-qq/plugin-ui": "workspace:*",

@@ -14,10 +14,7 @@ import {
   type MemorySection,
   type ParsedDocument,
   applyOperations as applyMemoryOperations,
-  defaultSections as defaultMemorySections,
-  defaultTitle as defaultMemoryTitle,
   docForPrompt as memoryDocForPrompt,
-  isAllowedSection as isAllowedMemorySection,
   normalizeDocument as normalizeMemoryDocument,
   parseDocument as parseMemoryDocument,
   renderDocument as renderMemoryDocument,
@@ -130,16 +127,4 @@ export function docForPrompt(content: string, maxChars: number): string {
 
 export function sceneForPrompt(content: string, maxChars: number): string {
   return memorySceneForPrompt(content, maxChars, roleplayDocumentConfig);
-}
-
-export function defaultTitle(kind: MemoryDocKind): string {
-  return defaultMemoryTitle(kind, roleplayDocumentConfig);
-}
-
-export function defaultSections(kind: MemoryDocKind): readonly string[] {
-  return defaultMemorySections(kind, roleplayDocumentConfig);
-}
-
-export function isAllowedSection(section: string, kind: MemoryDocKind): boolean {
-  return isAllowedMemorySection(section, kind, roleplayDocumentConfig);
 }

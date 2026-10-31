@@ -6,6 +6,23 @@ A plugin is trusted code that runs inside the bridge process. It can register QQ
 
 The SDK is at API v2. Additive changes are expected; breaking changes require a new `PLUGIN_API_VERSION`. v2 removed the unreachable `groupMode` / `allowGroupShared` surface: QQ group chats always use one independent conversation per member.
 
+## Extension types
+
+Do not mix these three surfaces:
+
+| Type | Has `opencodeQq` manifest | Loaded by | Lifecycle | Example |
+| --- | --- | --- | --- | --- |
+| **Library / Plugin Kit** | No | Node `import` | None | `@opencode-qq/memory`, `examples/greeting-kit` |
+| **Runtime Plugin** | Yes | `PluginHost` | setup / start / stop / dispose | `@opencode-qq/roleplay`, `examples/library-plugin` |
+| **OpenCode Plugin / MCP** | No (not this SDK) | OpenCode | OpenCode manages it | `plugin/opencode-qq-plugin.ts` |
+
+Rules:
+
+- A Library never goes into the bridge's `plugins:` config and must not assume a plugin id or `dataDir`.
+- A Runtime Plugin must have a manifest and an ESM entry. It may depend on Libraries in `package.json`.
+- OpenCode-side tools (`qq_send_image`, domain MCP servers) live in OpenCode, not in the bridge plugin host.
+- Libraries used by a Runtime Plugin should list `@opencode-qq/plugin-sdk` as a `peerDependency` when they expose SDK types.
+
 ## Package layout
 
 ```text
@@ -313,15 +330,34 @@ A command that should only work in one chat type can still declare `chats: ["pri
 ## Lifecycle
 
 ```text
-read manifest → validate apiVersion/engine/options → import entry
-  → setup(ctx) → start(ctx) → ... → stop(ctx) → dispose registrations
+read package.json → validate descriptor (id/version/apiVersion/engines/entry)
+  → check entry file → import entry
+  → cross-check exported manifest (id/version) → setup(ctx) → start(ctx)
+  → ... → stop(ctx) → dispose registrations
 ```
+
+The descriptor is validated before importing plugin code. A v1 or otherwise
+incompatible manifest fails with a clear error without executing the module.
 
 - A failed plugin is marked `failed`; the bridge and other plugins keep running.
 - `setup`/`start`/`stop` and hooks have timeouts.
 - Hook/event errors are logged and skipped.
 - Plugin reload disposes old registrations; plugin data is kept.
 - Plugins are trusted code. There is no sandbox. Review third-party plugins.
+
+## Setup and doctor
+
+- A Library has no setup/doctor entry.
+- A Runtime Plugin should ship its own CLI when it needs extra configuration.
+  For example, `@opencode-qq/roleplay` provides `opencode-qq-roleplay setup` and
+  `opencode-qq-roleplay doctor`.
+- The core `opencode-qq setup` only handles generic bridge configuration. It
+  does not interpret plugin-specific options such as persona directories or
+  third-party API keys.
+- The core `opencode-qq doctor` checks bridge configuration, SQLite, OneBot and
+  OpenCode connectivity; plugin-specific diagnostics belong to the plugin CLI.
+- If several plugins later need a shared setup hook, design an explicit
+  manifest entry instead of adding plugin semantics to core now.
 
 ## Testing
 

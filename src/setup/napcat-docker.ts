@@ -392,15 +392,3 @@ async function waitForFile(
   }
   return existsSync(path);
 }
-
-/** Read the WebUI token so setup can print a usable URL for an existing install. */
-export function readWebuiToken(dataDir: string): string | null {
-  const path = join(dataDir, "napcat", "config", "webui.json");
-  if (!existsSync(path)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { token?: unknown };
-    return typeof parsed.token === "string" ? parsed.token : null;
-  } catch {
-    return null;
-  }
-}

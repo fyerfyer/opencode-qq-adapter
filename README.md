@@ -98,10 +98,6 @@ opencode-qq setup \
 --napcat-url <url>    已有 NapCat 的 WS 地址
 --napcat-token <tok>  NapCat access token
 --admin-password <p>  管理员密码（新数据库设置 / 已有数据库重置；默认交互询问或生成）
---with-roleplay       启用 Roleplay 插件与项目
---roleplay-path <p>   @opencode-qq/roleplay 包目录
---roleplay-personas <p> 角色卡目录
---roleplay-project <id> Roleplay 项目 ID（默认 roleplay）
 --reconfigure         合并已有配置（保留注释和自定义项目）
 --yes                 非交互
 --force               覆盖已有配置（会先备份）
@@ -370,12 +366,19 @@ pnpm start
 
 ## QQ 插件 SDK
 
-项目有两类“插件”，不要混淆：
+项目里有三类扩展，不要混淆：
 
-- **OpenCode 插件**（`plugin/`）：运行在 OpenCode 进程里，只负责 `qq_send_image` / `qq_send_file`。
-- **QQ 插件**（本文）：运行在 bridge 进程里，用来注册 QQ 命令、注入 prompt 上下文、监听 run 完成、发送媒体和保存插件数据。
+| 类型 | 是否有 `opencodeQq` manifest | 谁加载 | 生命周期 | 例子 |
+| --- | --- | --- | --- | --- |
+| **Library / Plugin Kit** | 没有 | Node `import` | 无 | `@opencode-qq/memory`、`examples/greeting-kit` |
+| **Runtime Plugin**（QQ 插件） | 有 | bridge 的 `PluginHost` | setup / start / stop / dispose | `@opencode-qq/roleplay`、`examples/library-plugin` |
+| **OpenCode Plugin / MCP** | 不属于 bridge | OpenCode | OpenCode 管理 | `plugin/opencode-qq-plugin.ts`、领域 MCP |
 
-QQ 插件由 YAML 的 `plugins` 段显式启用，YAML 仍是唯一配置源。插件是以 bridge 进程权限运行的可信代码，没有沙箱；QQ 消息永远不能安装或加载插件。管理员可以通过 WebUI 插件页上传 ZIP 或注册本地目录，WebUI 只负责校验、托管代码和写入 YAML。
+- **Library** 不进 YAML 的 `plugins:`，不假设插件 id 或 `dataDir`，由 Runtime Plugin 在自己的 `package.json` 中依赖。
+- **Runtime Plugin** 运行在 bridge 进程里，用来注册 QQ 命令、注入 prompt 上下文、监听 run 完成、发送媒体和保存插件数据。它由 YAML 的 `plugins` 段显式启用，YAML 仍是唯一配置源。
+- **OpenCode Plugin**（`plugin/`）运行在 OpenCode 进程里，只负责 `qq_send_image` / `qq_send_file`，不是整个应用的打包形式。
+
+Runtime Plugin 是以 bridge 进程权限运行的可信代码，没有沙箱；QQ 消息永远不能安装或加载插件。管理员可以通过 WebUI 插件页上传 ZIP 或注册本地目录，WebUI 只负责校验、托管代码和写入 YAML。
 
 ```yaml
 plugins:
@@ -489,7 +492,7 @@ await bridge.ui.toast("已保存", "success");
 
 静态资源由核心通过短时签名 URL 托管；iframe 没有 cookie、`localStorage` 和直接网络访问，所有 API 请求由父页面注入 CSRF 并限制在当前插件前缀内。完整示例见 [`examples/ui-plugin`](examples/ui-plugin)。
 
-示例位于 [`examples/`](examples)，SDK 源码和文档位于 [`packages/plugin-sdk`](packages/plugin-sdk)，浏览器 bridge 位于 [`packages/plugin-ui`](packages/plugin-ui)。开发流程：
+示例位于 [`examples/`](examples)：`greeting-kit` 是纯 Library，`library-plugin` 是依赖它的 Runtime Plugin；`hello-plugin`、`notes-plugin`、`media-plugin`、`ui-plugin` 是其他 Runtime Plugin 示例。SDK 源码和文档位于 [`packages/plugin-sdk`](packages/plugin-sdk)，浏览器 bridge 位于 [`packages/plugin-ui`](packages/plugin-ui)。开发流程：
 
 ```bash
 pnpm install
@@ -537,29 +540,43 @@ zip -r ../my-plugin-0.1.0.zip package.json dist ui
 
 配置片段见 [`config/roleplay.example.yaml`](config/roleplay.example.yaml)，完整说明见 [`packages/roleplay/README.md`](packages/roleplay/README.md)。
 
-从源码安装：
+从源码或 npm 安装：
 
 ```bash
+# 源码
 pnpm build:sdk
 pnpm build:memory
 pnpm build:roleplay
-mkdir -p ~/.local/share/opencode-qq/plugins/roleplay/personas
+
+# 或全局安装
+npm install -g @opencode-qq/roleplay
 ```
 
-使用 setup 向导启用（会创建 hidden 的 roleplay 项目、插件、personas 目录和 `security.allowed_roots`）：
+先运行通用 setup 创建 bridge 配置，再用 Roleplay 自己的 CLI 补齐 Roleplay 段：
 
 ```bash
-opencode-qq setup --with-roleplay \
-  --roleplay-path /path/to/opencode-qq-adapter/packages/roleplay \
-  --roleplay-personas ~/.local/share/opencode-qq/plugins/roleplay/personas \
-  --yes
+opencode-qq setup
+opencode-qq-roleplay setup \
+  --config ~/.config/opencode-qq/config.yaml \
+  --project roleplay \
+  --personas ~/.local/share/opencode-qq/plugins/roleplay/personas \
+  --fallback-project demo
 ```
 
-已有配置可以合并而不丢注释和自定义项目：
+`opencode-qq-roleplay setup` 会：
+
+- 创建 hidden 的 `projects.roleplay`（`workspace: none`、`managed_by: roleplay`）；
+- 写入 `plugins.roleplay` 和 `personas_dir`；
+- 自动把 persona 目录的父目录加入 `security.allowed_roots`；
+- 保留现有 YAML 注释，写前生成 `config.yaml.bak.<timestamp>` 备份。
+
+诊断 Roleplay 专属配置：
 
 ```bash
-opencode-qq setup --with-roleplay --reconfigure --yes
+opencode-qq-roleplay doctor --config ~/.config/opencode-qq/config.yaml
 ```
+
+通用 `opencode-qq doctor` 只检查 bridge、SQLite、OneBot 和 OpenCode 连接，不再读取 Roleplay option 语义。配置片段仍可参考 [`config/roleplay.example.yaml`](config/roleplay.example.yaml)。
 
 在 `config.yaml` 中增加 `projects.roleplay`（`hidden: true`）和 `plugins.roleplay` 后：
 
@@ -581,7 +598,7 @@ opencode-qq setup --with-roleplay --reconfigure --yes
 !rp off
 ```
 
-Roleplay 不再有 `agent`、`memory_utility_agent`、`install_agent` 等插件选项，也不会创建 `qq-rp`/`qq-rp-utility`。所有 QQ run（普通、角色扮演、后台 utility）使用单一核心 Agent：`opencode.default_agent`，未配置时回退 `qq-code`；`opencode-qq setup --with-roleplay` 会把 `projects.roleplay.agent` 设为 `qq-code`。模型只在核心 **Agents** 页编辑该 Agent 的 frontmatter `model:`。插件只负责注入角色上下文、记忆、世界书、表情与回复格式；角色扮演行为规则由插件在 `beforePrompt` 中固定注入，不再写在专属 agent 文件里。角色卡仍会渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。通用模型优先级为：会话显式 `!model` 覆盖 > Agent frontmatter `model:` > 项目/全局默认（仅在 Agent 没有写 model 时使用）。
+Roleplay 不再有 `agent`、`memory_utility_agent`、`install_agent` 等插件选项，也不会创建 `qq-rp`/`qq-rp-utility`。所有 QQ run（普通、角色扮演、后台 utility）使用单一核心 Agent：`opencode.default_agent`，未配置时回退 `qq-code`；`opencode-qq-roleplay setup` 会把 `projects.roleplay.agent` 设为 `qq-code`。模型只在核心 **Agents** 页编辑该 Agent 的 frontmatter `model:`。插件只负责注入角色上下文、记忆、世界书、表情与回复格式；角色扮演行为规则由插件在 `beforePrompt` 中固定注入，不再写在专属 agent 文件里。角色卡仍会渲染到 `<persona>/AGENTS.md`，作为稳定的人格前缀。通用模型优先级为：会话显式 `!model` 覆盖 > Agent frontmatter `model:` > 项目/全局默认（仅在 Agent 没有写 model 时使用）。
 
 `memory_enabled: false` 可关闭后台 LLM consolidation，只保留手动 `!remember` 和原文检索；consolidation 会把当前 MD + 最近对话发送给核心 Agent 的临时无工具 session，模型由该 Agent frontmatter 决定，详情和隐私说明见角色扮演 README。
 
@@ -905,7 +922,7 @@ pnpm config:validate
 
 ```bash
 opencode-qq setup                          # 首次安装向导（npm 安装）
-opencode-qq setup --with-roleplay --reconfigure   # 在已有配置上启用/更新 Roleplay
+opencode-qq-roleplay setup --config <path>         # 在已有配置上启用/更新 Roleplay
 opencode-qq start                          # 启动 bridge
 opencode-qq doctor                         # 检查配置、SQLite、OpenCode、OneBot
 opencode-qq config validate                # 校验配置和项目目录
@@ -1026,23 +1043,23 @@ src/                    bridge 本体
   router/               命令与 prompt 分发
   policy/               授权、permission ruleset、限流预算
   approval/             QQ 审批 Broker
-  conversation/         队列、run、session 归属
+  conversation/         队列、RunExecutor、maintenance、preferences、session 归属
   workspace/            shared workspace 锁与 diff
   media/                入站图片、插件出站图片
   security/             TOTP / sudo
   opencode/             OpenCode V2 client 适配
   qq/                   Markdown 降级、分段、发送
-  store/                SQLite
+  store/                SQLite database / migrations / repositories / façade
   observability/        日志、health、审计、owner 告警
   admin/                /admin API、鉴权、配置/Agents 编辑
-  plugins/              QQ 插件 SDK、manifest、宿主、安装器、媒体/存储 API
+  plugins/host/         registry / loader / lifecycle / commands / hooks / admin
   internal-http/        Hono HTTP
 packages/plugin-sdk/    @opencode-qq/plugin-sdk
 packages/plugin-ui/     @opencode-qq/plugin-ui（iframe bridge 客户端）
 packages/memory/         @opencode-qq/memory（通用记忆基础设施）
-packages/roleplay/       @opencode-qq/roleplay（角色扮演 + 独立 iframe UI，实验）
+packages/roleplay/       @opencode-qq/roleplay（commands / runtime / admin / setup CLI）
 packages/webui/         Vite + React + shadcn/ui 管理前端
-examples/               示例 QQ 插件（hello / notes / media-demo / ui-demo）
+examples/               Library（greeting-kit）+ Runtime Plugin（library-demo / hello / notes / media-demo / ui-demo）
 plugin/                 OpenCode V2/V1 插件（仅 qq_send_image）
 deploy/systemd/         systemd 常驻服务
 tests/                  单元 / 契约 / 集成测试
@@ -1052,6 +1069,7 @@ tests/                  单元 / 契约 / 集成测试
 
 - 完整设计：[`DESIGN.md`](DESIGN.md)
 - 插件安装：[`plugin/README.md`](plugin/README.md)
+- Runtime Plugin SDK：[`packages/plugin-sdk/README.md`](packages/plugin-sdk/README.md)
 - systemd 部署：[`deploy/systemd/README.md`](deploy/systemd/README.md)
 
 ## License

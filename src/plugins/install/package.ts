@@ -1,5 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { isPathInside } from "../../util/path.js";
 import {
   assertManifestCompatible,
   type PackageManifest,
@@ -113,8 +114,7 @@ async function validateUi(
 }
 
 function assertInside(root: string, target: string, label: string): void {
-  const rel = relative(resolve(root), resolve(target));
-  if (rel.length === 0 || rel.startsWith(`..${sep}`) || rel === ".." || isAbsolute(rel)) {
+  if (!isPathInside(root, target, { allowRoot: false })) {
     throw new PluginInstallError(400, "package_invalid", `${label} escapes package root`);
   }
 }

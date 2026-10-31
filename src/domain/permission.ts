@@ -27,12 +27,3 @@ export const EFFECT_RANK: Record<PermissionEffect, number> = {
   ask: 1,
   deny: 2,
 };
-
-export function stricterEffect(
-  left: PermissionEffect | undefined,
-  right: PermissionEffect | undefined,
-): PermissionEffect | undefined {
-  if (left === undefined) return right;
-  if (right === undefined) return left;
-  return EFFECT_RANK[left] >= EFFECT_RANK[right] ? left : right;
-}

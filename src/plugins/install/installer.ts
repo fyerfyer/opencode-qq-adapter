@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AdminConfigError, type ConfigEditor } from "../../admin/config-editor.js";
 import type { ConfigReloadResult } from "../../config/reload.js";
 import type { AppConfig, PluginConfig } from "../../config/schema.js";
+import { isPathInside } from "../../util/path.js";
 import type { PluginHost, PluginStatus } from "../host.js";
 import { PLUGIN_API_VERSION } from "../sdk.js";
 import { extractZip } from "./archive.js";
@@ -852,7 +853,7 @@ export class PluginInstaller {
 
   #packageRoot(staging: string, meta: StagingMeta): string {
     const root = resolve(staging, meta.packageRoot);
-    if (!isInside(staging, root)) {
+    if (!isPathInside(staging, root, { allowRoot: false })) {
       throw new PluginInstallError(
         400,
         "package_invalid",
@@ -993,7 +994,7 @@ export class PluginInstaller {
       return false;
     }
     const dataPath = join(this.#pluginsDir, id);
-    if (!isInside(this.#pluginsDir, dataPath)) {
+    if (!isPathInside(this.#pluginsDir, dataPath, { allowRoot: false })) {
       warnings.add("Refusing to delete plugin data outside the plugin directory.");
       return false;
     }
@@ -1044,10 +1045,10 @@ export class PluginInstaller {
       realpath(this.#pluginsDir).catch(() => null),
     ]);
     if (
-      isInsideOrEqual(this.#managedRoot, path) ||
-      (realManaged !== null && isInsideOrEqual(realManaged, path)) ||
-      isInsideOrEqual(this.#pluginsDir, path) ||
-      (realPlugins !== null && isInsideOrEqual(realPlugins, path))
+      isPathInside(this.#managedRoot, path) ||
+      (realManaged !== null && isPathInside(realManaged, path)) ||
+      isPathInside(this.#pluginsDir, path) ||
+      (realPlugins !== null && isPathInside(realPlugins, path))
     ) {
       throw new PluginInstallError(
         409,
@@ -1169,16 +1170,6 @@ function errorMessage(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isInside(root: string, candidate: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel.length > 0 && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-}
-
-function isInsideOrEqual(root: string, candidate: string): boolean {
-  const rel = relative(resolve(root), resolve(candidate));
-  return rel.length === 0 || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 async function pathExists(path: string): Promise<boolean> {

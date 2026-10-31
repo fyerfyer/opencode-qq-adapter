@@ -122,6 +122,14 @@ export async function loadPluginModule(
       ? await resolvePackageTarget(spec.package)
       : await resolveLocalTarget(spec.path ?? "");
 
+  // Validate the package descriptor before importing any plugin code. A bad
+  // manifest must fail without executing user modules.
+  if (target.packageManifest !== null) {
+    assertPluginId(target.packageManifest, pluginId);
+    assertManifestCompatible(target.packageManifest, coreVersion);
+  }
+  await assertEntryFile(target.entryPath);
+
   const imported = await importModule(target.entryPath);
   const exported = imported.default ?? imported.plugin ?? imported;
   if (!isDefinition(exported)) {
@@ -135,9 +143,7 @@ export async function loadPluginModule(
     exported.manifest === undefined
       ? null
       : parsePackageManifest(exported.manifest, `${target.entryPath}#manifest`);
-  const packageManifest = target.packageJson?.opencodeQq
-    ? parsePackageManifest(target.packageJson.opencodeQq, target.packageJsonPath ?? "package.json")
-    : null;
+  const packageManifest = target.packageManifest;
 
   if (moduleManifest !== null && packageManifest !== null) {
     if (moduleManifest.id !== packageManifest.id) {
@@ -161,14 +167,12 @@ export async function loadPluginModule(
       "missing plugin manifest: export `manifest` or add `opencodeQq` to package.json",
     );
   }
-  if (manifest.id !== pluginId) {
-    throw new PluginLoadError(
-      "id_mismatch",
-      `config key '${pluginId}' does not match plugin id '${manifest.id}'`,
-    );
+  // A module-only manifest has not been validated yet (there was no package
+  // descriptor to check before import).
+  if (packageManifest === null) {
+    assertPluginId(manifest, pluginId);
+    assertManifestCompatible(manifest, coreVersion);
   }
-
-  assertManifestCompatible(manifest, coreVersion);
 
   const capabilities = new Set<PluginCapability>(manifest.capabilities ?? []);
   return {
@@ -177,6 +181,22 @@ export async function loadPluginModule(
     entryPath: target.entryPath,
     packageRoot: target.packageRoot,
   };
+}
+
+function assertPluginId(manifest: PackageManifest, pluginId: string): void {
+  if (manifest.id !== pluginId) {
+    throw new PluginLoadError(
+      "id_mismatch",
+      `config key '${pluginId}' does not match plugin id '${manifest.id}'`,
+    );
+  }
+}
+
+async function assertEntryFile(entryPath: string): Promise<void> {
+  const info = await stat(entryPath).catch(() => null);
+  if (info === null || !info.isFile()) {
+    throw new PluginLoadError("module", `plugin entry does not exist: ${entryPath}`);
+  }
 }
 
 export function parsePackageManifest(value: unknown, source: string): PackageManifest {
@@ -221,6 +241,7 @@ interface ResolvedTarget {
   packageRoot: string | null;
   packageJson: PackageJson | null;
   packageJsonPath: string | null;
+  packageManifest: PackageManifest | null;
 }
 
 async function resolveLocalTarget(path: string): Promise<ResolvedTarget> {
@@ -236,11 +257,17 @@ async function resolveLocalTarget(path: string): Promise<ResolvedTarget> {
   if (info.isFile()) {
     const packageRoot = await findPackageRoot(dirname(absolute));
     const packageJsonPath = packageRoot === null ? null : join(packageRoot, "package.json");
+    const packageJson =
+      packageJsonPath === null ? null : await readPackageJsonFile(packageJsonPath);
     return {
       entryPath: absolute,
       packageRoot,
-      packageJson: packageJsonPath === null ? null : await readPackageJsonFile(packageJsonPath),
+      packageJson,
       packageJsonPath,
+      packageManifest:
+        packageJson?.opencodeQq === undefined
+          ? null
+          : parsePackageManifest(packageJson.opencodeQq, packageJsonPath ?? "package.json"),
     };
   }
   if (!info.isDirectory()) {
@@ -249,15 +276,17 @@ async function resolveLocalTarget(path: string): Promise<ResolvedTarget> {
 
   const packageJsonPath = join(absolute, "package.json");
   const packageJson = await readPackageJsonFile(packageJsonPath);
-  const manifest = packageJson?.opencodeQq
-    ? parsePackageManifest(packageJson.opencodeQq, packageJsonPath)
-    : null;
+  const manifest =
+    packageJson?.opencodeQq === undefined
+      ? null
+      : parsePackageManifest(packageJson.opencodeQq, packageJsonPath);
   const entry = await resolveEntry(absolute, packageJson, manifest?.entry);
   return {
     entryPath: entry,
     packageRoot: absolute,
     packageJson,
     packageJsonPath: packageJson === null ? null : packageJsonPath,
+    packageManifest: manifest,
   };
 }
 
@@ -287,14 +316,21 @@ async function resolvePackageTarget(specifier: string): Promise<ResolvedTarget> 
   if (packageJson === null) {
     throw new PluginLoadError("package_json", `cannot read ${packageJsonPath}`);
   }
-  const manifest = packageJson.opencodeQq
-    ? parsePackageManifest(packageJson.opencodeQq, packageJsonPath)
-    : null;
+  const manifest =
+    packageJson.opencodeQq === undefined
+      ? null
+      : parsePackageManifest(packageJson.opencodeQq, packageJsonPath);
   const entry =
     manifest?.entry !== undefined
       ? resolve(packageRoot, manifest.entry)
       : await resolveEntry(packageRoot, packageJson, undefined);
-  return { entryPath: entry, packageRoot, packageJson, packageJsonPath };
+  return {
+    entryPath: entry,
+    packageRoot,
+    packageJson,
+    packageJsonPath,
+    packageManifest: manifest,
+  };
 }
 
 export async function resolveEntry(

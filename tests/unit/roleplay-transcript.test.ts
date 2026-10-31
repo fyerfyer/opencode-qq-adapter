@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { TranscriptStore } from "../../packages/roleplay/src/transcript.js";
+import { TranscriptStore } from "../../packages/memory/src/index.js";
 
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), "qq-rp-transcript-"));

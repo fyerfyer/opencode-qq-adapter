@@ -1,10 +1,10 @@
+import type { MemoryMessage } from "@opencode-qq/memory";
 import {
   MANUAL_SECTION,
   type MemoryOperation,
   SCENE_SECTIONS,
   USER_SECTIONS,
 } from "./memory-document.js";
-import type { MemoryMessage } from "./transcript.js";
 import { formatTimestamp } from "./time.js";
 
 export interface ConsolidationInput {
