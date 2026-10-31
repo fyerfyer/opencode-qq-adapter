@@ -13,6 +13,7 @@ import type { StorePort } from "../ports/store.js";
 import type { MessageSender } from "../qq/sender.js";
 import type { WorkspaceDiff, WorkspaceManager, WorkspaceStatus } from "../workspace/manager.js";
 import { RunExecutor } from "./executor.js";
+import { formatQuotePromptWithinBudget } from "./prompt-context.js";
 import { ChatRunQueue } from "./queue.js";
 import type { ActiveRun, ConversationStatus, MaintenanceGate, SubmitResult } from "./types.js";
 
@@ -222,22 +223,40 @@ export class ConversationManager {
 
     let message = inputMessage;
     let profile: PluginConversationProfile | null = null;
+    const quotePrefix = formatQuotePromptWithinBudget(
+      inputMessage.quote,
+      inputMessage.text.length,
+      this.#config.security.max_prompt_chars,
+    );
     if (this.#plugins !== undefined) {
       const resolved = await this.#plugins.resolveProfile(inputMessage, projectId);
       profile = resolved.profile;
-      const injected = await this.#plugins.beforePrompt(inputMessage, projectId, profile);
+      const injected = await this.#plugins.beforePrompt(
+        inputMessage,
+        projectId,
+        profile,
+        quotePrefix,
+      );
       if (injected.modified) {
         message = { ...inputMessage, text: injected.text };
+        const pluginContext = injected.plugins.length > 0 || injected.truncated;
         this.#logger.debug(
           {
             chatKey: message.chat.chatKey,
             plugins: injected.plugins,
             truncated: injected.truncated,
             injectedChars: injected.injectedChars,
+            coreChars: quotePrefix.length,
           },
-          "Plugin prompt context injected",
+          pluginContext ? "Plugin prompt context injected" : "Core quote context injected",
         );
       }
+    }
+    if (message === inputMessage && quotePrefix.length > 0) {
+      message = {
+        ...inputMessage,
+        text: `${quotePrefix}\n\n${inputMessage.text}`,
+      };
     }
 
     const run: RunRecord = {

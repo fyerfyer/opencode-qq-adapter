@@ -30,6 +30,7 @@ import {
   type StickerCatalog,
 } from "./stickers.js";
 import { buildContextBlock, ROLEPLAY_MODE_INSTRUCTIONS } from "./prompt.js";
+import { promptQueryText, transcriptUserText } from "./prompt-query.js";
 import { guardRoleplayReply } from "./guard.js";
 import { formatTimestamp } from "./time.js";
 import { BindingStore } from "./bindings.js";
@@ -758,6 +759,7 @@ export default definePlugin<RoleplayOptions>({
         );
         const worldbook = await worldbookFor(active.persona);
         const turnCount = transcript.count(scope, active.persona.id, "user") + 1;
+        const queryText = promptQueryText(prompt.message);
         const effectKey = `${active.persona.id}:${scope}`;
         let effectState = worldbookEffects.get(effectKey);
         if (effectState === undefined) {
@@ -767,7 +769,7 @@ export default definePlugin<RoleplayOptions>({
         const selected = selectWorldbook(
           worldbook,
           {
-            currentText: prompt.message.text,
+            currentText: queryText,
             // Scan user messages only: the persona's own replies are dense
             // with prop keywords (尾巴/呆毛/饭盆…), and letting them trigger
             // entries feeds those props back into every turn.
@@ -799,7 +801,7 @@ export default definePlugin<RoleplayOptions>({
         const memories = transcript.search({
           namespace: active.persona.id,
           scope,
-          query: prompt.message.text,
+          query: queryText,
           limit: options.memoryRawTopK,
           excludeIds: excluded,
         });
@@ -956,7 +958,7 @@ export default definePlugin<RoleplayOptions>({
           scope: run.chat.chatKey,
           actorQq: run.userId,
           senderName: run.senderName,
-          userText: run.userText,
+          userText: transcriptUserText(run.userText, run.quote),
           replyText: run.replyText,
           sessionId: run.sessionId,
         });

@@ -1,5 +1,5 @@
 import type { PluginConfig } from "../../config/schema.js";
-import type { IncomingMessage } from "../../domain/message.js";
+import type { IncomingMessage, QuotedMessage } from "../../domain/message.js";
 import type { AgentMessage } from "../../ports/agent.js";
 import type { LoadedPluginModule } from "../manifest.js";
 import type {
@@ -8,6 +8,7 @@ import type {
   PluginCommandDefinition,
   PluginMessage,
   PluginPromptPatch,
+  PluginQuotedMessage,
   PluginRole,
 } from "../sdk.js";
 import type { PluginInstance } from "./types.js";
@@ -115,8 +116,25 @@ export function toPluginMessage(message: IncomingMessage): PluginMessage {
     text: message.text,
     images: message.images.map((image) => ({ ...image })),
     ...(message.replyToId !== undefined ? { replyToId: message.replyToId } : {}),
+    ...(message.quote !== undefined ? { quote: toPluginQuote(message.quote) } : {}),
     mentionsBot: message.mentionsBot,
     receivedAt: message.receivedAt,
+  };
+}
+
+export function toPluginQuote(quote: QuotedMessage): PluginQuotedMessage {
+  return {
+    id: quote.id,
+    userId: quote.userId,
+    senderName: quote.senderName,
+    receivedAt: quote.receivedAt,
+    text: quote.text,
+    images: quote.images.map((image) => ({ ...image })),
+    unsupported: [...quote.unsupported],
+    available: quote.available,
+    ...(quote.unavailableReason !== undefined
+      ? { unavailableReason: quote.unavailableReason }
+      : {}),
   };
 }
 

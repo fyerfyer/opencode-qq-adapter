@@ -3,6 +3,7 @@ import type { ApprovalBroker } from "../approval/broker.js";
 import type { ConfigReloadResult } from "../config/reload.js";
 import type { AppConfig } from "../config/schema.js";
 import type { ConversationManager } from "../conversation/manager.js";
+import type { QuoteResolver } from "../conversation/quote-resolver.js";
 import type { IncomingMessage } from "../domain/message.js";
 import type { InboundMediaService } from "../media/inbound.js";
 import type { AuditTrail } from "../observability/audit.js";
@@ -31,6 +32,7 @@ export interface RouterDeps {
   approvals: ApprovalBroker;
   quota: QuotaService;
   audit: AuditTrail;
+  quotes: QuoteResolver;
   sender: MessageSender;
   agent: AgentPort;
   onebot: OneBotPort;

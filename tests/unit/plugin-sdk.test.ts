@@ -82,6 +82,7 @@ describe("Plugin SDK testing harness", () => {
         durationMs: 10,
         promptText: "hello",
         userText: "hello",
+        quote: null,
         replyText: "done",
       });
       await harness.emit("run.finished", {
@@ -98,6 +99,7 @@ describe("Plugin SDK testing harness", () => {
         durationMs: 10,
         promptText: "hello",
         userText: "hello",
+        quote: null,
         replyText: "done",
       });
       expect(await harness.context.storage.readText("after.txt")).toBe("done");

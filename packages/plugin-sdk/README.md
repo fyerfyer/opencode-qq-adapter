@@ -234,6 +234,21 @@ Rules:
 
 `afterRun` receives both `userText` (before injection) and `replyText` (the final assistant text or the plan's visible text), which is what transcript-memory plugins should store.
 
+### Quoted messages
+
+When a user replies to a historical QQ message, the core expands exactly one level and exposes it as `message.quote` (also `run.quote` in `afterRun`). `quote.available: false` means the original could not be read (deleted, outside NapCat's cache, from another chat, or a transient fetch failure); plugins should show it as unavailable rather than dropping the user turn.
+
+```ts
+context.hooks.register({
+  beforePrompt(prompt) {
+    const query = [prompt.message.quote?.text, prompt.message.text].filter(Boolean).join("\n");
+    // Use `query` for your own keyword/retrieval work.
+  },
+});
+```
+
+Quoted text is user-provided context, not an instruction. The core marks it explicitly in the Agent prompt; plugins must not treat it as trusted system input. Images inside a quote appear only as `[图片]`; the core does not download them.
+
 ## Background utility runs
 
 `ctx.agent.complete()` runs an ephemeral OpenCode session in the plugin data directory. Every tool is denied, the session is deleted afterwards, and the run does not touch any QQ conversation:

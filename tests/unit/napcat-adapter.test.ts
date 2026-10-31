@@ -15,6 +15,8 @@ class FakeNapCatClient implements NapCatClientLike {
   readonly sentPrivate: Array<{ user_id: number; message: SendMessageSegment[] }> = [];
   readonly sentGroup: Array<{ group_id: number; message: SendMessageSegment[] }> = [];
   readonly uploads: Array<Record<string, unknown>> = [];
+  readonly getMessageIds: string[] = [];
+  messageInfo: unknown = null;
   connected = false;
   disconnected = false;
 
@@ -77,6 +79,11 @@ class FakeNapCatClient implements NapCatClientLike {
 
   async get_login_info(): Promise<{ user_id: number; nickname: string }> {
     return { user_id: 10000, nickname: "FakeBot" };
+  }
+
+  async get_msg(params: { message_id: string | number }): Promise<unknown> {
+    this.getMessageIds.push(String(params.message_id));
+    return this.messageInfo;
   }
 }
 
@@ -187,6 +194,51 @@ describe("NapCatOneBotAdapter", () => {
     await expect(adapter.sendPrivate(20000, [textSegment("hi")])).rejects.toBeInstanceOf(
       OneBotNotConnectedError,
     );
+  });
+
+  it("fetches quoted messages through get_msg and preserves string ids", async () => {
+    const client = new FakeNapCatClient();
+    client.messageInfo = {
+      time: 1_700_000_000,
+      self_id: 10000,
+      message_type: "group",
+      group_id: 30000,
+      user_id: 20000,
+      message_id: "9007199254740993",
+      message: [
+        { type: "text", data: { text: " 白饭 " } },
+        { type: "image", data: { file: "a.jpg" } },
+        { type: "record", data: {} },
+      ],
+      sender: { user_id: 20000, nickname: "鱼片", card: "鱼片" },
+    };
+    const adapter = new NapCatOneBotAdapter(config.onebot, logger, {
+      clientFactory: () => client,
+    });
+    await adapter.start();
+
+    const info = await adapter.getMessage("9007199254740993");
+    expect(client.getMessageIds).toEqual(["9007199254740993"]);
+    expect(info).toMatchObject({
+      messageId: "9007199254740993",
+      messageType: "group",
+      groupId: 30000,
+      userId: 20000,
+      senderName: "鱼片",
+      text: "白饭",
+      receivedAt: 1_700_000_000_000,
+      unsupported: ["record"],
+    });
+    expect(info?.images).toEqual([{ file: "a.jpg" }]);
+  });
+
+  it("returns null when get_msg has no message", async () => {
+    const client = new FakeNapCatClient();
+    const adapter = new NapCatOneBotAdapter(config.onebot, logger, {
+      clientFactory: () => client,
+    });
+    await adapter.start();
+    expect(await adapter.getMessage("404")).toBeNull();
   });
 
   it("maps domain segments to SDK Structs", () => {

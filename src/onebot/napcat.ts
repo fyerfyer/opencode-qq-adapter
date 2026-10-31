@@ -2,7 +2,13 @@ import { NCWebsocket, type SendMessageSegment, Structs } from "node-napcat-ts";
 import type { Logger } from "pino";
 import type { AppConfig } from "../config/schema.js";
 import { type ChatRef, type OutgoingSegment, replySegment } from "../domain/chat.js";
-import type { OneBotPort, OneBotSendResult, OneBotStatus } from "../ports/onebot.js";
+import type {
+  OneBotMessageInfo,
+  OneBotPort,
+  OneBotSendResult,
+  OneBotStatus,
+} from "../ports/onebot.js";
+import { segmentsFromPayload, summarizeSegments } from "./segments.js";
 
 export interface NapCatClientLike {
   connect(): Promise<void>;
@@ -11,11 +17,11 @@ export interface NapCatClientLike {
   send_private_msg(params: {
     user_id: number;
     message: SendMessageSegment[];
-  }): Promise<{ message_id: number }>;
+  }): Promise<{ message_id: string | number }>;
   send_group_msg(params: {
     group_id: number;
     message: SendMessageSegment[];
-  }): Promise<{ message_id: number }>;
+  }): Promise<{ message_id: string | number }>;
   get_image?(params: { file: string }): Promise<{
     file: string;
     url: string;
@@ -30,8 +36,16 @@ export interface NapCatClientLike {
     folder_id?: string;
   }): Promise<null>;
   delete_msg?(params: { message_id: string | number }): Promise<null>;
+  /**
+   * NapCat accepts both string and number IDs. Keep the string form so large
+   * QQ message IDs do not lose precision before the action is sent.
+   */
+  get_msg?(params: { message_id: string | number }): Promise<unknown>;
   get_login_info?(): Promise<{ user_id: number; nickname: string }>;
 }
+
+/** Quote lookup is best-effort and must not delay a user prompt for the full action timeout. */
+const QUOTE_GET_MSG_TIMEOUT_MS = 3000;
 
 export class OneBotError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -238,6 +252,23 @@ export class NapCatOneBotAdapter implements OneBotPort {
     }
   }
 
+  async getMessage(messageId: string): Promise<OneBotMessageInfo | null> {
+    const client = this.#requireClient();
+    if (client.get_msg === undefined) {
+      throw new OneBotError("NapCat client does not expose get_msg");
+    }
+    try {
+      const raw = await this.#withTimeout(
+        client.get_msg({ message_id: messageId }),
+        Math.min(this.#config.action_timeout_ms, QUOTE_GET_MSG_TIMEOUT_MS),
+        "get_msg",
+      );
+      return parseMessageInfo(raw, messageId);
+    } catch (error) {
+      throw wrapActionError("get_msg", error);
+    }
+  }
+
   async getLoginInfo(): Promise<{ userId: number; nickname: string }> {
     const client = this.#requireClient();
     if (client.get_login_info === undefined) {
@@ -418,4 +449,56 @@ function describeSocketError(context: unknown): string {
   if (typeof record.message === "string") return record.message;
   if (record.info !== undefined) return JSON.stringify(record.info);
   return JSON.stringify(record);
+}
+
+function parseMessageInfo(raw: unknown, fallbackId: string): OneBotMessageInfo | null {
+  if (!isRecord(raw)) return null;
+  const message =
+    Array.isArray(raw.message) || typeof raw.message === "string" ? raw.message : null;
+  if (message === null) return null;
+
+  const sender = isRecord(raw.sender) ? raw.sender : {};
+  const userId = toPositiveInt(raw.user_id) ?? toPositiveInt(sender.user_id);
+  if (userId === null) return null;
+
+  const groupId = toPositiveInt(raw.group_id);
+  const messageType =
+    raw.message_type === "private" || raw.message_type === "group"
+      ? raw.message_type
+      : groupId !== null
+        ? "group"
+        : "private";
+  const summary = summarizeSegments(segmentsFromPayload(message));
+  const time = toPositiveInt(raw.time);
+  const senderName =
+    firstString(sender.card, sender.nickname) ?? firstString(raw.sender_name) ?? String(userId);
+
+  return {
+    messageId: String(raw.message_id ?? raw.real_id ?? fallbackId),
+    messageType,
+    userId,
+    groupId,
+    senderName,
+    receivedAt: time === null ? null : time * 1000,
+    text: summary.text,
+    images: summary.images,
+    unsupported: summary.unsupportedTypes,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toPositiveInt(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.trunc(parsed);
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return null;
 }

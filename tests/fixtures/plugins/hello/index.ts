@@ -135,6 +135,7 @@ export default definePlugin<FixtureOptions>({
           runId: run.runId,
           status: run.status,
           error: run.error,
+          quote: run.quote,
         });
       },
       async onConfigReload(reload) {

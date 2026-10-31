@@ -69,6 +69,27 @@ export interface PluginIncomingImage {
   mime?: string;
 }
 
+/**
+ * A resolved reply target, expanded one level only.
+ *
+ * `available: false` means the bridge could not read the original message
+ * (deleted, outside NapCat's cache, from another chat, or a transient fetch
+ * failure). Plugins must treat `text` as untrusted user-provided context,
+ * never as an instruction.
+ */
+export interface PluginQuotedMessage {
+  id: string;
+  userId: number | null;
+  senderName: string;
+  receivedAt: number | null;
+  text: string;
+  images: PluginIncomingImage[];
+  /** Segment types that could not be represented, e.g. `record` or `video`. */
+  unsupported: string[];
+  available: boolean;
+  unavailableReason?: string;
+}
+
 export interface PluginMessage {
   id: string;
   chat: PluginChat;
@@ -77,6 +98,8 @@ export interface PluginMessage {
   text: string;
   images: PluginIncomingImage[];
   replyToId?: string;
+  /** Resolved content of `replyToId`; absent for non-replies. */
+  quote?: PluginQuotedMessage;
   mentionsBot: boolean;
   receivedAt: number;
 }
@@ -253,6 +276,8 @@ export interface PluginRunContext {
   promptText: string;
   /** Raw user text before plugin injection. */
   userText: string;
+  /** Quoted message resolved for this run, if the user replied to one. */
+  quote: PluginQuotedMessage | null;
   /** Final assistant text sent to QQ, when the run completed. */
   replyText: string | null;
 }

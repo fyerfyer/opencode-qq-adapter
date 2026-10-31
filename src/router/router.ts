@@ -44,7 +44,9 @@ export class MessageRouter {
       if (
         command === undefined &&
         this.#deps.policy.isGroupMentionRequired() &&
-        !message.mentionsBot
+        !message.mentionsBot &&
+        // Replying to a recent bot message is an explicit directed action.
+        !this.#deps.quotes.isKnownOutbound(message)
       ) {
         return;
       }
@@ -101,7 +103,8 @@ export class MessageRouter {
     const actor = policy.actor(message.userId);
     if (actor === null) return;
 
-    if (message.text.length === 0 && message.images.length === 0) return;
+    if (message.text.length === 0 && message.images.length === 0 && message.replyToId === undefined)
+      return;
 
     let images = message.images;
     if (images.length > 0) {
@@ -130,7 +133,9 @@ export class MessageRouter {
     const text =
       message.text.length > 0
         ? message.text
-        : "请直接查看附件图片并描述其内容，不要使用 shell 工具。";
+        : message.images.length > 0
+          ? "请直接查看附件图片并描述其内容，不要使用 shell 工具。"
+          : "请针对我引用的这条历史消息回应。";
     if (text.length > config.security.max_prompt_chars) {
       await sender.reply(
         message.chat,
@@ -203,10 +208,12 @@ export class MessageRouter {
       );
     }
 
+    const quote = await this.#deps.quotes.resolve(message);
     const promptMessage: IncomingMessage = {
       ...message,
       text,
       images,
+      ...(quote !== undefined ? { quote } : {}),
     };
     const submitted = await conversations.submit(promptMessage, projectId, permissions.ruleset);
     if (!submitted.accepted) {

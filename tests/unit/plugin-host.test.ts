@@ -279,6 +279,17 @@ describe("PluginHost", () => {
     expect(state.count).toBe(2);
   });
 
+  it("places core prompt context between plugin prepends and the user text", async () => {
+    const { host } = await makeHost({ "hello-fixture": { path: fixture("hello") } });
+    const result = await host.beforePrompt(
+      makeIncomingMessage({ text: "hello" }),
+      "demo",
+      null,
+      "<qq_quote>history</qq_quote>",
+    );
+    expect(result.text).toBe("<qq_quote>history</qq_quote>\n\nhello\n\n[fixture-context:demo]");
+  });
+
   it("runs afterRun hooks and emits run.finished events", async () => {
     const { host, root } = await makeHost({ "hello-fixture": { path: fixture("hello") } });
     const now = Date.now();
@@ -298,7 +309,19 @@ describe("PluginHost", () => {
     };
     const active: ActiveRun = {
       record,
-      message: makeIncomingMessage({ text: "prompt" }),
+      message: makeIncomingMessage({
+        text: "prompt",
+        quote: {
+          id: "quoted_1",
+          userId: 20000,
+          senderName: "Tester",
+          receivedAt: now,
+          text: "quoted history",
+          images: [],
+          unsupported: [],
+          available: true,
+        },
+      }),
       permissions: [],
       abort: new AbortController(),
       stopRequested: false,
@@ -315,8 +338,10 @@ describe("PluginHost", () => {
     const lastRun = JSON.parse(await readFile(join(dir, "last-run.json"), "utf8")) as {
       runId: string;
       status: string;
+      quote: { text: string } | null;
     };
     expect(lastRun).toMatchObject({ runId: "run_fixture", status: "completed" });
+    expect(lastRun.quote?.text).toBe("quoted history");
     const event = JSON.parse(await readFile(join(dir, "event.json"), "utf8")) as {
       type: string;
     };

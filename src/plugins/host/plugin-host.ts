@@ -47,6 +47,7 @@ import {
   sameSpec,
   toPluginChat,
   toPluginMessage,
+  toPluginQuote,
   withTimeout,
 } from "./convert.js";
 import { normalizePluginProfile } from "./profile.js";
@@ -423,12 +424,16 @@ export class PluginHost {
     message: IncomingMessage,
     projectId: string,
     profile: PluginConversationProfile | null = null,
+    /** Core-owned context block (e.g. a quoted message) inserted after plugin prepends. */
+    promptPrefix = "",
   ): Promise<PluginPromptResult> {
     const hooks = this.#loadedHooks("beforePrompt");
+    const prefix = promptPrefix.trim();
     if (hooks.length === 0) {
+      const text = joinPromptParts([prefix, message.text]);
       return {
-        text: message.text,
-        modified: false,
+        text,
+        modified: text !== message.text,
         plugins: [],
         truncated: false,
         injectedChars: 0,
@@ -473,9 +478,10 @@ export class PluginHost {
     }
 
     if (prepends.length === 0 && appends.length === 0) {
+      const text = joinPromptParts([prefix, message.text]);
       return {
-        text: message.text,
-        modified: false,
+        text,
+        modified: text !== message.text,
         plugins: [],
         truncated: false,
         injectedChars: 0,
@@ -484,9 +490,7 @@ export class PluginHost {
     }
 
     const capped = capPluginContext(prepends.join("\n\n"), appends.join("\n\n"));
-    const text = [capped.prepend, message.text, capped.append]
-      .filter((part) => part.trim().length > 0)
-      .join("\n\n");
+    const text = joinPromptParts([capped.prepend, prefix, message.text, capped.append]);
     if (capped.truncated) {
       this.#logger.warn(
         {
@@ -591,6 +595,7 @@ export class PluginHost {
       durationMs: Math.max(0, this.#now() - active.record.startedAt),
       promptText: active.message.text,
       userText: active.rawText ?? active.message.text,
+      quote: active.message.quote === undefined ? null : toPluginQuote(active.message.quote),
       replyText: active.replyText ?? null,
     };
 
@@ -1069,4 +1074,8 @@ function truncateContext(text: string, budget: number): string {
   if (budget <= 0) return "";
   if (budget <= TRUNCATION_MARKER.length) return TRUNCATION_MARKER.slice(0, budget);
   return `${text.slice(0, budget - TRUNCATION_MARKER.length).trimEnd()}${TRUNCATION_MARKER}`;
+}
+
+function joinPromptParts(parts: string[]): string {
+  return parts.filter((part) => part.trim().length > 0).join("\n\n");
 }

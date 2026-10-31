@@ -4,15 +4,33 @@ import { atSegment, type ChatRef, type OutgoingSegment, textSegment } from "../d
 import type { OneBotPort, OneBotSendResult } from "../ports/onebot.js";
 import { markdownToPlain, splitMessage } from "./text.js";
 
+export interface SentMessageInfo {
+  chat: ChatRef;
+  messageId: string;
+  text: string;
+}
+
+export interface MessageSenderOptions {
+  /** Observes successfully sent text chunks, e.g. to remember bot replies for quote lookup. */
+  onSent?: (message: SentMessageInfo) => void;
+}
+
 export class MessageSender {
   readonly #onebot: OneBotPort;
   readonly #config: AppConfig["qq"];
   readonly #logger: Logger;
+  readonly #onSent: ((message: SentMessageInfo) => void) | undefined;
 
-  constructor(onebot: OneBotPort, config: AppConfig["qq"], logger: Logger) {
+  constructor(
+    onebot: OneBotPort,
+    config: AppConfig["qq"],
+    logger: Logger,
+    options: MessageSenderOptions = {},
+  ) {
     this.#onebot = onebot;
     this.#config = config;
     this.#logger = logger;
+    this.#onSent = options.onSent;
   }
 
   async reply(chat: ChatRef, messageId: string, text: string): Promise<OneBotSendResult> {
@@ -60,10 +78,12 @@ export class MessageSender {
   }
 
   async sendSegments(chat: ChatRef, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
-    if (chat.type === "group" && chat.groupId !== undefined) {
-      return this.#onebot.sendGroup(chat.groupId, segments);
-    }
-    return this.#onebot.sendPrivate(chat.userId, segments);
+    const result =
+      chat.type === "group" && chat.groupId !== undefined
+        ? await this.#onebot.sendGroup(chat.groupId, segments)
+        : await this.#onebot.sendPrivate(chat.userId, segments);
+    this.#notifySent(chat, result, describeSegments(segments));
+    return result;
   }
 
   /** Send an image, optionally as a quote reply and with a caption. */
@@ -87,7 +107,9 @@ export class MessageSender {
     if (text.length > 0) segments.push(textSegment(text));
 
     if (options.messageId !== undefined && this.#config.reply_to_message) {
-      return this.#onebot.reply(chat, options.messageId, segments);
+      const result = await this.#onebot.reply(chat, options.messageId, segments);
+      this.#notifySent(chat, result, describeSegments(segments));
+      return result;
     }
     return this.sendSegments(chat, segments);
   }
@@ -126,13 +148,14 @@ export class MessageSender {
     segments.push(textSegment(chunk));
 
     try {
-      if (messageId !== null && this.#config.reply_to_message) {
-        return await this.#onebot.reply(chat, messageId, segments);
-      }
-      if (chat.type === "group" && chat.groupId !== undefined) {
-        return await this.#onebot.sendGroup(chat.groupId, segments);
-      }
-      return await this.#onebot.sendPrivate(chat.userId, segments);
+      const result =
+        messageId !== null && this.#config.reply_to_message
+          ? await this.#onebot.reply(chat, messageId, segments)
+          : chat.type === "group" && chat.groupId !== undefined
+            ? await this.#onebot.sendGroup(chat.groupId, segments)
+            : await this.#onebot.sendPrivate(chat.userId, segments);
+      this.#notifySent(chat, result, chunk);
+      return result;
     } catch (error) {
       this.#logger.error(
         { err: error, chatKey: chat.chatKey, length: chunk.length },
@@ -141,4 +164,36 @@ export class MessageSender {
       throw error;
     }
   }
+
+  #notifySent(chat: ChatRef, result: OneBotSendResult, text: string): void {
+    if (this.#onSent === undefined || result.messageId === null || result.messageId.length === 0) {
+      return;
+    }
+    try {
+      this.#onSent({ chat, messageId: result.messageId, text });
+    } catch (error) {
+      this.#logger.warn(
+        { err: error, chatKey: chat.chatKey, messageId: result.messageId },
+        "MessageSender onSent callback failed",
+      );
+    }
+  }
+}
+
+function describeSegments(segments: OutgoingSegment[]): string {
+  return segments
+    .map((segment) => {
+      switch (segment.type) {
+        case "text":
+          return segment.text;
+        case "image":
+          return "[图片]";
+        case "file":
+          return "[文件]";
+        default:
+          return "";
+      }
+    })
+    .filter((part) => part.trim().length > 0)
+    .join("\n");
 }

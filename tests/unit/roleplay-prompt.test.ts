@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { normalizeDocument } from "../../packages/roleplay/src/memory-document.js";
 import { buildContextBlock } from "../../packages/roleplay/src/prompt.js";
+import { promptQueryText, transcriptUserText } from "../../packages/roleplay/src/prompt-query.js";
 import type { MemorySnippet } from "../../packages/roleplay/src/transcript.js";
-import type { WorldbookEntry } from "../../packages/roleplay/src/worldbook.js";
+import { selectWorldbook, type WorldbookEntry } from "../../packages/roleplay/src/worldbook.js";
+import type { PluginMessage } from "../../src/plugins/sdk.js";
 
 const worldbook: WorldbookEntry = {
   name: "白饭执念",
@@ -119,5 +121,43 @@ describe("roleplay prompt context", () => {
     });
     expect(block.length).toBeLessThanOrEqual(120);
     expect(block).toContain("[检索上下文");
+  });
+
+  it("uses quoted text for worldbook matching and transcript marking", () => {
+    const message: PluginMessage = {
+      id: "m2",
+      chat: { type: "private", userId: 20000, chatKey: "private:20000" },
+      userId: 20000,
+      senderName: "鱼片",
+      text: "那今天呢？",
+      images: [],
+      mentionsBot: false,
+      receivedAt: Date.now(),
+      quote: {
+        id: "m1",
+        userId: 20000,
+        senderName: "鱼片",
+        receivedAt: Date.now(),
+        text: "我上周说想吃白饭",
+        images: [],
+        unsupported: [],
+        available: true,
+      },
+    };
+    const query = promptQueryText(message);
+    expect(query).toContain("白饭");
+    expect(query).toContain("那今天呢");
+    const selected = selectWorldbook(
+      [worldbook],
+      { currentText: query, recentTexts: [] },
+      { scanDepth: 0, maxEntries: 10, maxChars: 2000 },
+    );
+    expect(selected.map((entry) => entry.name)).toContain("白饭执念");
+
+    const stored = transcriptUserText("那今天呢？", message.quote ?? null);
+    expect(stored).toContain("[引用 鱼片]");
+    expect(stored).toContain("我上周说想吃白饭");
+    expect(stored).toContain("那今天呢？");
+    expect(stored.indexOf("我上周说想吃白饭")).toBeLessThan(stored.indexOf("那今天呢？"));
   });
 });

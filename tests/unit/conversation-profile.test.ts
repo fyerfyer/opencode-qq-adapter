@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,9 +105,12 @@ describe("ConversationManager roleplay profile", () => {
     await waitFor(() => onebot.texts().length >= 2, 3000, "segmented reply");
     expect(onebot.texts()).toEqual(["fak", "e answer"]);
 
-    const run = JSON.parse(
-      await readFile(join(root, "plugins", "profile-fixture", "last-run.json"), "utf8"),
-    ) as { userText: string; replyText: string };
+    const runPath = join(root, "plugins", "profile-fixture", "last-run.json");
+    await waitFor(() => existsSync(runPath), 3000, "afterRun fixture write");
+    const run = JSON.parse(await readFile(runPath, "utf8")) as {
+      userText: string;
+      replyText: string;
+    };
     expect(run).toEqual({ userText: "raw question", replyText: "fake answer" });
     expect(agent.prompts[0]?.text).toBe("raw question");
   });

@@ -10,6 +10,8 @@ import { applyHotConfig, type ConfigReloadResult } from "./config/reload.js";
 import type { AppConfig } from "./config/schema.js";
 import { ConversationManager } from "./conversation/manager.js";
 import { SessionOwnership } from "./conversation/ownership.js";
+import { QuoteCache, quoteCacheScope } from "./conversation/quote-cache.js";
+import { QuoteResolver } from "./conversation/quote-resolver.js";
 import type { IncomingMessage } from "./domain/message.js";
 import { InternalHttpServer } from "./internal-http/server.js";
 import { InboundMediaService } from "./media/inbound.js";
@@ -62,6 +64,8 @@ export class App {
   readonly store: StorePort;
   readonly onebot: OneBotPort;
   readonly agent: AgentPort;
+  readonly quoteCache: QuoteCache;
+  readonly quotes: QuoteResolver;
   readonly policy: PolicyEngine;
   readonly audit: AuditTrail;
   readonly quota: QuotaService;
@@ -96,7 +100,24 @@ export class App {
     this.store = dependencies.store ?? new SqliteStore(config.storage.database_path);
     this.onebot = dependencies.onebot ?? new NapCatOneBotAdapter(config.onebot, this.logger);
     this.agent = dependencies.agent ?? new OpenCodeAgent(config.opencode, this.logger);
-    const sender = dependencies.sender ?? new MessageSender(this.onebot, config.qq, this.logger);
+    this.quoteCache = new QuoteCache();
+    this.quotes = new QuoteResolver({
+      onebot: this.onebot,
+      cache: this.quoteCache,
+      logger: this.logger,
+    });
+    const sender =
+      dependencies.sender ??
+      new MessageSender(this.onebot, config.qq, this.logger, {
+        onSent: ({ chat, messageId, text }) => {
+          this.quoteCache.rememberOutbound(quoteCacheScope(chat), {
+            messageId,
+            text,
+            userId: this.onebot.status().selfId,
+            senderName: "Bot",
+          });
+        },
+      });
     this.policy = new PolicyEngine(config);
     this.audit = new AuditTrail(this.store, this.logger);
     this.quota = new QuotaService({ config, store: this.store });
@@ -219,6 +240,7 @@ export class App {
       approvals: this.approvals,
       quota: this.quota,
       audit: this.audit,
+      quotes: this.quotes,
       sender,
       agent: this.agent,
       onebot: this.onebot,
@@ -309,6 +331,7 @@ export class App {
         this.audit.prune(this.config.logging.audit_retention_days);
         void this.media.cleanupInbox().catch(() => 0);
         this.workspaces.cleanup();
+        this.quoteCache.prune();
       },
       60 * 60 * 1000,
     );
@@ -569,6 +592,9 @@ export class App {
       this.logger.warn({ err: error, messageId }, "Failed to parse OneBot message event");
       return;
     }
+    // Cache every inbound message so a later reply can be expanded without a
+    // NapCat round-trip. The cache never stores the raw event.
+    this.quoteCache.remember(quoteCacheScope(message.chat), message);
 
     this.logger.info(
       {

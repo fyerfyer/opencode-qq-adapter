@@ -22,7 +22,12 @@ import type {
   AgentSessionInput,
   AgentSummary,
 } from "../../src/ports/agent.js";
-import type { OneBotPort, OneBotSendResult, OneBotStatus } from "../../src/ports/onebot.js";
+import type {
+  OneBotMessageInfo,
+  OneBotPort,
+  OneBotSendResult,
+  OneBotStatus,
+} from "../../src/ports/onebot.js";
 
 let sessionSequence = 0;
 let messageSequence = 0;
@@ -324,6 +329,7 @@ export class FakeAgent implements AgentPort {
 
 export interface SentMessage {
   kind: "private" | "group" | "reply";
+  messageId?: string;
   chat?: ChatRef;
   replyTo?: string;
   segments: OutgoingSegment[];
@@ -342,6 +348,10 @@ export class FakeOneBot implements OneBotPort {
   readonly uploads: UploadedFile[] = [];
   readonly deleted: string[] = [];
   readonly imageUrls = new Map<string, string>();
+  /** Historical messages returned by getMessage(), keyed by message id. */
+  readonly messageHistory = new Map<string, OneBotMessageInfo>();
+  readonly getMessageCalls: string[] = [];
+  getMessageError: string | null = null;
   readonly listeners = new Set<(event: unknown) => void>();
   connected = true;
   /** Set to override the derived login state; `null` means use `connected`. */
@@ -359,21 +369,25 @@ export class FakeOneBot implements OneBotPort {
   }
 
   async sendPrivate(userId: number, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
+    const result = { messageId: String(1000 + this.sent.length + 1) };
     this.sent.push({
       kind: "private",
+      messageId: result.messageId,
       chat: { type: "private", userId, chatKey: `private:${userId}` },
       segments,
     });
-    return { messageId: String(1000 + this.sent.length) };
+    return result;
   }
 
   async sendGroup(groupId: number, segments: OutgoingSegment[]): Promise<OneBotSendResult> {
+    const result = { messageId: String(1000 + this.sent.length + 1) };
     this.sent.push({
       kind: "group",
+      messageId: result.messageId,
       chat: { type: "group", userId: 0, groupId, chatKey: `group:${groupId}` },
       segments,
     });
-    return { messageId: String(1000 + this.sent.length) };
+    return result;
   }
 
   async reply(
@@ -381,8 +395,15 @@ export class FakeOneBot implements OneBotPort {
     messageId: string,
     segments: OutgoingSegment[],
   ): Promise<OneBotSendResult> {
-    this.sent.push({ kind: "reply", chat, replyTo: messageId, segments });
-    return { messageId: String(1000 + this.sent.length) };
+    const result = { messageId: String(1000 + this.sent.length + 1) };
+    this.sent.push({
+      kind: "reply",
+      messageId: result.messageId,
+      chat,
+      replyTo: messageId,
+      segments,
+    });
+    return result;
   }
 
   async uploadPrivateFile(userId: number, file: string, name: string): Promise<void> {
@@ -391,6 +412,12 @@ export class FakeOneBot implements OneBotPort {
 
   async deleteMessage(messageId: string): Promise<void> {
     this.deleted.push(messageId);
+  }
+
+  async getMessage(messageId: string): Promise<OneBotMessageInfo | null> {
+    this.getMessageCalls.push(messageId);
+    if (this.getMessageError !== null) throw new Error(this.getMessageError);
+    return this.messageHistory.get(messageId) ?? null;
   }
 
   async getImage(file: string): Promise<{ file: string; url: string; fileName: string }> {

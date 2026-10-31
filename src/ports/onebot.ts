@@ -1,4 +1,5 @@
 import type { ChatRef, OutgoingSegment } from "../domain/chat.js";
+import type { IncomingImage } from "../domain/message.js";
 
 export interface OneBotStatus {
   mode: "forward";
@@ -15,6 +16,19 @@ export interface OneBotSendResult {
   messageId: string | null;
 }
 
+/** Message metadata returned by OneBot `get_msg`, normalised for the domain. */
+export interface OneBotMessageInfo {
+  messageId: string;
+  messageType: "private" | "group";
+  userId: number;
+  groupId: number | null;
+  senderName: string;
+  receivedAt: number | null;
+  text: string;
+  images: IncomingImage[];
+  unsupported: string[];
+}
+
 export interface OneBotPort {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -24,6 +38,8 @@ export interface OneBotPort {
   uploadPrivateFile(userId: number, file: string, name: string): Promise<void>;
   uploadGroupFile(groupId: number, file: string, name: string, folderId?: string): Promise<void>;
   deleteMessage(messageId: string): Promise<void>;
+  /** Look up a historical message (best-effort; NapCat may prune it). */
+  getMessage(messageId: string): Promise<OneBotMessageInfo | null>;
   /** Resolve a NapCat image reference (the `file` field of an image segment). */
   getImage(file: string): Promise<{ file: string; url: string; fileName: string }>;
   getLoginInfo?(): Promise<{ userId: number; nickname: string }>;

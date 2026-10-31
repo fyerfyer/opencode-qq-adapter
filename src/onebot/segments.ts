@@ -49,9 +49,16 @@ function decodeCQText(input: string): string {
     .replaceAll("&amp;", "&");
 }
 
+export function segmentsFromPayload(
+  message: string | OneBotSegment[] | undefined | null,
+): OneBotSegment[] {
+  if (Array.isArray(message)) return message;
+  if (typeof message === "string") return parseCQString(message);
+  return [];
+}
+
 export function normalizeSegments(event: OneBotMessageEvent): OneBotSegment[] {
-  if (Array.isArray(event.message)) return event.message;
-  return parseCQString(event.message);
+  return segmentsFromPayload(event.message);
 }
 
 export interface SegmentSummary {
@@ -149,6 +156,7 @@ export function toIncomingMessage(
     text: summary.text,
     images: summary.images,
     ...(summary.replyToId !== null ? { replyToId: summary.replyToId } : {}),
+    ...(summary.unsupportedTypes.length > 0 ? { unsupported: [...summary.unsupportedTypes] } : {}),
     mentionsBot,
     receivedAt: event.time > 0 ? event.time * 1000 : Date.now(),
     raw: event,
